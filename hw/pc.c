@@ -1127,12 +1127,11 @@ void pc_basic_device_init(qemu_irq *isa_irq,
 
 #ifdef CONFIG_KVM_PIT
     if (kvm_enabled() && kvm_pit_in_kernel())
-	pit = kvm_pit_init(0x40, isa_reserve_irq(0));
+	pit = kvm_pit_init(0x40, isa_get_irq(0));
     else
 #endif
 
-    pit = pit_init(0x40, isa_reserve_irq(0));
-
+    pit = pit_init(0x40, isa_get_irq(0));
     pcspk_init(pit);
 
     for(i = 0; i < MAX_SERIAL_PORTS; i++) {
