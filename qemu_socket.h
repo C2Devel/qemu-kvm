@@ -35,7 +35,7 @@ int inet_aton(const char *cp, struct in_addr *ia);
 int qemu_socket(int domain, int type, int protocol);
 int qemu_accept(int s, struct sockaddr *addr, socklen_t *addrlen);
 void socket_set_nonblock(int fd);
-int send_all(int fd, const void *buf, int len1);
+int send_all(CharDriverState *chr, int fd, const void *buf, int len1);
 
 /* New, ipv6-ready socket helper functions, see qemu-sockets.c */
 int inet_listen_opts(QemuOpts *opts, int port_offset);
@@ -44,6 +44,7 @@ int inet_listen(const char *str, char *ostr, int olen,
 int inet_connect_opts(QemuOpts *opts);
 int inet_connect(const char *str, int socktype);
 int inet_dgram_opts(QemuOpts *opts);
+const char *inet_strfamily(int family);
 
 int unix_listen_opts(QemuOpts *opts);
 int unix_listen(const char *path, char *ostr, int olen);

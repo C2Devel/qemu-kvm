@@ -17,6 +17,7 @@
 #include "block.h"
 #include "compatfd.h"
 #include "gdbstub.h"
+#include "monitor.h"
 
 #include "qemu-kvm.h"
 #include "libkvm.h"
@@ -49,7 +50,6 @@
 #error libkvm: userspace and kernel version mismatch
 #endif
 
-int kvm_allowed = 1;
 int kvm_irqchip = 1;
 int kvm_pit = 1;
 int kvm_pit_reinject = 1;
@@ -444,7 +444,8 @@ static void kvm_create_vcpu(CPUState *env, int id)
     r = kvm_vm_ioctl(kvm_state, KVM_CREATE_VCPU, id);
     if (r < 0) {
         fprintf(stderr, "kvm_create_vcpu: %m\n");
-        return;
+        fprintf(stderr, "Failed to create vCPU. Check the -smp parameter.\n");
+        goto err;
     }
 
     env->kvm_fd = r;
@@ -466,6 +467,9 @@ static void kvm_create_vcpu(CPUState *env, int id)
     return;
   err_fd:
     close(env->kvm_fd);
+  err:
+    /* We're no good with semi-broken states. */
+    abort();
 }
 
 static int kvm_set_boot_vcpu_id(kvm_context_t kvm, uint32_t id)
@@ -585,6 +589,8 @@ int kvm_register_phys_mem(kvm_context_t kvm,
     }
     register_slot(memory.slot, memory.guest_phys_addr, memory.memory_size,
                   memory.userspace_addr, memory.flags);
+    if (kvm->dirty_pages_log_all)
+        kvm_dirty_pages_log_enable_slot(kvm, phys_start, len);
     return 0;
 }
 
@@ -914,6 +920,10 @@ int kvm_run(CPUState *env)
     r = pre_kvm_run(kvm, env);
     if (r)
         return r;
+    if (env->exit_request) {
+        env->exit_request = 0;
+        pthread_kill(env->kvm_cpu_state.thread, SIG_IPI);
+    }
     r = ioctl(fd, KVM_RUN, 0);
 
     if (r == -1 && errno != EINTR && errno != EAGAIN) {
@@ -966,6 +976,7 @@ int kvm_run(CPUState *env)
                                 run->io.direction,
                                 run->io.size,
                                 run->io.count);
+            r = 0;
             break;
         case KVM_EXIT_DEBUG:
             r = handle_debug(env);
@@ -1468,19 +1479,25 @@ static void sigbus_reraise(void)
     abort();
 }
 
+static int kvm_physical_memory_addr_from_ram(KVMState *s, ram_addr_t ram_addr,
+                                             target_phys_addr_t *phys_addr);
+
 static void sigbus_handler(int n, struct qemu_signalfd_siginfo *siginfo,
                            void *ctx)
 {
 #if defined(KVM_CAP_MCE) && defined(TARGET_I386)
-    if (first_cpu->mcg_cap && siginfo->ssi_addr
+    if ((first_cpu->mcg_cap & MCG_SER_P) && siginfo->ssi_addr
         && siginfo->ssi_code == BUS_MCEERR_AO) {
         uint64_t status;
+        void *vaddr;
+        ram_addr_t ram_addr;
         unsigned long paddr;
         CPUState *cenv;
 
         /* Hope we are lucky for AO MCE */
-        if (do_qemu_ram_addr_from_host((void *)(intptr_t)siginfo->ssi_addr,
-				       &paddr)) {
+        vaddr = (void *)(intptr_t)siginfo->ssi_addr;
+        if (do_qemu_ram_addr_from_host(vaddr, &ram_addr) ||
+            !kvm_physical_memory_addr_from_ram(kvm_state, ram_addr, (target_phys_addr_t *)&paddr)) {
             fprintf(stderr, "Hardware memory error for memory used by "
                     "QEMU itself instead of guest system!: %llx\n",
                     (unsigned long long)siginfo->ssi_addr);
@@ -1618,7 +1635,7 @@ static void kvm_do_load_mpstate(void *_env)
 
 void kvm_load_mpstate(CPUState *env)
 {
-    if (kvm_enabled() && qemu_system_ready)
+    if (kvm_enabled() && qemu_system_ready && kvm_vcpu_inited(env))
         on_vcpu(env, kvm_do_load_mpstate, env);
 }
 
@@ -1673,16 +1690,31 @@ static void flush_queued_work(CPUState *env)
     pthread_cond_broadcast(&qemu_work_cond);
 }
 
+static int kvm_mce_in_exception(CPUState *env)
+{
+    struct kvm_msr_entry msr_mcg_status = {
+        .index = MSR_MCG_STATUS,
+    };
+    int r;
+
+    r = kvm_get_msrs(env, &msr_mcg_status, 1);
+    if (r == -1 || r == 0)
+        return -1;
+    return !!(msr_mcg_status.data & MCG_STATUS_MCIP);
+}
+
 static void kvm_on_sigbus(CPUState *env, siginfo_t *siginfo)
 {
 #if defined(KVM_CAP_MCE) && defined(TARGET_I386)
     struct kvm_x86_mce mce = {
             .bank = 9,
     };
+    void *vaddr;
+    ram_addr_t ram_addr;
     unsigned long paddr;
     int r;
 
-    if (env->mcg_cap && siginfo->si_addr
+    if ((env->mcg_cap & MCG_SER_P) && siginfo->si_addr
         && (siginfo->si_code == BUS_MCEERR_AR
             || siginfo->si_code == BUS_MCEERR_AO)) {
         if (siginfo->si_code == BUS_MCEERR_AR) {
@@ -1693,6 +1725,15 @@ static void kvm_on_sigbus(CPUState *env, siginfo_t *siginfo)
             mce.misc = (MCM_ADDR_PHYS << 6) | 0xc;
             mce.mcg_status = MCG_STATUS_MCIP | MCG_STATUS_EIPV;
         } else {
+            /*
+             * If there is an MCE excpetion being processed, ignore
+             * this SRAO MCE
+             */
+            r = kvm_mce_in_exception(env);
+            if (r == -1)
+                fprintf(stderr, "Failed to get MCE status\n");
+            else if (r)
+                return;
             /* Fake an Intel architectural Memory scrubbing UCR */
             mce.status = MCI_STATUS_VAL | MCI_STATUS_UC | MCI_STATUS_EN
                 | MCI_STATUS_MISCV | MCI_STATUS_ADDRV | MCI_STATUS_S
@@ -1700,9 +1741,11 @@ static void kvm_on_sigbus(CPUState *env, siginfo_t *siginfo)
             mce.misc = (MCM_ADDR_PHYS << 6) | 0xc;
             mce.mcg_status = MCG_STATUS_MCIP | MCG_STATUS_RIPV;
         }
-        if (do_qemu_ram_addr_from_host((void *)siginfo->si_addr, &paddr)) {
+        vaddr = (void *)siginfo->si_addr;
+        if (do_qemu_ram_addr_from_host(vaddr, &ram_addr) ||
+            !kvm_physical_memory_addr_from_ram(kvm_state, ram_addr, (target_phys_addr_t *)&paddr)) {
             fprintf(stderr, "Hardware memory error for memory used by "
-                    "QEMU itself instaed of guest system!\n");
+                    "QEMU itself instead of guest system!\n");
             /* Hope we are lucky for AO MCE */
             if (siginfo->si_code == BUS_MCEERR_AO)
                 return;
@@ -1984,7 +2027,7 @@ int kvm_init_ap(void)
     action.sa_flags = SA_SIGINFO;
     action.sa_sigaction = (void (*)(int, siginfo_t*, void*))sigbus_handler;
     sigaction(SIGBUS, &action, NULL);
-    prctl(PR_MCE_KILL, 1, 1);
+    prctl(PR_MCE_KILL, 1, 1, 0, 0);
     return 0;
 }
 
@@ -2120,21 +2163,24 @@ int kvm_main_loop(void)
     while (1) {
         main_loop_wait(1000);
         if (qemu_shutdown_requested()) {
+            monitor_protocol_event(QEVENT_SHUTDOWN, NULL);
             if (qemu_no_shutdown()) {
                 vm_stop(0);
             } else
                 break;
-        } else if (qemu_powerdown_requested())
+        } else if (qemu_powerdown_requested()) {
+            monitor_protocol_event(QEVENT_POWERDOWN, NULL);
             qemu_irq_raise(qemu_system_powerdown);
-        else if (qemu_reset_requested())
+        } else if (qemu_reset_requested()) {
             qemu_kvm_system_reset();
-        else if (kvm_debug_cpu_requested) {
+        } else if (kvm_debug_cpu_requested) {
             gdb_set_stop_cpu(kvm_debug_cpu_requested);
             vm_stop(EXCP_DEBUG);
             kvm_debug_cpu_requested = NULL;
         }
     }
 
+    bdrv_close_all();
     pause_all_threads();
     pthread_mutex_unlock(&qemu_mutex);
 
@@ -2186,6 +2232,13 @@ static int kvm_create_context(void)
     if (r < 0) {
         return r;
     }
+
+    kvm_state->vcpu_events = 0;
+#ifdef KVM_CAP_VCPU_EVENTS
+    kvm_state->vcpu_events = kvm_check_extension(kvm_state, KVM_CAP_VCPU_EVENTS);
+#endif
+
+    kvm_state->many_ioeventfds = kvm_check_many_ioeventfds();
 
     kvm_init_ap();
     if (kvm_irqchip) {
@@ -2341,6 +2394,18 @@ void kvm_set_phys_mem(target_phys_addr_t start_addr, ram_addr_t size,
 #endif
 
     return;
+}
+
+static int kvm_physical_memory_addr_from_ram(KVMState *s, ram_addr_t ram_addr,
+                                             target_phys_addr_t *phys_addr)
+{
+    struct mapping *p;
+
+    p = find_ram_mapping(ram_addr);
+    if (p)
+        *phys_addr = p->phys + (ram_addr - p->ram);
+
+    return !!p;
 }
 
 int kvm_setup_guest_memory(void *area, unsigned long size)
@@ -2619,6 +2684,12 @@ static void kvm_do_inject_x86_mce(void *_data)
     struct kvm_x86_mce_data *data = _data;
     int r;
 
+    /* If there is an MCE excpetion being processed, ignore this SRAO MCE */
+    r = kvm_mce_in_exception(data->env);
+    if (r == -1)
+        fprintf(stderr, "Failed to get MCE status\n");
+    else if (r && !(data->mce->status & MCI_STATUS_AR))
+        return;
     r = kvm_set_mce(data->env, data->mce);
     if (r < 0) {
         perror("kvm_set_mce FAILED");

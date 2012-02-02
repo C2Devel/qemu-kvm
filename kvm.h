@@ -14,11 +14,16 @@
 #ifndef QEMU_KVM_H
 #define QEMU_KVM_H
 
+#include <errno.h>
 #include "config.h"
 #include "qemu-queue.h"
 #include "qemu-kvm.h"
 
 #ifdef KVM_UPSTREAM
+
+#ifdef CONFIG_KVM
+#include <linux/kvm.h>
+#endif
 
 #ifdef CONFIG_KVM
 extern int kvm_allowed;
@@ -52,6 +57,9 @@ int kvm_set_migration_log(int enable);
 int kvm_has_sync_mmu(void);
 #endif /* KVM_UPSTREAM */
 int kvm_has_vcpu_events(void);
+int kvm_put_vcpu_events(CPUState *env);
+int kvm_get_vcpu_events(CPUState *env);
+
 #ifdef KVM_UPSTREAM
 
 void kvm_setup_guest_memory(void *start, size_t size);
@@ -96,7 +104,9 @@ int kvm_arch_init(KVMState *s, int smp_cpus);
 
 int kvm_arch_init_vcpu(CPUState *env);
 
+#endif
 void kvm_arch_reset_vcpu(CPUState *env);
+#ifdef KVM_UPSTREAM
 
 struct kvm_guest_debug;
 struct kvm_debug_exit_arch;
@@ -144,6 +154,34 @@ static inline void cpu_synchronize_state(CPUState *env)
     }
 }
 
+#endif
+
+int kvm_has_many_ioeventfds(void);
+
+#if defined(KVM_IOEVENTFD) && defined(CONFIG_KVM)
+int kvm_set_ioeventfd_pio_word(int fd, uint16_t adr, uint16_t val, bool assign);
+int kvm_check_many_ioeventfds(void);
+#else
+static inline
+int kvm_set_ioeventfd_pio_word(int fd, uint16_t adr, uint16_t val, bool assign)
+{
+    return -ENOSYS;
+}
+static inline
+int kvm_check_many_ioeventfds(void)
+{
+    return 0;
+}
+#endif
+
+#if defined(KVM_IRQFD) && defined(CONFIG_KVM)
+int kvm_set_irqfd(int gsi, int fd, bool assigned);
+#else
+static inline
+int kvm_set_irqfd(int gsi, int fd, bool assigned)
+{
+    return -ENOSYS;
+}
 #endif
 
 #endif

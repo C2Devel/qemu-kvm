@@ -315,6 +315,12 @@ static int syborg_serial_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
+static const QemuChrHandlers syborg_serial_handlers = {
+    .fd_can_read = syborg_serial_can_receive,
+    .fd_read = syborg_serial_receive,
+    .fd_event = syborg_serial_event,
+};
+
 static int syborg_serial_init(SysBusDevice *dev)
 {
     SyborgSerialState *s = FROM_SYSBUS(SyborgSerialState, dev);
@@ -326,8 +332,7 @@ static int syborg_serial_init(SysBusDevice *dev)
     sysbus_init_mmio(dev, 0x1000, iomemtype);
     s->chr = qdev_init_chardev(&dev->qdev);
     if (s->chr) {
-        qemu_chr_add_handlers(s->chr, syborg_serial_can_receive,
-                              syborg_serial_receive, syborg_serial_event, s);
+        qemu_chr_add_handlers(s->chr, &syborg_serial_handlers, s);
     }
     if (s->fifo_size <= 0) {
         fprintf(stderr, "syborg_serial: fifo too small\n");
@@ -335,7 +340,7 @@ static int syborg_serial_init(SysBusDevice *dev)
     }
     s->read_fifo = qemu_mallocz(s->fifo_size * sizeof(s->read_fifo[0]));
 
-    register_savevm("syborg_serial", -1, 1,
+    register_savevm(&dev->qdev, "syborg_serial", -1, 1,
                     syborg_serial_save, syborg_serial_load, s);
     return 0;
 }

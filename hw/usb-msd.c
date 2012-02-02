@@ -47,7 +47,7 @@ typedef struct {
     uint32_t residue;
     uint32_t tag;
     SCSIBus bus;
-    DriveInfo *dinfo;
+    BlockConf conf;
     SCSIDevice *scsi_dev;
     int result;
     /* For async completion.  */
@@ -522,22 +522,34 @@ static void usb_msd_password_cb(void *opaque, int err)
 static int usb_msd_initfn(USBDevice *dev)
 {
     MSDState *s = DO_UPCAST(MSDState, dev, dev);
+    BlockDriverState *bs = s->conf.bs;
 
-    if (!s->dinfo || !s->dinfo->bdrv) {
-        qemu_error("usb-msd: drive property not set\n");
+    if (!bs) {
+        error_report("usb-msd: drive property not set");
         return -1;
     }
 
+    /*
+     * Hack alert: this pretends to be a block device, but it's really
+     * a SCSI bus that can serve only a single device, which it
+     * creates automatically.  But first it needs to detach from its
+     * blockdev, or else scsi_bus_legacy_add_drive() dies when it
+     * attaches again.
+     *
+     * The hack is probably a bad idea.
+     */
+    bdrv_detach(bs, &s->dev.qdev);
+    s->conf.bs = NULL;
+
     s->dev.speed = USB_SPEED_FULL;
     scsi_bus_new(&s->bus, &s->dev.qdev, 0, 1, usb_msd_command_complete);
-    s->scsi_dev = scsi_bus_legacy_add_drive(&s->bus, s->dinfo, 0);
+    s->scsi_dev = scsi_bus_legacy_add_drive(&s->bus, bs, 0);
     s->bus.qbus.allow_hotplug = 0;
     usb_msd_handle_reset(dev);
 
-    if (bdrv_key_required(s->dinfo->bdrv)) {
-        if (s->dev.qdev.hotplugged) {
-            monitor_read_bdrv_key_start(cur_mon, s->dinfo->bdrv,
-                                        usb_msd_password_cb, s);
+    if (bdrv_key_required(bs)) {
+        if (cur_mon) {
+            monitor_read_bdrv_key_start(cur_mon, bs, usb_msd_password_cb, s);
             s->dev.auto_attach = 0;
         } else {
             autostart = 0;
@@ -592,7 +604,10 @@ static USBDevice *usb_msd_init(const char *filename)
 
     /* create guest device */
     dev = usb_create(NULL /* FIXME */, "usb-storage");
-    qdev_prop_set_drive(&dev->qdev, "drive", dinfo);
+    if (qdev_prop_set_drive(&dev->qdev, "drive", dinfo->bdrv) < 0) {
+        qdev_free(&dev->qdev);
+        return NULL;
+    }
     if (qdev_init(&dev->qdev) < 0)
         return NULL;
 
@@ -611,7 +626,7 @@ static struct USBDeviceInfo msd_info = {
     .usbdevice_name = "disk",
     .usbdevice_init = usb_msd_init,
     .qdev.props     = (Property[]) {
-        DEFINE_PROP_DRIVE("drive", MSDState, dinfo),
+        DEFINE_BLOCK_PROPERTIES(MSDState, conf),
         DEFINE_PROP_END_OF_LIST(),
     },
 };

@@ -40,6 +40,7 @@
 #include "loader.h"
 #include "qemu-timer.h"
 #include "qemu_socket.h"
+#include "sysemu.h"
 
 #include "pcnet.h"
 
@@ -1898,6 +1899,9 @@ int pcnet_common_init(DeviceState *dev, PCNetState *s, NetClientInfo *info)
     qemu_macaddr_default_if_unset(&s->conf.macaddr);
     s->nic = qemu_new_nic(info, &s->conf, dev->info->name, dev->id, s);
     qemu_format_nic_info_str(&s->nic->nc, s->conf.macaddr.a);
+
+    add_boot_device_path(s->conf.bootindex, dev, "/ethernet-phy@0");
+
     return 0;
 }
 
@@ -1991,6 +1995,9 @@ static int pci_pcnet_init(PCIDevice *pci_dev)
     *(uint32_t *)&pci_conf[0x10] = cpu_to_le32(0x00000001);
     *(uint32_t *)&pci_conf[0x14] = cpu_to_le32(0x00000000);
 
+    *(uint16_t *)&pci_conf[0x2c] = 0x0;
+    *(uint16_t *)&pci_conf[0x2e] = 0x0;
+
     pci_conf[0x3d] = 1; // interrupt pin 0
     pci_conf[0x3e] = 0x06;
     pci_conf[0x3f] = 0xff;
@@ -2012,7 +2019,7 @@ static int pci_pcnet_init(PCIDevice *pci_dev)
     if (!pci_dev->qdev.hotplugged) {
         static int loaded = 0;
         if (!loaded) {
-            rom_add_option("pxe-pcnet.bin");
+            rom_add_option("pxe-pcnet.bin", -1);
             loaded = 1;
         }
     }

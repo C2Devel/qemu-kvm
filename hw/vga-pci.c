@@ -106,11 +106,16 @@ static int pci_vga_initfn(PCIDevice *dev)
             bios_total_size <<= 1;
         pci_register_bar(&d->dev, PCI_ROM_SLOT, bios_total_size,
                          PCI_BASE_ADDRESS_MEM_PREFETCH, vga_map);
+     } else {
+         if (dev->romfile == NULL)
+             dev->romfile = qemu_strdup("vgabios-stdvga.bin");
      }
 
-    vga_init_vbe(s);
-     /* ROM BIOS */
-     rom_add_vga(VGABIOS_FILENAME);
+     if (!dev->rom_bar) {
+         /* compatibility with pc-0.13 and older */
+         vga_init_vbe(s);
+     }
+
      return 0;
 }
 
@@ -131,6 +136,7 @@ static PCIDeviceInfo vga_info = {
     .qdev.name    = "VGA",
     .qdev.size    = sizeof(PCIVGAState),
     .qdev.vmsd    = &vmstate_vga_pci,
+    .no_hotplug   = 1,
     .init         = pci_vga_initfn,
     .config_write = pci_vga_write_config,
     .qdev.props   = (Property[]) {

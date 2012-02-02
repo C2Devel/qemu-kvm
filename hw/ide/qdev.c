@@ -24,14 +24,28 @@
 
 /* --------------------------------- */
 
+static char *idebus_get_fw_dev_path(DeviceState *dev);
+
 static struct BusInfo ide_bus_info = {
     .name  = "IDE",
     .size  = sizeof(IDEBus),
+    .get_fw_dev_path = idebus_get_fw_dev_path,
 };
 
-void ide_bus_new(IDEBus *idebus, DeviceState *dev)
+void ide_bus_new(IDEBus *idebus, DeviceState *dev, int bus_id)
 {
     qbus_create_inplace(&idebus->qbus, &ide_bus_info, dev, NULL);
+    idebus->bus_id = bus_id;
+}
+
+static char *idebus_get_fw_dev_path(DeviceState *dev)
+{
+    char path[30];
+
+    snprintf(path, sizeof(path), "%s@%d", qdev_fw_name(dev),
+             ((IDEBus*)dev->parent_bus)->bus_id);
+
+    return strdup(path);
 }
 
 static int ide_qdev_init(DeviceState *qdev, DeviceInfo *base)
@@ -40,7 +54,7 @@ static int ide_qdev_init(DeviceState *qdev, DeviceInfo *base)
     IDEDeviceInfo *info = DO_UPCAST(IDEDeviceInfo, qdev, base);
     IDEBus *bus = DO_UPCAST(IDEBus, qbus, qdev->parent_bus);
 
-    if (!dev->dinfo) {
+    if (!dev->conf.bs) {
         fprintf(stderr, "%s: no drive specified\n", qdev->info->name);
         goto err;
     }
@@ -84,7 +98,7 @@ IDEDevice *ide_create_drive(IDEBus *bus, int unit, DriveInfo *drive)
 
     dev = qdev_create(&bus->qbus, "ide-drive");
     qdev_prop_set_uint32(dev, "unit", unit);
-    qdev_prop_set_drive(dev, "drive", drive);
+    qdev_prop_set_drive_nofail(dev, "drive", drive->bdrv);
     if (qdev_init(dev) < 0)
         return NULL;
     return DO_UPCAST(IDEDevice, qdev, dev);
@@ -99,17 +113,26 @@ typedef struct IDEDrive {
 static int ide_drive_initfn(IDEDevice *dev)
 {
     IDEBus *bus = DO_UPCAST(IDEBus, qbus, dev->qdev.parent_bus);
-    ide_init_drive(bus->ifs + dev->unit, dev->dinfo);
+
+    if (ide_init_drive(bus->ifs + dev->unit, dev->conf.bs, dev->version) < 0) {
+        return -1;
+    }
+
+    add_boot_device_path(dev->conf.bootindex, &dev->qdev,
+                         dev->unit ? "/disk@1" : "/disk@0");
+
     return 0;
 }
 
 static IDEDeviceInfo ide_drive_info = {
     .qdev.name  = "ide-drive",
+    .qdev.fw_name  = "drive",
     .qdev.size  = sizeof(IDEDrive),
     .init       = ide_drive_initfn,
     .qdev.props = (Property[]) {
         DEFINE_PROP_UINT32("unit", IDEDrive, dev.unit, -1),
-        DEFINE_PROP_DRIVE("drive", IDEDrive, dev.dinfo),
+        DEFINE_BLOCK_PROPERTIES(IDEDrive, dev.conf),
+        DEFINE_PROP_STRING("ver",  IDEDrive, dev.version),
         DEFINE_PROP_END_OF_LIST(),
     }
 };

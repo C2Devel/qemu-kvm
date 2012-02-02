@@ -890,6 +890,12 @@ void slavio_serial_ms_kbd_init(target_phys_addr_t base, qemu_irq irq,
     sysbus_mmio_map(s, 0, base);
 }
 
+static const QemuChrHandlers serial_handlers = {
+    .fd_can_read = serial_can_receive,
+    .fd_read = serial_receive1,
+    .fd_event = serial_event,
+};
+
 static int escc_init1(SysBusDevice *dev)
 {
     SerialState *s = FROM_SYSBUS(SerialState, dev);
@@ -903,8 +909,7 @@ static int escc_init1(SysBusDevice *dev)
         s->chn[i].chn = 1 - i;
         s->chn[i].clock = s->frequency / 2;
         if (s->chn[i].chr) {
-            qemu_chr_add_handlers(s->chn[i].chr, serial_can_receive,
-                                  serial_receive1, serial_event, &s->chn[i]);
+            qemu_chr_add_handlers(s->chn[i].chr, &serial_handlers, &s->chn[i]);
         }
     }
     s->chn[0].otherchn = &s->chn[1];

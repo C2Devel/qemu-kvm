@@ -221,7 +221,7 @@ static void r2d_init(ram_addr_t ram_size,
     }
 
     /* Allocate memory space */
-    sdram_addr = qemu_ram_alloc(SDRAM_SIZE);
+    sdram_addr = qemu_ram_alloc(NULL, "r2d.sdram", SDRAM_SIZE);
     cpu_register_physical_memory(SDRAM_BASE, SDRAM_SIZE, sdram_addr);
     /* Register peripherals */
     s = sh7750_init(env);

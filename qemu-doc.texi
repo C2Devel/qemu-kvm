@@ -27,7 +27,6 @@
 * QEMU System emulator for non PC targets::
 * QEMU User space emulator::
 * compilation:: Compilation from the sources
-* Index::
 @end menu
 @end ifnottex
 
@@ -175,6 +174,8 @@ Creative SoundBlaster 16 sound card
 ENSONIQ AudioPCI ES1370 sound card
 @item
 Intel 82801AA AC97 Audio compatible sound card
+@item
+Intel HD Audio Controller and HDA codec
 @item
 Adlib(OPL2) - Yamaha YM3812 compatible chip
 @item
@@ -2361,9 +2362,5 @@ QEMU for Win32.
 The Mac OS X patches are not fully merged in QEMU, so you should look
 at the QEMU mailing list archive to have all the necessary
 information.
-
-@node Index
-@chapter Index
-@printindex cp
 
 @bye

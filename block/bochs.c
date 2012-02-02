@@ -116,11 +116,9 @@ static int bochs_open(BlockDriverState *bs, const char *filename, int flags)
     struct bochs_header bochs;
     struct bochs_header_v1 header_v1;
 
-    fd = open(filename, O_RDWR | O_BINARY);
+    fd = open(filename, O_RDONLY | O_BINARY);
     if (fd < 0) {
-        fd = open(filename, O_RDONLY | O_BINARY);
-        if (fd < 0)
-            return -1;
+        return -1;
     }
 
     bs->read_only = 1; // no write support yet
@@ -199,7 +197,8 @@ static inline int seek_to_sector(BlockDriverState *bs, int64_t sector_num)
     // read in bitmap for current extent
     lseek(s->fd, bitmap_offset + (extent_offset / 8), SEEK_SET);
 
-    read(s->fd, &bitmap_entry, 1);
+    if (read(s->fd, &bitmap_entry, 1) != 1)
+        return -1;
 
     if (!((bitmap_entry >> (extent_offset % 8)) & 1))
     {
@@ -246,7 +245,7 @@ static BlockDriver bdrv_bochs = {
     .format_name	= "bochs",
     .instance_size	= sizeof(BDRVBochsState),
     .bdrv_probe		= bochs_probe,
-    .bdrv_open		= bochs_open,
+    .bdrv_file_open	= bochs_open,
     .bdrv_read		= bochs_read,
     .bdrv_close		= bochs_close,
 };

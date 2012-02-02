@@ -212,7 +212,7 @@ int main(int argc, char **argv)
     int opt_ind = 0;
     int li;
     char *end;
-    int flags = 0;
+    int flags = BDRV_O_RDWR;
     int partition = -1;
     int ret;
     int shared = 1;
@@ -257,6 +257,7 @@ int main(int argc, char **argv)
             break;
         case 'r':
             readonly = true;
+            flags &= ~BDRV_O_RDWR;
             break;
         case 'P':
             partition = strtol(optarg, &end, 0);
@@ -331,7 +332,7 @@ int main(int argc, char **argv)
     if (bs == NULL)
         return 1;
 
-    if (bdrv_open(bs, argv[optind], flags) == -1)
+    if (bdrv_open(bs, argv[optind], flags, NULL) < 0)
         return 1;
 
     fd_size = bs->total_sectors * 512;
@@ -424,7 +425,7 @@ int main(int argc, char **argv)
     max_fd = sharing_fds[0];
     nb_fds++;
 
-    data = qemu_memalign(512, NBD_BUFFER_SIZE);
+    data = qemu_blockalign(bs, NBD_BUFFER_SIZE);
     if (data == NULL)
         errx(ENOMEM, "Cannot allocate data buffer");
 

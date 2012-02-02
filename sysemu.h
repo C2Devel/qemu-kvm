@@ -6,8 +6,7 @@
 #include "qemu-option.h"
 #include "qemu-queue.h"
 #include "qemu-timer.h"
-#include "qdict.h"
-#include "qerror.h"
+#include "notify.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -54,8 +53,10 @@ int qemu_powerdown_requested(void);
 extern qemu_irq qemu_system_powerdown;
 void qemu_system_reset(void);
 
+void qemu_add_machine_init_done_notifier(Notifier *notify);
+
 void do_savevm(Monitor *mon, const QDict *qdict);
-int load_vmstate(Monitor *mon, const char *name);
+int load_vmstate(const char *name);
 void do_delvm(Monitor *mon, const QDict *qdict);
 void do_info_snapshots(Monitor *mon);
 
@@ -63,23 +64,13 @@ void qemu_announce_self(void);
 
 void main_loop_wait(int timeout);
 
+bool qemu_savevm_state_blocked(Monitor *mon);
 int qemu_savevm_state_begin(Monitor *mon, QEMUFile *f, int blk_enable,
                             int shared);
 int qemu_savevm_state_iterate(Monitor *mon, QEMUFile *f);
 int qemu_savevm_state_complete(Monitor *mon, QEMUFile *f);
 void qemu_savevm_state_cancel(Monitor *mon, QEMUFile *f);
 int qemu_loadvm_state(QEMUFile *f);
-
-void qemu_errors_to_file(FILE *fp);
-void qemu_errors_to_mon(Monitor *mon);
-void qemu_errors_to_previous(void);
-void qemu_error(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
-void qemu_error_internal(const char *file, int linenr, const char *func,
-                         const char *fmt, ...)
-                         __attribute__ ((format(printf, 4, 5)));
-
-#define qemu_error_new(fmt, ...) \
-    qemu_error_internal(__FILE__, __LINE__, __func__, fmt, ## __VA_ARGS__)
 
 #ifdef _WIN32
 /* Polling handling */
@@ -105,15 +96,15 @@ typedef enum DisplayType
     DT_DEFAULT,
     DT_CURSES,
     DT_SDL,
-    DT_VNC,
     DT_NOGRAPHIC,
 } DisplayType;
 
 extern int autostart;
+extern int incoming_expected;
 extern int bios_size;
 
 typedef enum {
-    VGA_NONE, VGA_STD, VGA_CIRRUS, VGA_VMWARE, VGA_XENFB
+    VGA_NONE, VGA_STD, VGA_CIRRUS, VGA_VMWARE, VGA_XENFB, VGA_QXL,
 } VGAInterfaceType;
 
 extern int vga_interface_type;
@@ -121,6 +112,7 @@ extern int vga_interface_type;
 #define std_vga_enabled (vga_interface_type == VGA_STD)
 #define xenfb_enabled (vga_interface_type == VGA_XENFB)
 #define vmsvga_enabled (vga_interface_type == VGA_VMWARE)
+#define qxl_enabled (vga_interface_type == VGA_QXL)
 
 extern int graphic_width;
 extern int graphic_height;
@@ -138,6 +130,7 @@ extern int max_cpus;
 extern int cursor_hide;
 extern int graphic_rotate;
 extern int no_quit;
+extern int no_shutdown;
 extern int semihosting_enabled;
 extern int old_param;
 extern int boot_menu;
@@ -150,7 +143,11 @@ extern uint64_t node_mem[MAX_NODES];
 extern uint64_t node_cpumask[MAX_NODES];
 
 #define MAX_OPTION_ROMS 16
-extern const char *option_rom[MAX_OPTION_ROMS];
+typedef struct QEMUOptionRom {
+    const char *name;
+    int32_t bootindex;
+} QEMUOptionRom;
+extern QEMUOptionRom option_rom[MAX_OPTION_ROMS];
 extern int nb_option_roms;
 
 #ifdef NEED_CPU_H
@@ -172,6 +169,9 @@ typedef enum {
     BLOCK_ERR_STOP_ANY
 } BlockInterfaceErrorAction;
 
+void blockdev_mark_auto_del(BlockDriverState *bs);
+void blockdev_auto_del(BlockDriverState *bs);
+
 #define BLOCK_SERIAL_STRLEN 20
 
 typedef struct DriveInfo {
@@ -181,11 +181,16 @@ typedef struct DriveInfo {
     BlockInterfaceType type;
     int bus;
     int unit;
+    int auto_del;               /* see blockdev_mark_auto_del() */
     QemuOpts *opts;
     BlockInterfaceErrorAction on_read_error;
     BlockInterfaceErrorAction on_write_error;
     char serial[BLOCK_SERIAL_STRLEN + 1];
     QTAILQ_ENTRY(DriveInfo) next;
+    int opened;
+    int bdrv_flags;
+    char *file;
+    BlockDriver *drv;
 } DriveInfo;
 
 #define MAX_IDE_DEVS	2
@@ -200,6 +205,7 @@ extern DriveInfo *drive_get(BlockInterfaceType type, int bus, int unit);
 extern DriveInfo *drive_get_by_id(const char *id);
 extern int drive_get_max_bus(BlockInterfaceType type);
 extern void drive_uninit(DriveInfo *dinfo);
+extern DriveInfo *drive_get_by_blockdev(BlockDriverState *bs);
 extern const char *drive_get_serial(BlockDriverState *bdrv);
 
 extern BlockInterfaceErrorAction drive_get_on_error(
@@ -210,20 +216,22 @@ BlockDriverState *qdev_init_bdrv(DeviceState *dev, BlockInterfaceType type);
 extern QemuOpts *drive_add(const char *file, const char *fmt, ...);
 extern DriveInfo *drive_init(QemuOpts *arg, void *machine, int *fatal_error);
 
+extern int drives_reopen(void);
+
 /* acpi */
 void qemu_system_cpu_hot_add(int cpu, int state);
 
 /* device-hotplug */
 
 DriveInfo *add_init_drive(const char *opts);
+int simple_drive_add(Monitor *mon, const QDict *qdict, QObject **ret_data);
+int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data);
 
 /* pci-hotplug */
-void pci_device_hot_add_print(Monitor *mon, const QObject *data);
-void pci_device_hot_add(Monitor *mon, const QDict *qdict, QObject **ret_data);
+void pci_device_hot_add(Monitor *mon, const QDict *qdict);
 void drive_hot_add(Monitor *mon, const QDict *qdict);
-void pci_device_hot_remove(Monitor *mon, const char *pci_addr);
-void do_pci_device_hot_remove(Monitor *mon, const QDict *qdict,
-                              QObject **ret_data);
+int pci_device_hot_remove(Monitor *mon, const char *pci_addr);
+void do_pci_device_hot_remove(Monitor *mon, const QDict *qdict);
 
 /* serial ports */
 
@@ -236,12 +244,6 @@ extern CharDriverState *serial_hds[MAX_SERIAL_PORTS];
 #define MAX_PARALLEL_PORTS 3
 
 extern CharDriverState *parallel_hds[MAX_PARALLEL_PORTS];
-
-/* virtio consoles */
-
-#define MAX_VIRTIO_CONSOLES 1
-
-extern CharDriverState *virtcon_hds[MAX_VIRTIO_CONSOLES];
 
 #define TFR(expr) do { if ((expr) != -1) break; } while (errno == EINTR)
 
@@ -264,6 +266,14 @@ void do_usb_add(Monitor *mon, const QDict *qdict);
 void do_usb_del(Monitor *mon, const QDict *qdict);
 void usb_info(Monitor *mon);
 
+void rtc_change_mon_event(struct tm *tm);
+
 void register_devices(void);
 
+int do_snapshot_blkdev(Monitor *mon, const QDict *qdict, QObject **ret_data);
+int do_block_resize(Monitor *mon, const QDict *qdict, QObject **ret_data);
+
+void add_boot_device_path(int32_t bootindex, DeviceState *dev,
+                          const char *suffix);
+char *get_boot_devices_list(uint32_t *size);
 #endif

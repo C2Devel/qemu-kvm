@@ -68,7 +68,7 @@ typedef void VncSendHextileTile(VncState *vs,
                                 void *last_fg,
                                 int *has_bg, int *has_fg);
 
-#define VNC_MAX_WIDTH 2048
+#define VNC_MAX_WIDTH 2560
 #define VNC_MAX_HEIGHT 2048
 #define VNC_DIRTY_WORDS (VNC_MAX_WIDTH / (16 * 32))
 
@@ -104,6 +104,7 @@ struct VncDisplay
 
     char *display;
     char *password;
+    time_t expires;
     int auth;
 #ifdef CONFIG_VNC_TLS
     int subauth; /* Used by VeNCrypt */
@@ -128,6 +129,8 @@ struct VncState
     int absolute;
     int last_x;
     int last_y;
+    int client_width;
+    int client_height;
 
     uint32_t vnc_encoding;
     uint8_t tight_quality;
@@ -144,6 +147,8 @@ struct VncState
     VncStateSASL sasl;
 #endif
 
+    QObject *info;
+
     Buffer output;
     Buffer input;
     /* current output mode information */
@@ -158,11 +163,13 @@ struct VncState
     size_t read_handler_expect;
     /* input */
     uint8_t modifiers_state[256];
+    QEMUPutLEDEntry *led;
 
     Buffer zlib;
     Buffer zlib_tmp;
     z_stream zlib_stream[4];
 
+    Notifier mouse_mode_notifier;
     VncState *next;
 };
 

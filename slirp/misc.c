@@ -119,6 +119,7 @@ fork_exec(struct socket *so, const char *ex, int do_pty)
 	char *bptr;
 	const char *curarg;
 	int c, i, ret;
+	pid_t pid;
 
 	DEBUG_CALL("fork_exec");
 	DEBUG_ARG("so = %lx", (long)so);
@@ -142,7 +143,8 @@ fork_exec(struct socket *so, const char *ex, int do_pty)
 		}
 	}
 
-	switch(fork()) {
+	pid = fork();
+	switch(pid) {
 	 case -1:
 		lprint("Error: fork failed: %s\n", strerror(errno));
 		close(s);
@@ -179,7 +181,7 @@ fork_exec(struct socket *so, const char *ex, int do_pty)
 		   close(s);
 
 		i = 0;
-		bptr = strdup(ex); /* No need to free() this */
+		bptr = qemu_strdup(ex); /* No need to free() this */
 		if (do_pty == 1) {
 			/* Setup "slirp.telnetd -x" */
 			argv[i++] = "slirp.telnetd";
@@ -200,18 +202,13 @@ fork_exec(struct socket *so, const char *ex, int do_pty)
 		execvp(argv[0], (char **)argv);
 
 		/* Ooops, failed, let's tell the user why */
-		  {
-			  char buff[256];
-
-			  snprintf(buff, sizeof(buff),
-                                   "Error: execvp of %s failed: %s\n",
-                                   argv[0], strerror(errno));
-			  write(2, buff, strlen(buff)+1);
-		  }
+        fprintf(stderr, "Error: execvp of %s failed: %s\n",
+                argv[0], strerror(errno));
 		close(0); close(1); close(2); /* XXX */
 		exit(1);
 
 	 default:
+		qemu_add_child_watch(pid);
 		if (do_pty == 2) {
 			close(s);
 			so->s = master;
@@ -266,7 +263,7 @@ void lprint(const char *format, ...)
     va_list args;
 
     va_start(args, format);
-    monitor_vprintf(cur_mon, format, args);
+    monitor_vprintf(default_mon, format, args);
     va_end(args);
 }
 

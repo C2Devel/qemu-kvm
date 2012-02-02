@@ -22,6 +22,7 @@
  * THE SOFTWARE.
  */
 #include "qemu-common.h"
+#include "trace.h"
 #include <stdlib.h>
 
 static void *oom_check(void *ptr)
@@ -39,6 +40,7 @@ void *get_mmap_addr(unsigned long size)
 
 void qemu_free(void *ptr)
 {
+    trace_qemu_free(ptr);
     free(ptr);
 }
 
@@ -53,18 +55,26 @@ static int allow_zero_malloc(void)
 
 void *qemu_malloc(size_t size)
 {
+    void *ptr;
     if (!size && !allow_zero_malloc()) {
         abort();
     }
-    return oom_check(malloc(size ? size : 1));
+    ptr = oom_check(malloc(size ? size : 1));
+    trace_qemu_malloc(size, ptr);
+    return ptr;
 }
 
 void *qemu_realloc(void *ptr, size_t size)
 {
+    void *newptr;
     if (size) {
-        return oom_check(realloc(ptr, size));
+        newptr = oom_check(realloc(ptr, size));
+        trace_qemu_realloc(ptr, size, newptr);
+        return newptr;
     } else if (allow_zero_malloc()) {
-        return oom_check(realloc(ptr, size ? size : 1));
+        newptr = oom_check(realloc(ptr, size ? size : 1));
+        trace_qemu_realloc(ptr, size, newptr);
+        return newptr;
     }
     abort();
 }

@@ -105,5 +105,3 @@ Cyrillic_yu 0x34 altgr
 Cyrillic_YU 0x34 shift altgr
 slash 0x35
 question 0x35 shift
-slash 0x56 altgr
-bar 0x56 shift altgr

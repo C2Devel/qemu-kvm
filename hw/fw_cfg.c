@@ -50,6 +50,7 @@ struct _FWCfgState {
     FWCfgFiles *files;
     uint16_t cur_entry;
     uint32_t cur_offset;
+    Notifier machine_ready;
 };
 
 static void fw_cfg_write(FWCfgState *s, uint8_t value)
@@ -274,11 +275,10 @@ int fw_cfg_add_callback(FWCfgState *s, uint16_t key, FWCfgCallback callback,
     return 1;
 }
 
-int fw_cfg_add_file(FWCfgState *s,  const char *dir, const char *filename,
-                    uint8_t *data, uint32_t len)
+int fw_cfg_add_file(FWCfgState *s,  const char *filename, uint8_t *data,
+                    uint32_t len)
 {
-    const char *basename;
-    int index;
+    int i, index;
 
     if (!s->files) {
         int dsize = sizeof(uint32_t) + sizeof(FWCfgFile) * FW_CFG_FILE_SLOTS;
@@ -294,19 +294,16 @@ int fw_cfg_add_file(FWCfgState *s,  const char *dir, const char *filename,
 
     fw_cfg_add_bytes(s, FW_CFG_FILE_FIRST + index, data, len);
 
-    basename = strrchr(filename, '/');
-    if (basename) {
-        basename++;
-    } else {
-        basename = filename;
+    pstrcpy(s->files->f[index].name, sizeof(s->files->f[index].name),
+            filename);
+    for (i = 0; i < index; i++) {
+        if (strcmp(s->files->f[index].name, s->files->f[i].name) == 0) {
+            FW_CFG_DPRINTF("%s: skip duplicate: %s\n", __FUNCTION__,
+                           s->files->f[index].name);
+            return 1;
+        }
     }
-    if (dir) {
-        snprintf(s->files->f[index].name, sizeof(s->files->f[index].name),
-                 "%s/%s", dir, basename);
-    } else {
-        snprintf(s->files->f[index].name, sizeof(s->files->f[index].name),
-                 "%s", basename);
-    }
+
     s->files->f[index].size   = cpu_to_be32(len);
     s->files->f[index].select = cpu_to_be16(FW_CFG_FILE_FIRST + index);
     FW_CFG_DPRINTF("%s: #%d: %s (%d bytes)\n", __FUNCTION__,
@@ -314,6 +311,15 @@ int fw_cfg_add_file(FWCfgState *s,  const char *dir, const char *filename,
 
     s->files->count = cpu_to_be32(index+1);
     return 1;
+}
+
+static void fw_cfg_machine_ready(struct Notifier* n)
+{
+    uint32_t len;
+    FWCfgState *s = container_of(n, FWCfgState, machine_ready);
+    char *bootindex = get_boot_devices_list(&len);
+
+    fw_cfg_add_file(s, "bootorder", (uint8_t*)bootindex, len);
 }
 
 FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
@@ -348,8 +354,12 @@ FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
     fw_cfg_add_i16(s, FW_CFG_MAX_CPUS, (uint16_t)max_cpus);
     fw_cfg_add_i16(s, FW_CFG_BOOT_MENU, (uint16_t)boot_menu);
 
-    vmstate_register(-1, &vmstate_fw_cfg, s);
+    vmstate_register(NULL, -1, &vmstate_fw_cfg, s);
     qemu_register_reset(fw_cfg_reset, s);
+
+
+    s->machine_ready.notify = fw_cfg_machine_ready;
+    qemu_add_machine_init_done_notifier(&s->machine_ready);
 
     return s;
 }

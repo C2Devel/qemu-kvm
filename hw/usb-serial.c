@@ -9,6 +9,7 @@
  */
 
 #include "qemu-common.h"
+#include "qemu-error.h"
 #include "usb.h"
 #include "qemu-char.h"
 
@@ -497,12 +498,28 @@ static int usb_serial_can_read(void *opaque)
 static void usb_serial_read(void *opaque, const uint8_t *buf, int size)
 {
     USBSerialState *s = opaque;
-    int first_size = RECV_BUF - s->recv_ptr;
-    if (first_size > size)
-        first_size = size;
-    memcpy(s->recv_buf + s->recv_ptr + s->recv_used, buf, first_size);
-    if (size > first_size)
-        memcpy(s->recv_buf, buf + first_size, size - first_size);
+    int first_size, start;
+
+    /* room in the buffer? */
+    if (size > (RECV_BUF - s->recv_used))
+        size = RECV_BUF - s->recv_used;
+
+    start = s->recv_ptr + s->recv_used;
+    if (start < RECV_BUF) {
+        /* copy data to end of buffer */
+        first_size = RECV_BUF - start;
+        if (first_size > size)
+            first_size = size;
+
+        memcpy(s->recv_buf + start, buf, first_size);
+
+        /* wrap around to front if needed */
+        if (size > first_size)
+            memcpy(s->recv_buf, buf + first_size, size - first_size);
+    } else {
+        start -= RECV_BUF;
+        memcpy(s->recv_buf + start, buf, size);
+    }
     s->recv_used += size;
 }
 
@@ -523,13 +540,18 @@ static void usb_serial_event(void *opaque, int event)
     }
 }
 
+static const QemuChrHandlers usb_serial_handlers = {
+    .fd_can_read = usb_serial_can_read,
+    .fd_read = usb_serial_read,
+    .fd_event = usb_serial_event,
+};
+
 static int usb_serial_initfn(USBDevice *dev)
 {
     USBSerialState *s = DO_UPCAST(USBSerialState, dev, dev);
     s->dev.speed = USB_SPEED_FULL;
 
-    qemu_chr_add_handlers(s->cs, usb_serial_can_read, usb_serial_read,
-                          usb_serial_event, s);
+    qemu_chr_add_handlers(s->cs, &usb_serial_handlers, s);
     usb_serial_handle_reset(dev);
     return 0;
 }
@@ -548,26 +570,26 @@ static USBDevice *usb_serial_init(const char *filename)
         if (strstart(filename, "vendorid=", &p)) {
             vendorid = strtol(p, &e, 16);
             if (e == p || (*e && *e != ',' && *e != ':')) {
-                qemu_error("bogus vendor ID %s\n", p);
+                error_report("bogus vendor ID %s", p);
                 return NULL;
             }
             filename = e;
         } else if (strstart(filename, "productid=", &p)) {
             productid = strtol(p, &e, 16);
             if (e == p || (*e && *e != ',' && *e != ':')) {
-                qemu_error("bogus product ID %s\n", p);
+                error_report("bogus product ID %s", p);
                 return NULL;
             }
             filename = e;
         } else {
-            qemu_error("unrecognized serial USB option %s\n", filename);
+            error_report("unrecognized serial USB option %s", filename);
             return NULL;
         }
         while(*filename == ',')
             filename++;
     }
     if (!*filename) {
-        qemu_error("character device specification needed\n");
+        error_report("character device specification needed");
         return NULL;
     }
     filename++;
@@ -583,7 +605,7 @@ static USBDevice *usb_serial_init(const char *filename)
         qdev_prop_set_uint16(&dev->qdev, "vendorid", vendorid);
     if (productid)
         qdev_prop_set_uint16(&dev->qdev, "productid", productid);
-    qdev_init(&dev->qdev);
+    qdev_init_nofail(&dev->qdev);
 
     return dev;
 }
@@ -599,7 +621,7 @@ static USBDevice *usb_braille_init(const char *unused)
 
     dev = usb_create(NULL /* FIXME */, "usb-braille");
     qdev_prop_set_chr(&dev->qdev, "chardev", cdrv);
-    qdev_init(&dev->qdev);
+    qdev_init_nofail(&dev->qdev);
 
     return dev;
 }

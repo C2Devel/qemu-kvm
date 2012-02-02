@@ -1,4 +1,5 @@
 #include "qemu-common.h"
+#include "qemu-error.h"
 #include "qemu-option.h"
 #include "qemu-config.h"
 #include "sysemu.h"
@@ -53,7 +54,7 @@ QemuOptsList qemu_drive_opts = {
         },{
             .name = "cache",
             .type = QEMU_OPT_STRING,
-            .help = "host cache usage (none, writeback, writethrough)",
+            .help = "host cache usage (none, writeback, writethrough, unsafe)",
         },{
             .name = "aio",
             .type = QEMU_OPT_STRING,
@@ -87,8 +88,23 @@ QemuOptsList qemu_drive_opts = {
     },
 };
 
+QemuOptsList qemu_simple_drive_opts = {
+    .name = "simple-drive",
+    .implied_opt_name = "format",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_simple_drive_opts.head),
+    .desc = {
+        /*
+         * no elements => accept any
+         * sanity checking will happen later
+         * when setting device properties
+         */
+        { /* end if list */ }
+    }
+};
+
 QemuOptsList qemu_chardev_opts = {
     .name = "chardev",
+    .implied_opt_name = "backend",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_chardev_opts.head),
     .desc = {
         {
@@ -148,6 +164,12 @@ QemuOptsList qemu_chardev_opts = {
         },{
             .name = "signal",
             .type = QEMU_OPT_BOOL,
+        },{
+            .name = "name",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "debug",
+            .type = QEMU_OPT_NUMBER,
         },
         { /* end if list */ }
     },
@@ -155,6 +177,7 @@ QemuOptsList qemu_chardev_opts = {
 
 QemuOptsList qemu_device_opts = {
     .name = "device",
+    .implied_opt_name = "driver",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_device_opts.head),
     .desc = {
         /*
@@ -168,6 +191,7 @@ QemuOptsList qemu_device_opts = {
 
 QemuOptsList qemu_netdev_opts = {
     .name = "netdev",
+    .implied_opt_name = "type",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_netdev_opts.head),
     .desc = {
         /*
@@ -180,6 +204,7 @@ QemuOptsList qemu_netdev_opts = {
 
 QemuOptsList qemu_net_opts = {
     .name = "net",
+    .implied_opt_name = "type",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_net_opts.head),
     .desc = {
         /*
@@ -200,11 +225,9 @@ QemuOptsList qemu_rtc_opts = {
         },{
             .name = "clock",
             .type = QEMU_OPT_STRING,
-#ifdef TARGET_I386
         },{
             .name = "driftfix",
             .type = QEMU_OPT_STRING,
-#endif
         },
         { /* end if list */ }
     },
@@ -230,6 +253,7 @@ QemuOptsList qemu_global_opts = {
 
 QemuOptsList qemu_mon_opts = {
     .name = "mon",
+    .implied_opt_name = "chardev",
     .head = QTAILQ_HEAD_INITIALIZER(qemu_mon_opts.head),
     .desc = {
         {
@@ -246,8 +270,148 @@ QemuOptsList qemu_mon_opts = {
     },
 };
 
-static QemuOptsList *lists[] = {
+QemuOptsList qemu_cpudef_opts = {
+    .name = "cpudef",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_cpudef_opts.head),
+    .desc = {
+        {
+            .name = "name",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "level",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "vendor",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "family",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "model",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "stepping",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "feature_edx",      /* cpuid 0000_0001.edx */
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "feature_ecx",      /* cpuid 0000_0001.ecx */
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "extfeature_edx",   /* cpuid 8000_0001.edx */
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "extfeature_ecx",   /* cpuid 8000_0001.ecx */
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "xlevel",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "model_id",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "vendor_override",
+            .type = QEMU_OPT_NUMBER,
+        },
+        { /* end of list */ }
+    },
+};
+
+QemuOptsList qemu_spice_opts = {
+    .name = "spice",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_spice_opts.head),
+    .desc = {
+        {
+            .name = "port",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "tls-port",
+            .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "addr",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "ipv4",
+            .type = QEMU_OPT_BOOL,
+        },{
+            .name = "ipv6",
+            .type = QEMU_OPT_BOOL,
+        },{
+            .name = "password",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "disable-ticketing",
+            .type = QEMU_OPT_BOOL,
+        },{
+            .name = "x509-dir",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "x509-key-file",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "x509-key-password",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "x509-cert-file",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "x509-cacert-file",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "x509-dh-key-file",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "tls-ciphers",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "tls-channel",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "plaintext-channel",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "image-compression",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "jpeg-wan-compression",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "zlib-glz-wan-compression",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "streaming-video",
+            .type = QEMU_OPT_STRING,
+        },{
+            .name = "agent-mouse",
+            .type = QEMU_OPT_BOOL,
+        },{
+            .name = "playback-compression",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end if list */ }
+    },
+};
+
+QemuOptsList qemu_option_rom_opts = {
+    .name = "option-rom",
+    .implied_opt_name = "romfile",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_option_rom_opts.head),
+    .desc = {
+        {
+            .name = "bootindex",
+            .type = QEMU_OPT_NUMBER,
+        }, {
+            .name = "romfile",
+            .type = QEMU_OPT_STRING,
+        },
+        { /* end if list */ }
+    },
+};
+
+static QemuOptsList *vm_config_groups[] = {
     &qemu_drive_opts,
+    &qemu_simple_drive_opts,
     &qemu_chardev_opts,
     &qemu_device_opts,
     &qemu_netdev_opts,
@@ -255,10 +419,13 @@ static QemuOptsList *lists[] = {
     &qemu_rtc_opts,
     &qemu_global_opts,
     &qemu_mon_opts,
+    &qemu_cpudef_opts,
+    &qemu_spice_opts,
+    &qemu_option_rom_opts,
     NULL,
 };
 
-static QemuOptsList *find_list(const char *group)
+static QemuOptsList *find_list(QemuOptsList **lists, const char *group)
 {
     int i;
 
@@ -267,9 +434,14 @@ static QemuOptsList *find_list(const char *group)
             break;
     }
     if (lists[i] == NULL) {
-        qemu_error("there is no option group \"%s\"\n", group);
+        error_report("there is no option group \"%s\"", group);
     }
     return lists[i];
+}
+
+QemuOptsList *qemu_find_opts(const char *group)
+{
+    return find_list(vm_config_groups, group);
 }
 
 int qemu_set_option(const char *str)
@@ -281,19 +453,19 @@ int qemu_set_option(const char *str)
 
     rc = sscanf(str, "%63[^.].%63[^.].%63[^=]%n", group, id, arg, &offset);
     if (rc < 3 || str[offset] != '=') {
-        qemu_error("can't parse: \"%s\"\n", str);
+        error_report("can't parse: \"%s\"", str);
         return -1;
     }
 
-    list = find_list(group);
+    list = qemu_find_opts(group);
     if (list == NULL) {
         return -1;
     }
 
     opts = qemu_opts_find(list, id);
     if (!opts) {
-        qemu_error("there is no %s \"%s\" defined\n",
-                   list->name, id);
+        error_report("there is no %s \"%s\" defined",
+                     list->name, id);
         return -1;
     }
 
@@ -311,7 +483,7 @@ int qemu_global_option(const char *str)
 
     rc = sscanf(str, "%63[^.].%63[^=]%n", driver, property, &offset);
     if (rc < 2 || str[offset] != '=') {
-        qemu_error("can't parse: \"%s\"\n", str);
+        error_report("can't parse: \"%s\"", str);
         return -1;
     }
 
@@ -320,23 +492,6 @@ int qemu_global_option(const char *str)
     qemu_opt_set(opts, "property", property);
     qemu_opt_set(opts, "value", str+offset+1);
     return 0;
-}
-
-static int qemu_add_one_global(QemuOpts *opts, void *opaque)
-{
-    GlobalProperty *g;
-
-    g = qemu_mallocz(sizeof(*g));
-    g->driver   = qemu_opt_get(opts, "driver");
-    g->property = qemu_opt_get(opts, "property");
-    g->value    = qemu_opt_get(opts, "value");
-    qdev_prop_register_global(g);
-    return 0;
-}
-
-void qemu_add_globals(void)
-{
-    qemu_opts_foreach(&qemu_global_opts, qemu_add_one_global, NULL, 0);
 }
 
 struct ConfigWriteData {
@@ -370,6 +525,7 @@ static int config_write_opts(QemuOpts *opts, void *opaque)
 void qemu_config_write(FILE *fp)
 {
     struct ConfigWriteData data = { .fp = fp };
+    QemuOptsList **lists = vm_config_groups;
     int i;
 
     fprintf(fp, "# qemu config file\n\n");
@@ -379,13 +535,17 @@ void qemu_config_write(FILE *fp)
     }
 }
 
-int qemu_config_parse(FILE *fp)
+int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
 {
     char line[1024], group[64], id[64], arg[64], value[1024];
+    Location loc;
     QemuOptsList *list = NULL;
     QemuOpts *opts = NULL;
+    int res = -1, lno = 0;
 
+    loc_push_none(&loc);
     while (fgets(line, sizeof(line), fp) != NULL) {
+        loc_set_file(fname, ++lno);
         if (line[0] == '\n') {
             /* skip empty lines */
             continue;
@@ -396,35 +556,69 @@ int qemu_config_parse(FILE *fp)
         }
         if (sscanf(line, "[%63s \"%63[^\"]\"]", group, id) == 2) {
             /* group with id */
-            list = find_list(group);
+            list = find_list(lists, group);
             if (list == NULL)
-                return -1;
+                goto out;
             opts = qemu_opts_create(list, id, 1);
             continue;
         }
         if (sscanf(line, "[%63[^]]]", group) == 1) {
             /* group without id */
-            list = find_list(group);
+            list = find_list(lists, group);
             if (list == NULL)
-                return -1;
+                goto out;
             opts = qemu_opts_create(list, NULL, 0);
             continue;
         }
         if (sscanf(line, " %63s = \"%1023[^\"]\"", arg, value) == 2) {
             /* arg = value */
             if (opts == NULL) {
-                fprintf(stderr, "no group defined\n");
-                return -1;
+                error_report("no group defined");
+                goto out;
             }
             if (qemu_opt_set(opts, arg, value) != 0) {
-                fprintf(stderr, "failed to set \"%s\" for %s\n",
-                        arg, group);
-                return -1;
+                goto out;
             }
             continue;
         }
-        fprintf(stderr, "parse error: %s\n", line);
-        return -1;
+        error_report("parse error");
+        goto out;
     }
-    return 0;
+    if (ferror(fp)) {
+        error_report("error reading file");
+        goto out;
+    }
+    res = 0;
+out:
+    loc_pop(&loc);
+    return res;
+}
+
+/* attempt to open and parse config file, report problems if vflag
+ */
+int qemu_read_config_file(const char *filename, int vflag)
+{
+    FILE *f = fopen(filename, "r");
+    int rv = 0;
+    const char *err;
+
+    if (f == NULL) {
+        rv = -errno;
+        err = "open";
+    }
+    else if (qemu_config_parse(f, vm_config_groups, filename) != 0) {
+        rv = -EINVAL;
+        err = "parse";
+    }
+    else if (vflag) {
+        fprintf(stderr, "parsed config file %s\n", filename);
+    }
+    if (f) {
+        fclose(f);
+    }
+    if (rv && vflag) {
+        fprintf(stderr, "can't %s config file %s: %s\n",
+                err, filename, strerror(-rv));
+    }
+    return rv;
 }

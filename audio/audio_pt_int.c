@@ -1,5 +1,6 @@
 #include "qemu-common.h"
 #include "audio.h"
+#include <signal.h>
 
 #define AUDIO_CAP "audio-pt"
 
@@ -23,6 +24,7 @@ int audio_pt_init (struct audio_pt *p, void *(*func) (void *),
 {
     int err, err2;
     const char *efunc;
+    sigset_t set, old;
 
     p->drv = drv;
 
@@ -38,7 +40,14 @@ int audio_pt_init (struct audio_pt *p, void *(*func) (void *),
         goto err1;
     }
 
+    sigemptyset(&set);
+    sigaddset(&set, SIGUSR2);
+    sigaddset(&set, SIGIO);
+    sigaddset(&set, SIGALRM);
+
+    pthread_sigmask(SIG_BLOCK, &set, &old);
     err = pthread_create (&p->thread, NULL, func, opaque);
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
     if (err) {
         efunc = "pthread_create";
         goto err2;

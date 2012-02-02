@@ -87,12 +87,6 @@ typedef void PCIMapIORegionFunc(PCIDevice *pci_dev, int region_num,
                                 pcibus_t addr, pcibus_t size, int type);
 typedef int PCIUnregisterFunc(PCIDevice *pci_dev);
 
-typedef void PCICapConfigWriteFunc(PCIDevice *pci_dev,
-                                   uint32_t address, uint32_t val, int len);
-typedef uint32_t PCICapConfigReadFunc(PCIDevice *pci_dev,
-                                      uint32_t address, int len);
-typedef int PCICapConfigInitFunc(PCIDevice *pci_dev);
-
 typedef struct PCIIORegion {
     pcibus_t addr; /* current PCI mapping address. -1 means not mapped */
 #define PCI_BAR_UNMAPPED (~(pcibus_t)0)
@@ -105,86 +99,10 @@ typedef struct PCIIORegion {
 #define PCI_ROM_SLOT 6
 #define PCI_NUM_REGIONS 7
 
-/* Declarations from linux/pci_regs.h */
-#define PCI_VENDOR_ID		0x00	/* 16 bits */
-#define PCI_DEVICE_ID		0x02	/* 16 bits */
-#define PCI_COMMAND		0x04	/* 16 bits */
-#define  PCI_COMMAND_IO		0x1	/* Enable response in I/O space */
-#define  PCI_COMMAND_MEMORY	0x2	/* Enable response in Memory space */
-#define  PCI_COMMAND_MASTER	0x4	/* Enable bus master */
-#define PCI_STATUS              0x06    /* 16 bits */
-#define  PCI_STATUS_INTERRUPT   0x08
-#define PCI_REVISION_ID         0x08    /* 8 bits  */
-#define PCI_CLASS_PROG		0x09	/* Reg. Level Programming Interface */
-#define PCI_CLASS_DEVICE        0x0a    /* Device class */
-#define PCI_CACHE_LINE_SIZE	0x0c	/* 8 bits */
-#define PCI_LATENCY_TIMER	0x0d	/* 8 bits */
-#define PCI_HEADER_TYPE         0x0e    /* 8 bits */
-#define  PCI_HEADER_TYPE_NORMAL		0
-#define  PCI_HEADER_TYPE_BRIDGE		1
-#define  PCI_HEADER_TYPE_CARDBUS	2
+#include "pci_regs.h"
+
+/* PCI HEADER_TYPE */
 #define  PCI_HEADER_TYPE_MULTI_FUNCTION 0x80
-#define PCI_BASE_ADDRESS_0	0x10	/* 32 bits */
-#define  PCI_BASE_ADDRESS_SPACE_IO	0x01
-#define  PCI_BASE_ADDRESS_SPACE_MEMORY	0x00
-#define  PCI_BASE_ADDRESS_MEM_TYPE_64	0x04	/* 64 bit address */
-#define  PCI_BASE_ADDRESS_MEM_PREFETCH	0x08	/* prefetchable? */
-#define PCI_PRIMARY_BUS		0x18	/* Primary bus number */
-#define PCI_SECONDARY_BUS	0x19	/* Secondary bus number */
-#define PCI_SUBORDINATE_BUS	0x1a	/* Highest bus number behind the bridge */
-#define PCI_IO_BASE             0x1c    /* I/O range behind the bridge */
-#define PCI_IO_LIMIT            0x1d
-#define  PCI_IO_RANGE_TYPE_32	0x01
-#define  PCI_IO_RANGE_MASK      (~0x0fUL)
-#define PCI_SEC_STATUS		0x1e	/* Secondary status register, only bit 14 used */
-#define PCI_MEMORY_BASE         0x20    /* Memory range behind */
-#define PCI_MEMORY_LIMIT        0x22
-#define  PCI_MEMORY_RANGE_MASK  (~0x0fUL)
-#define PCI_PREF_MEMORY_BASE    0x24    /* Prefetchable memory range behind */
-#define PCI_PREF_MEMORY_LIMIT   0x26
-#define  PCI_PREF_RANGE_MASK    (~0x0fUL)
-#define  PCI_PREF_RANGE_TYPE_64 0x01
-#define PCI_PREF_BASE_UPPER32   0x28    /* Upper half of prefetchable memory range */
-#define PCI_PREF_LIMIT_UPPER32	0x2c
-#define PCI_SUBSYSTEM_VENDOR_ID 0x2c    /* 16 bits */
-#define PCI_SUBSYSTEM_ID        0x2e    /* 16 bits */
-#define PCI_ROM_ADDRESS		0x30	/* Bits 31..11 are address, 10..1 reserved */
-#define  PCI_ROM_ADDRESS_ENABLE	0x01
-#define PCI_IO_BASE_UPPER16     0x30    /* Upper half of I/O addresses */
-#define PCI_IO_LIMIT_UPPER16    0x32
-#define PCI_CAPABILITY_LIST	0x34	/* Offset of first capability list entry */
-#define PCI_ROM_ADDRESS1	0x38	/* Same as PCI_ROM_ADDRESS, but for htype 1 */
-#define PCI_INTERRUPT_LINE	0x3c	/* 8 bits */
-#define PCI_INTERRUPT_PIN	0x3d	/* 8 bits */
-#define PCI_MIN_GNT		0x3e	/* 8 bits */
-#define PCI_BRIDGE_CONTROL      0x3e
-#define PCI_MAX_LAT		0x3f	/* 8 bits */
-
-/* Capability lists */
-#define PCI_CAP_LIST_ID		0	/* Capability ID */
-#define PCI_CAP_LIST_NEXT	1	/* Next capability in the list */
-
-#define PCI_REVISION            0x08    /* obsolete, use PCI_REVISION_ID */
-#define PCI_SUBVENDOR_ID        0x2c    /* obsolete, use PCI_SUBSYSTEM_VENDOR_ID */
-#define PCI_SUBDEVICE_ID        0x2e    /* obsolete, use PCI_SUBSYSTEM_ID */
-
-/* Bits in the PCI Status Register (PCI 2.3 spec) */
-#define PCI_STATUS_RESERVED1	0x007
-#define PCI_STATUS_INT_STATUS	0x008
-#ifndef PCI_STATUS_CAP_LIST
-#define PCI_STATUS_CAP_LIST	0x010
-#endif
-#ifndef PCI_STATUS_66MHZ
-#define PCI_STATUS_66MHZ	0x020
-#endif
-
-#define PCI_STATUS_RESERVED2	0x040
-
-#ifndef PCI_STATUS_FAST_BACK
-#define PCI_STATUS_FAST_BACK	0x080
-#endif
-
-#define PCI_STATUS_DEVSEL	0x600
 
 #define PCI_STATUS_RESERVED_MASK_LO (PCI_STATUS_RESERVED1 | \
                 PCI_STATUS_INT_STATUS | PCI_STATUS_CAPABILITIES | \
@@ -212,10 +130,8 @@ enum {
     QEMU_PCI_CAP_EXPRESS = 0x2,
 };
 
-#define PCI_CAPABILITY_CONFIG_MAX_LENGTH 0x60
-#define PCI_CAPABILITY_CONFIG_DEFAULT_START_ADDR 0x40
-#define PCI_CAPABILITY_CONFIG_MSI_LENGTH 0x10
-#define PCI_CAPABILITY_CONFIG_MSIX_LENGTH 0x10
+typedef int (*msix_mask_notifier_func)(PCIDevice *, unsigned vector,
+				       int masked);
 
 struct PCIDevice {
     DeviceState qdev;
@@ -229,8 +145,8 @@ struct PCIDevice {
     /* Used to implement R/W bytes */
     uint8_t *wmask;
 
-    /* Used to allocate config space for capabilities. */
-    uint8_t *used;
+    /* Used to allocate config space and track capabilities. */
+    uint8_t *config_map;
 
     /* the following fields are read only */
     PCIBus *bus;
@@ -271,6 +187,7 @@ struct PCIDevice {
     /* Location of option rom */
     char *romfile;
     ram_addr_t rom_offset;
+    uint32_t rom_bar;
 
     /* How much space does an MSIX table need. */
     /* The spec requires giving the table structure
@@ -281,13 +198,7 @@ struct PCIDevice {
 
     struct kvm_irq_routing_entry *msix_irq_entries;
 
-    /* Device capability configuration space */
-    struct {
-        int supported;
-        unsigned int start, length;
-        PCICapConfigReadFunc *config_read;
-        PCICapConfigWriteFunc *config_write;
-    } cap;
+    msix_mask_notifier_func msix_mask_notifier;
 };
 
 PCIDevice *pci_register_device(PCIBus *bus, const char *name,
@@ -299,19 +210,15 @@ void pci_register_bar(PCIDevice *pci_dev, int region_num,
                             pcibus_t size, int type,
                             PCIMapIORegionFunc *map_func);
 
-int pci_enable_capability_support(PCIDevice *pci_dev,
-                                  uint32_t config_start,
-                                  PCICapConfigReadFunc *config_read,
-                                  PCICapConfigWriteFunc *config_write,
-                                  PCICapConfigInitFunc *config_init);
+void pci_map_option_rom(PCIDevice *pdev, int region_num, pcibus_t addr,
+                        pcibus_t size, int type);
 
 int pci_map_irq(PCIDevice *pci_dev, int pin);
 
-int pci_add_capability(PCIDevice *pci_dev, uint8_t cap_id, uint8_t cap_size);
+int pci_add_capability(PCIDevice *pdev, uint8_t cap_id,
+                       uint8_t offset, uint8_t size);
 
 void pci_del_capability(PCIDevice *pci_dev, uint8_t cap_id, uint8_t cap_size);
-
-void pci_reserve_capability(PCIDevice *pci_dev, uint8_t offset, uint8_t size);
 
 uint8_t pci_find_capability(PCIDevice *pci_dev, uint8_t cap_id);
 
@@ -321,12 +228,6 @@ void pci_default_write_config(PCIDevice *d,
                               uint32_t address, uint32_t val, int len);
 void pci_device_save(PCIDevice *s, QEMUFile *f);
 int pci_device_load(PCIDevice *s, QEMUFile *f);
-uint32_t pci_default_cap_read_config(PCIDevice *pci_dev,
-                                     uint32_t address, int len);
-void pci_default_cap_write_config(PCIDevice *pci_dev,
-                                  uint32_t address, uint32_t val, int len);
-int pci_access_cap_config(PCIDevice *pci_dev, uint32_t address, int len);
-
 typedef void (*pci_set_irq_fn)(void *opaque, int irq_num, int level);
 typedef int (*pci_map_irq_fn)(PCIDevice *pci_dev, int irq_num);
 typedef int (*pci_hotplug_fn)(PCIDevice *pci_dev, int state);
@@ -441,6 +342,9 @@ typedef struct {
 
     /* pcie stuff */
     int is_express;   /* is this device pci express? */
+
+    /* device isn't hot-pluggable */
+    int no_hotplug;
 
     /* rom bar */
     const char *romfile;

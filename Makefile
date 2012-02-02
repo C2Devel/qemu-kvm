@@ -1,7 +1,10 @@
 # Makefile for QEMU.
 
 # This needs to be defined before rules.mak
-GENERATED_HEADERS = config-host.h
+GENERATED_HEADERS = config-host.h trace.h config-all-devices.h
+ifeq ($(TRACE_BACKEND),dtrace)
+GENERATED_HEADERS += trace-dtrace.h
+endif
 
 ifneq ($(wildcard config-host.mak),)
 # Put the all: rule here so that config-host.mak can contain dependencies.
@@ -30,7 +33,7 @@ VPATH=$(SRC_PATH):$(SRC_PATH)/hw
 LIBS+=-lz $(LIBS_TOOLS)
 
 ifdef BUILD_DOCS
-DOCS=qemu-doc.html qemu-tech.html qemu.1 qemu-img.1 qemu-nbd.8
+DOCS=qemu-doc.html qemu-tech.html qemu.1 qemu-img.1 qemu-nbd.8 QMP/qmp-commands.txt
 else
 DOCS=
 endif
@@ -60,6 +63,9 @@ build-all: $(DOCS) $(TOOLS) recurse-all
 
 config-host.h: config-host.h-timestamp
 config-host.h-timestamp: config-host.mak
+
+config-all-devices.h: config-all-devices.h-timestamp
+config-all-devices.h-timestamp: config-all-devices.mak
 
 SUBDIR_RULES=$(patsubst %,subdir-%, $(TARGET_DIRS))
 
@@ -103,14 +109,14 @@ qobject-obj-y += qerror.o
 # block-obj-y is code used by both qemu system emulation and qemu-img
 
 block-obj-y = cutils.o cache-utils.o qemu-malloc.o qemu-option.o module.o
-block-obj-y += nbd.o block.o aio.o aes.o osdep.o
+block-obj-y += nbd.o block.o aio.o aes.o osdep.o qemu-config.o
 block-obj-$(CONFIG_POSIX) += posix-aio-compat.o
 block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
 block-obj-$(CONFIG_POSIX) += compatfd.o
 
-block-nested-y += cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
-block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o
-block-nested-y += parallels.o nbd.o
+block-nested-y += raw.o cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
+block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow2-cache.o
+block-nested-y += parallels.o nbd.o blkdebug.o
 block-nested-$(CONFIG_WIN32) += raw-win32.o
 block-nested-$(CONFIG_POSIX) += raw-posix.o
 block-nested-$(CONFIG_CURL) += curl.o
@@ -131,16 +137,26 @@ net-nested-$(CONFIG_SLIRP) += slirp.o
 net-nested-$(CONFIG_VDE) += vde.o
 net-obj-y += $(addprefix net/, $(net-nested-y))
 
+ifeq ($(TRACE_BACKEND),dtrace)
+trace-obj-y = trace-dtrace.o
+else
+trace-obj-y = trace.o
+endif
+
+######################################################################
+# shared-obj-y has the object that are shared by qemu binary and tools
+shared-obj-y = qemu-error.o $(trace-obj-y) $(block-obj-y) $(qobject-obj-y)
+
 ######################################################################
 # libqemu_common.a: Target independent part of system emulation. The
 # long term path is to suppress *all* target specific code in case of
 # system emulation, i.e. a single QEMU executable should support all
 # CPUs and machines.
 
-obj-y = $(block-obj-y)
+obj-y = $(shared-obj-y)
+obj-y += qemu-thread.o
 obj-y += $(net-obj-y)
-obj-y += $(qobject-obj-y)
-obj-y += readline.o console.o
+obj-y += readline.o console.o cursor.o
 
 obj-y += tcg-runtime.o host-utils.o
 obj-y += irq.o ioport.o
@@ -159,9 +175,8 @@ obj-$(CONFIG_MAX111X) += max111x.o
 obj-$(CONFIG_DS1338) += ds1338.o
 obj-y += i2c.o smbus.o smbus_eeprom.o
 obj-y += eeprom93xx.o
-obj-y += scsi-disk.o cdrom.o
-obj-y += scsi-generic.o scsi-bus.o
-obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o usb-msd.o usb-wacom.o
+obj-y += cdrom.o
+obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o usb-wacom.o
 obj-y += usb-serial.o usb-net.o usb-bus.o
 obj-$(CONFIG_SSI) += ssi.o
 obj-$(CONFIG_SSI_SD) += ssi-sd.o
@@ -172,16 +187,23 @@ obj-y += buffered_file.o migration.o migration-tcp.o qemu-sockets.o
 obj-y += qemu-char.o aio.o savevm.o
 obj-y += msmouse.o ps2.o
 obj-y += qdev.o qdev-properties.o
-obj-y += qemu-config.o block-migration.o
+obj-y += block-migration.o iohandler.o
+obj-y += pflib.o
 
 obj-$(CONFIG_BRLAPI) += baum.o
 obj-$(CONFIG_POSIX) += migration-exec.o migration-unix.o migration-fd.o
+
+obj-$(CONFIG_SPICE) += ui/spice-core.o ui/spice-input.o ui/spice-display.o spice-qemu-char.o
+
+obj-$(CONFIG_SMARTCARD) += usb-ccid.o ccid-card-passthru.o
+obj-$(CONFIG_SMARTCARD_NSS) += ccid-card-emulated.o
 
 audio/audio.o audio/fmodaudio.o: QEMU_CFLAGS += $(FMOD_CFLAGS)
 
 audio-obj-y = audio.o noaudio.o wavaudio.o mixeng.o
 audio-obj-$(CONFIG_SDL) += sdlaudio.o
 audio-obj-$(CONFIG_OSS) += ossaudio.o
+audio-obj-$(CONFIG_SPICE) += spiceaudio.o
 audio-obj-$(CONFIG_COREAUDIO) += coreaudio.o
 audio-obj-$(CONFIG_ALSA) += alsaaudio.o
 audio-obj-$(CONFIG_DSOUND) += dsoundaudio.o
@@ -202,6 +224,7 @@ obj-$(CONFIG_VNC_TLS) += vnc-tls.o vnc-auth-vencrypt.o
 obj-$(CONFIG_VNC_SASL) += vnc-auth-sasl.o
 obj-$(CONFIG_COCOA) += cocoa.o
 obj-$(CONFIG_IOTHREAD) += qemu-thread.o
+obj-y += notify.o
 
 slirp-obj-y = cksum.o if.o ip_icmp.o ip_input.o ip_output.o
 slirp-obj-y += slirp.o mbuf.o misc.o sbuf.o socket.o tcp_input.o tcp_output.o
@@ -244,25 +267,59 @@ bt-host.o: QEMU_CFLAGS += $(BLUEZ_CFLAGS)
 
 libqemu_common.a: $(obj-y)
 
+ifeq ($(TRACE_BACKEND),dtrace)
+trace.h: trace.h-timestamp trace-dtrace.h
+else
+trace.h: trace.h-timestamp
+endif
+trace.h-timestamp: $(SRC_PATH)/trace-events config-host.mak
+	$(call quiet-command,sh $(SRC_PATH)/tracetool --$(TRACE_BACKEND) -h < $< > $@,"  GEN   trace.h")
+	@cmp -s $@ trace.h || cp $@ trace.h
+
+trace.c: trace.c-timestamp
+trace.c-timestamp: $(SRC_PATH)/trace-events config-host.mak
+	$(call quiet-command,sh $(SRC_PATH)/tracetool --$(TRACE_BACKEND) -c < $< > $@,"  GEN   trace.c")
+	@cmp -s $@ trace.c || cp $@ trace.c
+
+trace.o: trace.c $(GENERATED_HEADERS)
+
+trace-dtrace.h: trace-dtrace.dtrace
+	$(call quiet-command,dtrace -o $@ -h -s $<, "  GEN   trace-dtrace.h")
+
+# Normal practice is to name DTrace probe file with a '.d' extension
+# but that gets picked up by QEMU's Makefile as an external dependancy
+# rule file. So we use '.dtrace' instead
+trace-dtrace.dtrace: trace-dtrace.dtrace-timestamp
+trace-dtrace.dtrace-timestamp: $(SRC_PATH)/trace-events config-host.mak
+	$(call quiet-command,sh $(SRC_PATH)/tracetool --$(TRACE_BACKEND) -d < $< > $@,"  GEN   trace-dtrace.dtrace")
+	@cmp -s $@ trace-dtrace.dtrace || cp $@ trace-dtrace.dtrace
+
+trace-dtrace.o: trace-dtrace.dtrace $(GENERATED_HEADERS)
+	$(call quiet-command,dtrace -o $@ -G -s $<, "  GEN trace-dtrace.o")
+
 ######################################################################
 
 qemu-img.o: qemu-img-cmds.h
 
-qemu-img$(EXESUF): qemu-img.o qemu-tool.o $(block-obj-y) $(qobject-obj-y)
+TOOLS_OBJ=qemu-tool.o $(shared-obj-y)
 
-qemu-nbd$(EXESUF):  qemu-nbd.o qemu-tool.o $(block-obj-y) $(qobject-obj-y)
+qemu-img$(EXESUF): qemu-img.o $(TOOLS_OBJ)
 
-qemu-io$(EXESUF):  qemu-io.o qemu-tool.o cmd.o $(block-obj-y) $(qobject-obj-y)
+qemu-nbd$(EXESUF): qemu-nbd.o $(TOOLS_OBJ)
+
+qemu-io$(EXESUF): qemu-io.o cmd.o $(TOOLS_OBJ)
 
 qemu-img-cmds.h: $(SRC_PATH)/qemu-img-cmds.hx
 	$(call quiet-command,sh $(SRC_PATH)/hxtool -h < $< > $@,"  GEN   $@")
 
 check-qint: check-qint.o qint.o qemu-malloc.o
 check-qstring: check-qstring.o qstring.o qemu-malloc.o
-check-qdict: check-qdict.o qdict.o qint.o qstring.o qbool.o qemu-malloc.o qlist.o
+check-qdict: check-qdict.o qdict.o qfloat.o qint.o qstring.o qbool.o qemu-malloc.o qlist.o
 check-qlist: check-qlist.o qlist.o qint.o qemu-malloc.o
 check-qfloat: check-qfloat.o qfloat.o qemu-malloc.o
 check-qjson: check-qjson.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o qjson.o json-streamer.o json-lexer.o json-parser.o qemu-malloc.o
+
+QEMULIBS=libhw32 libhw64 libuser
 
 clean:
 # avoid old build problems by removing potentially incorrect old files
@@ -270,17 +327,20 @@ clean:
 	rm -f *.o *.d *.a $(TOOLS) TAGS cscope.* *.pod *~ */*~
 	rm -f slirp/*.o slirp/*.d audio/*.o audio/*.d block/*.o block/*.d net/*.o net/*.d
 	rm -f qemu-img-cmds.h
+	rm -f trace.c trace.h trace.c-timestamp trace.h-timestamp
+	rm -f trace-dtrace.dtrace trace-dtrace.dtrace-timestamp
+	rm -f trace-dtrace.h trace-dtrace.h-timestamp
 	$(MAKE) -C tests clean
-	for d in $(ALL_SUBDIRS) libhw32 libhw64 libuser; do \
+	for d in $(ALL_SUBDIRS) $(QEMULIBS) libcacard; do \
 	if test -d $$d; then $(MAKE) -C $$d $@ || exit 1; fi; \
         done
 
 distclean: clean
 	rm -f config-host.mak config-host.h* config-host.ld $(DOCS) qemu-options.texi qemu-img-cmds.texi qemu-monitor.texi
-	rm -f config-all-devices.mak
+	rm -f config-all-devices.mak config-all-devices.h*
 	rm -f roms/seabios/config.mak roms/vgabios/config.mak
 	rm -f qemu-{doc,tech}.{info,aux,cp,dvi,fn,info,ky,log,pg,toc,tp,vr}
-	for d in $(TARGET_DIRS) libhw32 libhw64 libuser; do \
+	for d in $(TARGET_DIRS) $(QEMULIBS); do \
 	rm -rf $$d || exit 1 ; \
         done
 
@@ -307,12 +367,17 @@ install-doc: $(DOCS)
 	$(INSTALL_DATA) qemu-doc.html  qemu-tech.html "$(DESTDIR)$(docdir)"
 ifdef CONFIG_POSIX
 	$(INSTALL_DIR) "$(DESTDIR)$(mandir)/man1"
-	$(INSTALL_DATA) qemu.1 qemu-img.1 "$(DESTDIR)$(mandir)/man1"
+	$(INSTALL_DATA) qemu-img.1 "$(DESTDIR)$(mandir)/man1"
+	$(INSTALL_DATA) qemu.1 "$(DESTDIR)$(mandir)/man1/qemu-kvm.1"
 	$(INSTALL_DIR) "$(DESTDIR)$(mandir)/man8"
 	$(INSTALL_DATA) qemu-nbd.8 "$(DESTDIR)$(mandir)/man8"
 endif
 
-install: all $(if $(BUILD_DOCS),install-doc)
+install-cpuconfig:
+	$(INSTALL_DIR) "$(DESTDIR)$(cpuconfdir)"
+	$(INSTALL_DATA) $(SRC_PATH)/sysconfigs/target/cpu-x86_64.conf "$(DESTDIR)$(cpuconfdir)"
+
+install: all $(if $(BUILD_DOCS),install-doc) install-cpuconfig
 	$(INSTALL_DIR) "$(DESTDIR)$(bindir)"
 ifneq ($(TOOLS),)
 	$(INSTALL_PROG) $(STRIP_OPT) $(TOOLS) "$(DESTDIR)$(bindir)"
@@ -367,6 +432,9 @@ qemu-options.texi: $(SRC_PATH)/qemu-options.hx
 
 qemu-monitor.texi: $(SRC_PATH)/qemu-monitor.hx
 	$(call quiet-command,sh $(SRC_PATH)/hxtool -t < $< > $@,"  GEN   $@")
+
+QMP/qmp-commands.txt: $(SRC_PATH)/qemu-monitor.hx
+	$(call quiet-command,sh $(SRC_PATH)/hxtool -q < $< > $@,"  GEN   $@")
 
 qemu-img-cmds.texi: $(SRC_PATH)/qemu-img-cmds.hx
 	$(call quiet-command,sh $(SRC_PATH)/hxtool -t < $< > $@,"  GEN   $@")

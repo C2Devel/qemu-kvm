@@ -3,6 +3,7 @@
 
 #include "qdev.h"
 #include "block.h"
+#include "block_int.h"
 
 #define SCSI_CMD_BUF_SIZE     16
 
@@ -49,7 +50,7 @@ struct SCSIDevice
 {
     DeviceState qdev;
     uint32_t id;
-    DriveInfo *dinfo;
+    BlockConf conf;
     SCSIDeviceInfo *info;
     QTAILQ_HEAD(, SCSIRequest) requests;
     int blocksize;
@@ -96,7 +97,7 @@ static inline SCSIBus *scsi_bus_from_device(SCSIDevice *d)
     return DO_UPCAST(SCSIBus, qbus, d->qdev.parent_bus);
 }
 
-SCSIDevice *scsi_bus_legacy_add_drive(SCSIBus *bus, DriveInfo *dinfo, int unit);
+SCSIDevice *scsi_bus_legacy_add_drive(SCSIBus *bus, BlockDriverState *bdrv, int unit);
 void scsi_bus_legacy_handle_cmdline(SCSIBus *bus);
 
 void scsi_dev_clear_sense(SCSIDevice *dev);

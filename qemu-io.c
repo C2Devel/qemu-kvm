@@ -61,7 +61,7 @@ static void *qemu_io_alloc(size_t len, int pattern)
 
 	if (misalign)
 		len += MISALIGN_OFFSET;
-	buf = qemu_memalign(512, len);
+	buf = qemu_blockalign(bs, len);
 	memset(buf, pattern, len);
 	if (misalign)
 		buf += MISALIGN_OFFSET;
@@ -1124,7 +1124,7 @@ truncate_f(int argc, char **argv)
 
 	ret = bdrv_truncate(bs, offset);
 	if (ret < 0) {
-		printf("truncate: %s", strerror(ret));
+		printf("truncate: %s\n", strerror(-ret));
 		return 0;
 	}
 
@@ -1149,7 +1149,7 @@ length_f(int argc, char **argv)
 
 	size = bdrv_getlength(bs);
 	if (size < 0) {
-		printf("getlength: %s", strerror(size));
+		printf("getlength: %s\n", strerror(-size));
 		return 0;
 	}
 
@@ -1274,23 +1274,23 @@ static int openfile(char *name, int flags, int growable)
 		return 1;
 	}
 
-	bs = bdrv_new("hda");
-	if (!bs)
-		return 1;
-
 	if (growable) {
-		flags |= BDRV_O_FILE;
+		if (bdrv_file_open(&bs, name, flags)) {
+			fprintf(stderr, "%s: can't open device %s\n", progname, name);
+			return 1;
+		}
+	} else {
+		bs = bdrv_new("hda");
+		if (!bs)
+			return 1;
+
+		if (bdrv_open(bs, name, flags, NULL) < 0) {
+			fprintf(stderr, "%s: can't open device %s\n", progname, name);
+			bs = NULL;
+			return 1;
+		}
 	}
 
-	if (bdrv_open(bs, name, flags) == -1) {
-		fprintf(stderr, "%s: can't open device %s\n", progname, name);
-		bs = NULL;
-		return 1;
-	}
-
-	if (growable) {
-		bs->growable = 1;
-	}
 	return 0;
 }
 
@@ -1357,10 +1357,9 @@ open_f(int argc, char **argv)
 		}
 	}
 
-	if (readonly)
-		flags |= BDRV_O_RDONLY;
-	else
-		flags |= BDRV_O_RDWR;
+	if (!readonly) {
+            flags |= BDRV_O_RDWR;
+        }
 
 	if (optind != argc - 1)
 		return command_usage(&open_cmd);
@@ -1504,10 +1503,9 @@ int main(int argc, char **argv)
 	add_check_command(init_check_command);
 
 	/* open the device */
-	if (readonly)
-		flags |= BDRV_O_RDONLY;
-	else
-		flags |= BDRV_O_RDWR;
+	if (!readonly) {
+            flags |= BDRV_O_RDWR;
+        }
 
 	if ((argc - optind) == 1)
 		openfile(argv[optind], flags, growable);

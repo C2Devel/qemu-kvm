@@ -42,6 +42,7 @@
 #include "qemu-kvm.h"
 
 #include "hw/hw.h"
+#include "hw/qdev.h"
 #include "osdep.h"
 #include "kvm.h"
 #if defined(CONFIG_USER_ONLY)
@@ -118,22 +119,10 @@ uint8_t *code_gen_ptr;
 
 #if !defined(CONFIG_USER_ONLY)
 int phys_ram_fd;
-uint8_t *phys_ram_dirty;
 uint8_t *bios_mem;
 static int in_migration;
 
-typedef struct RAMBlock {
-    uint8_t *host;
-    ram_addr_t offset;
-    ram_addr_t length;
-    struct RAMBlock *next;
-} RAMBlock;
-
-static RAMBlock *ram_blocks;
-/* TODO: When we implement (and use) ram deallocation (e.g. for hotplug)
-   then we can no longer assume contiguous ram offsets, and external uses
-   of this variable will break.  */
-ram_addr_t last_ram_offset;
+RAMList ram_list = { .blocks = QLIST_HEAD_INITIALIZER(ram_list) };
 #endif
 
 CPUState *first_cpu;
@@ -610,8 +599,8 @@ void cpu_exec_init(CPUState *env)
     cpu_list_unlock();
 #endif
 #if defined(CPU_SAVE_VERSION) && !defined(CONFIG_USER_ONLY)
-    vmstate_register(cpu_index, &vmstate_cpu_common, env);
-    register_savevm("cpu", cpu_index, CPU_SAVE_VERSION,
+    vmstate_register(NULL, cpu_index, &vmstate_cpu_common, env);
+    register_savevm(NULL, "cpu", cpu_index, CPU_SAVE_VERSION,
                     cpu_save, cpu_load, env);
 #endif
 }
@@ -1640,6 +1629,103 @@ const CPULogItem cpu_log_items[] = {
     { 0, NULL, NULL },
 };
 
+#ifndef CONFIG_USER_ONLY
+static QLIST_HEAD(memory_client_list, CPUPhysMemoryClient) memory_client_list
+    = QLIST_HEAD_INITIALIZER(memory_client_list);
+
+static void cpu_notify_set_memory(target_phys_addr_t start_addr,
+				  ram_addr_t size,
+				  ram_addr_t phys_offset)
+{
+    CPUPhysMemoryClient *client;
+    QLIST_FOREACH(client, &memory_client_list, list) {
+        client->set_memory(client, start_addr, size, phys_offset);
+    }
+}
+
+static int cpu_notify_sync_dirty_bitmap(target_phys_addr_t start,
+					target_phys_addr_t end)
+{
+    CPUPhysMemoryClient *client;
+    QLIST_FOREACH(client, &memory_client_list, list) {
+        int r = client->sync_dirty_bitmap(client, start, end);
+        if (r < 0)
+            return r;
+    }
+    return 0;
+}
+
+static int cpu_notify_migration_log(int enable)
+{
+    CPUPhysMemoryClient *client;
+    QLIST_FOREACH(client, &memory_client_list, list) {
+        int r = client->migration_log(client, enable);
+        if (r < 0)
+            return r;
+    }
+    return 0;
+}
+
+static void phys_page_for_each_in_l1_map(PhysPageDesc **phys_map,
+                                         CPUPhysMemoryClient *client,
+                                         target_phys_addr_t o)
+{
+    PhysPageDesc *pd;
+    int l1, l2;
+
+    for (l1 = 0; l1 < L1_SIZE; ++l1) {
+        pd = phys_map[l1];
+        if (!pd) {
+            continue;
+        }
+        for (l2 = 0; l2 < L2_SIZE; ++l2) {
+            if (pd[l2].phys_offset == IO_MEM_UNASSIGNED) {
+                continue;
+            }
+            client->set_memory(client,
+                               (((o + l1) << L2_BITS) + l2) << TARGET_PAGE_BITS,
+                               TARGET_PAGE_SIZE, pd[l2].phys_offset);
+        }
+    }
+}
+
+static void phys_page_for_each(CPUPhysMemoryClient *client)
+{
+#if TARGET_PHYS_ADDR_SPACE_BITS > 32
+
+#if TARGET_PHYS_ADDR_SPACE_BITS > (32 + L1_BITS)
+#error unsupported TARGET_PHYS_ADDR_SPACE_BITS
+#endif
+    void **phys_map = (void **)l1_phys_map;
+    int l1;
+    if (!l1_phys_map) {
+        return;
+    }
+    for (l1 = 0; l1 < L1_SIZE; ++l1) {
+        if (phys_map[l1]) {
+            phys_page_for_each_in_l1_map(phys_map[l1], client, l1 << L1_BITS);
+        }
+    }
+#else
+    if (!l1_phys_map) {
+        return;
+    }
+    phys_page_for_each_in_l1_map(l1_phys_map, client, 0);
+#endif
+}
+
+void cpu_register_phys_memory_client(CPUPhysMemoryClient *client)
+{
+    QLIST_INSERT_HEAD(&memory_client_list, client, list);
+    phys_page_for_each(client);
+}
+
+void cpu_unregister_phys_memory_client(CPUPhysMemoryClient *client)
+{
+    QLIST_REMOVE(client, list);
+}
+#endif
+
 static int cmp1(const char *s1, int n, const char *s2)
 {
     if (strlen(s2) != n)
@@ -1841,7 +1927,7 @@ static void tlb_protect_code(ram_addr_t ram_addr)
 static void tlb_unprotect_code_phys(CPUState *env, ram_addr_t ram_addr,
                                     target_ulong vaddr)
 {
-    phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS] |= CODE_DIRTY_FLAG;
+    ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS] |= CODE_DIRTY_FLAG;
 }
 
 static inline void tlb_reset_dirty_range(CPUTLBEntry *tlb_entry,
@@ -1873,9 +1959,16 @@ void cpu_physical_memory_reset_dirty(ram_addr_t start, ram_addr_t end,
         return;
     len = length >> TARGET_PAGE_BITS;
     mask = ~dirty_flags;
-    p = phys_ram_dirty + (start >> TARGET_PAGE_BITS);
-    for(i = 0; i < len; i++)
+    p = ram_list.phys_dirty + (start >> TARGET_PAGE_BITS);
+    for(i = 0; i < len; i++) {
+        if (cpu_physical_memory_get_dirty(start + i * TARGET_PAGE_SIZE,
+                                          MIGRATION_DIRTY_FLAG & dirty_flags))
+            ram_list.dirty_pages--;
         p[i] &= mask;
+    }
+
+    if (kvm_enabled())
+        return;
 
     /* we modify the TLB cache so that the dirty bit will be set again
        when accessing the range */
@@ -1899,10 +1992,15 @@ void cpu_physical_memory_reset_dirty(ram_addr_t start, ram_addr_t end,
 
 int cpu_physical_memory_set_dirty_tracking(int enable)
 {
+    int ret = 0;
     if (kvm_enabled()) {
-        return kvm_set_migration_log(enable);
+        ret = kvm_set_migration_log(enable);
     }
-    return 0;
+    if (ret < 0) {
+        return ret;
+    }
+    ret = cpu_notify_migration_log(!!enable);
+    return ret;
 }
 
 int cpu_physical_memory_get_dirty_tracking(void)
@@ -1915,8 +2013,13 @@ int cpu_physical_sync_dirty_bitmap(target_phys_addr_t start_addr,
 {
     int ret = 0;
 
-    if (kvm_enabled())
+    if (kvm_enabled()) {
         ret = kvm_physical_sync_dirty_bitmap(start_addr, end_addr);
+    }
+    if (ret < 0) {
+        return ret;
+    }
+    ret = cpu_notify_sync_dirty_bitmap(start_addr, end_addr);
     return ret;
 }
 
@@ -2331,6 +2434,8 @@ void cpu_register_physical_memory_offset(target_phys_addr_t start_addr,
     if (kvm_enabled())
         kvm_set_phys_mem(start_addr, size, phys_offset);
 
+    cpu_notify_set_memory(start_addr, size, phys_offset);
+
     if (phys_offset == IO_MEM_UNASSIGNED) {
         region_offset = start_addr;
     }
@@ -2448,7 +2553,9 @@ static long gethugepagesize(const char *path)
     return fs.f_bsize;
 }
 
-static void *file_ram_alloc(ram_addr_t memory, const char *path)
+static void *file_ram_alloc(RAMBlock *block,
+                            ram_addr_t memory,
+                            const char *path)
 {
     char *filename;
     void *area;
@@ -2498,7 +2605,9 @@ static void *file_ram_alloc(ram_addr_t memory, const char *path)
      * If anything goes wrong with it under other filesystems,
      * mmap will fail.
      */
-    ftruncate(fd, memory);
+    if (ftruncate(fd, memory)) {
+        perror("ftruncate");
+    }
 
 #ifdef MAP_POPULATE
     /* NB: MAP_POPULATE won't exhaustively alloc all phys pages in the case
@@ -2515,6 +2624,7 @@ static void *file_ram_alloc(ram_addr_t memory, const char *path)
 	close(fd);
 	return (NULL);
     }
+    block->fd = fd;
     return area;
 }
 
@@ -2529,14 +2639,81 @@ static void *file_ram_alloc(ram_addr_t memory, const char *path)
 
 extern const char *mem_path;
 
-ram_addr_t qemu_ram_alloc(ram_addr_t size)
+#if defined(__linux__) && defined(__x86_64__)
+/*
+ * Align on the max transparent hugepage size so that
+ * "(gfn ^ pfn) & (HPAGE_SIZE-1) == 0" to allow KVM to
+ * take advantage of hugepages with NPT/EPT or to
+ * ensure the first 2M of the guest physical ram will
+ * be mapped by the same hugetlb for QEMU (it is worth
+ * it even without NPT/EPT).
+ */
+#define PREFERRED_RAM_ALIGN (2*1024*1024)
+#endif
+
+static ram_addr_t find_ram_offset(ram_addr_t size)
 {
-    RAMBlock *new_block;
+    RAMBlock *block, *next_block;
+    ram_addr_t offset, mingap = ULONG_MAX;
+
+    if (QLIST_EMPTY(&ram_list.blocks))
+        return 0;
+
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        ram_addr_t end, next = ULONG_MAX;
+
+        end = block->offset + block->length;
+
+        QLIST_FOREACH(next_block, &ram_list.blocks, next) {
+            if (next_block->offset >= end) {
+                next = MIN(next, next_block->offset);
+            }
+        }
+        if (next - end >= size && next - end < mingap) {
+            offset =  end;
+            mingap = next - end;
+        }
+    }
+    return offset;
+}
+
+static ram_addr_t last_ram_offset(void)
+{
+    RAMBlock *block;
+    ram_addr_t last = 0;
+
+    QLIST_FOREACH(block, &ram_list.blocks, next)
+        last = MAX(last, block->offset + block->length);
+
+    return last;
+}
+
+ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
+{
+    RAMBlock *new_block, *block;
+    extern int disable_KSM;
 
     size = TARGET_PAGE_ALIGN(size);
-    new_block = qemu_malloc(sizeof(*new_block));
+    new_block = qemu_mallocz(sizeof(*new_block));
 
-    new_block->host = file_ram_alloc(size, mem_path);
+    if (dev && dev->parent_bus && dev->parent_bus->info->get_dev_path) {
+        char *id = dev->parent_bus->info->get_dev_path(dev);
+        if (id) {
+            snprintf(new_block->idstr, sizeof(new_block->idstr), "%s/", id);
+            qemu_free(id);
+        }
+    }
+    pstrcat(new_block->idstr, sizeof(new_block->idstr), name);
+
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        if (!strcmp(block->idstr, new_block->idstr)) {
+            fprintf(stderr, "RAMBlock \"%s\" already registered, abort!\n",
+                    new_block->idstr);
+            abort();
+        }
+    }
+
+    new_block->host = file_ram_alloc(new_block, size, mem_path);
     if (!new_block->host) {
 #if defined(TARGET_S390X) && defined(CONFIG_KVM)
     /* XXX S390 KVM requires the topmost vma of the RAM to be < 256GB */
@@ -2544,24 +2721,44 @@ ram_addr_t qemu_ram_alloc(ram_addr_t size)
                                PROT_EXEC|PROT_READ|PROT_WRITE,
                                MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 #else
-        new_block->host = qemu_vmalloc(size);
+#ifdef PREFERRED_RAM_ALIGN
+	if (size >= PREFERRED_RAM_ALIGN)
+		new_block->host = qemu_memalign(PREFERRED_RAM_ALIGN, size);
+	else
+#endif 
+		new_block->host = qemu_vmalloc(size);
 #endif
 #ifdef MADV_MERGEABLE
-        madvise(new_block->host, size, MADV_MERGEABLE);
+        if (!disable_KSM)
+            madvise(new_block->host, size, MADV_MERGEABLE);
+#else
+#if defined(__linux__) 
+#error "MADV_MERGEABLE missing"
+#endif
+#endif
+#ifndef MADV_DONTFORK
+#if defined(__linux__) 
+#error "MADV_DONTFORK missing"
+#endif
+#endif
+#ifdef MADV_DONTFORK
+        madvise(new_block->host, size, MADV_DONTFORK);
+#endif
+#ifdef MADV_HUGEPAGE
+        madvise(new_block->host, size, MADV_HUGEPAGE);
 #endif
     }
-    new_block->offset = last_ram_offset;
+    new_block->offset = find_ram_offset(size);
     new_block->length = size;
 
-    new_block->next = ram_blocks;
-    ram_blocks = new_block;
+    QLIST_INSERT_HEAD(&ram_list.blocks, new_block, next);
 
-    phys_ram_dirty = qemu_realloc(phys_ram_dirty,
-        (last_ram_offset + size) >> TARGET_PAGE_BITS);
-    memset(phys_ram_dirty + (last_ram_offset >> TARGET_PAGE_BITS),
+    ram_list.phys_dirty = qemu_realloc(ram_list.phys_dirty,
+                                       last_ram_offset() >> TARGET_PAGE_BITS);
+    memset(ram_list.phys_dirty + (new_block->offset >> TARGET_PAGE_BITS),
            0xff, size >> TARGET_PAGE_BITS);
 
-    last_ram_offset += size;
+    ram_list.dirty_pages += size >> TARGET_PAGE_BITS;
 
     if (kvm_enabled())
         kvm_setup_guest_memory(new_block->host, size);
@@ -2571,7 +2768,32 @@ ram_addr_t qemu_ram_alloc(ram_addr_t size)
 
 void qemu_ram_free(ram_addr_t addr)
 {
-    /* TODO: implement this.  */
+    RAMBlock *block;
+
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        if (addr == block->offset) {
+            QLIST_REMOVE(block, next);
+            if (mem_path) {
+#if defined (__linux__) && !defined(TARGET_S390X)
+                if (block->fd) {
+                    munmap(block->host, block->length);
+                    close(block->fd);
+                } else {
+                    qemu_vfree(block->host);
+                }
+#endif
+            } else {
+#if defined(TARGET_S390X) && defined(CONFIG_KVM)
+                munmap(block->host, block->length);
+#else
+                qemu_vfree(block->host);
+#endif
+            }
+            qemu_free(block);
+            return;
+        }
+    }
+
 }
 
 /* Return a host pointer to ram allocated with qemu_ram_alloc.
@@ -2584,54 +2806,37 @@ void qemu_ram_free(ram_addr_t addr)
  */
 void *qemu_get_ram_ptr(ram_addr_t addr)
 {
-    RAMBlock *prev;
-    RAMBlock **prevp;
     RAMBlock *block;
 
-    prev = NULL;
-    prevp = &ram_blocks;
-    block = ram_blocks;
-    while (block && (block->offset > addr
-                     || block->offset + block->length <= addr)) {
-        if (prev)
-          prevp = &prev->next;
-        prev = block;
-        block = block->next;
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        if (addr - block->offset < block->length) {
+            /* Move this entry to to start of the list.  */
+            if (block != QLIST_FIRST(&ram_list.blocks)) {
+                QLIST_REMOVE(block, next);
+                QLIST_INSERT_HEAD(&ram_list.blocks, block, next);
+            }
+            return block->host + (addr - block->offset);
+        }
     }
-    if (!block) {
-        fprintf(stderr, "Bad ram offset %" PRIx64 "\n", (uint64_t)addr);
-        abort();
-    }
-    /* Move this entry to to start of the list.  */
-    if (prev) {
-        prev->next = block->next;
-        block->next = *prevp;
-        *prevp = block;
-    }
-    return block->host + (addr - block->offset);
+
+    fprintf(stderr, "Bad ram offset %" PRIx64 "\n", (uint64_t)addr);
+    abort();
+
+    return NULL;
 }
 
 int do_qemu_ram_addr_from_host(void *ptr, ram_addr_t *ram_addr)
 {
-    RAMBlock *prev;
-    RAMBlock **prevp;
     RAMBlock *block;
     uint8_t *host = ptr;
 
-    prev = NULL;
-    prevp = &ram_blocks;
-    block = ram_blocks;
-    while (block && (block->host > host
-                     || block->host + block->length <= host)) {
-        if (prev)
-          prevp = &prev->next;
-        prev = block;
-        block = block->next;
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        if (host - block->host < block->length) {
+            *ram_addr = block->offset + (host - block->host);
+            return 0;
+        }
     }
-    if (!block)
-        return -1;
-    *ram_addr = block->offset + (host - block->host);
-    return 0;
+    return -1;
 }
 
 /* Some of the softmmu routines need to translate from a host pointer
@@ -2644,6 +2849,7 @@ ram_addr_t qemu_ram_addr_from_host(void *ptr)
         fprintf(stderr, "Bad ram pointer %p\n", ptr);
         abort();
     }
+
     return ram_addr;
 }
 
@@ -2726,16 +2932,19 @@ static void notdirty_mem_writeb(void *opaque, target_phys_addr_t ram_addr,
                                 uint32_t val)
 {
     int dirty_flags;
-    dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+    dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
     if (!(dirty_flags & CODE_DIRTY_FLAG)) {
 #if !defined(CONFIG_USER_ONLY)
         tb_invalidate_phys_page_fast(ram_addr, 1);
-        dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+        dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
 #endif
     }
     stb_p(qemu_get_ram_ptr(ram_addr), val);
     dirty_flags |= (0xff & ~CODE_DIRTY_FLAG);
-    phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
+    if (!cpu_physical_memory_get_dirty(ram_addr,
+                                      MIGRATION_DIRTY_FLAG & dirty_flags))
+        ram_list.dirty_pages++;
+    ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
     /* we remove the notdirty callback only if the code has been
        flushed */
     if (dirty_flags == 0xff)
@@ -2746,16 +2955,19 @@ static void notdirty_mem_writew(void *opaque, target_phys_addr_t ram_addr,
                                 uint32_t val)
 {
     int dirty_flags;
-    dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+    dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
     if (!(dirty_flags & CODE_DIRTY_FLAG)) {
 #if !defined(CONFIG_USER_ONLY)
         tb_invalidate_phys_page_fast(ram_addr, 2);
-        dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+        dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
 #endif
     }
     stw_p(qemu_get_ram_ptr(ram_addr), val);
     dirty_flags |= (0xff & ~CODE_DIRTY_FLAG);
-    phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
+    if (!cpu_physical_memory_get_dirty(ram_addr,
+                                      MIGRATION_DIRTY_FLAG & dirty_flags))
+        ram_list.dirty_pages++;
+    ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
     /* we remove the notdirty callback only if the code has been
        flushed */
     if (dirty_flags == 0xff)
@@ -2766,16 +2978,19 @@ static void notdirty_mem_writel(void *opaque, target_phys_addr_t ram_addr,
                                 uint32_t val)
 {
     int dirty_flags;
-    dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+    dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
     if (!(dirty_flags & CODE_DIRTY_FLAG)) {
 #if !defined(CONFIG_USER_ONLY)
         tb_invalidate_phys_page_fast(ram_addr, 4);
-        dirty_flags = phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS];
+        dirty_flags = ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS];
 #endif
     }
     stl_p(qemu_get_ram_ptr(ram_addr), val);
     dirty_flags |= (0xff & ~CODE_DIRTY_FLAG);
-    phys_ram_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
+    if (!cpu_physical_memory_get_dirty(ram_addr,
+                                      MIGRATION_DIRTY_FLAG & dirty_flags))
+        ram_list.dirty_pages++;
+    ram_list.phys_dirty[ram_addr >> TARGET_PAGE_BITS] = dirty_flags;
     /* we remove the notdirty callback only if the code has been
        flushed */
     if (dirty_flags == 0xff)
@@ -3005,7 +3220,9 @@ static int subpage_register (subpage_t *mmio, uint32_t start, uint32_t end,
     printf("%s: %p start %08x end %08x idx %08x eidx %08x mem %ld\n", __func__,
            mmio, start, end, idx, eidx, memory);
 #endif
-    memory >>= IO_MEM_SHIFT;
+    if ((memory & ~TARGET_PAGE_MASK) == IO_MEM_RAM)
+        memory = IO_MEM_UNASSIGNED;    
+    memory = (memory >> IO_MEM_SHIFT) & (IO_MEM_NB_ENTRIES - 1);
     for (; idx <= eidx; idx++) {
         for (i = 0; i < 4; i++) {
             if (io_mem_read[memory][i]) {
@@ -3227,7 +3444,9 @@ void cpu_physical_memory_rw(target_phys_addr_t addr, uint8_t *buf,
                     /* invalidate code */
                     tb_invalidate_phys_page_range(addr1, addr1 + l, 0);
                     /* set dirty bit */
-                    phys_ram_dirty[addr1 >> TARGET_PAGE_BITS] |=
+                    if (!cpu_physical_memory_get_dirty(addr1, MIGRATION_DIRTY_FLAG))
+                        ram_list.dirty_pages++;
+                    ram_list.phys_dirty[addr1 >> TARGET_PAGE_BITS] |=
                         (0xff & ~CODE_DIRTY_FLAG);
                 }
 		/* qemu doesn't execute guest code directly, but kvm does
@@ -3441,7 +3660,9 @@ void cpu_physical_memory_unmap(void *buffer, target_phys_addr_t len,
                     /* invalidate code */
                     tb_invalidate_phys_page_range(addr1, addr1 + l, 0);
                     /* set dirty bit */
-                    phys_ram_dirty[addr1 >> TARGET_PAGE_BITS] |=
+                    if (!cpu_physical_memory_get_dirty(addr1, MIGRATION_DIRTY_FLAG))
+                        ram_list.dirty_pages++;
+                    ram_list.phys_dirty[addr1 >> TARGET_PAGE_BITS] |=
                         (0xff & ~CODE_DIRTY_FLAG);
                 }
                 addr1 += l;
@@ -3538,12 +3759,36 @@ uint32_t ldub_phys(target_phys_addr_t addr)
     return val;
 }
 
-/* XXX: optimize */
+/* warning: addr must be aligned */
 uint32_t lduw_phys(target_phys_addr_t addr)
 {
-    uint16_t val;
-    cpu_physical_memory_read(addr, (uint8_t *)&val, 2);
-    return tswap16(val);
+    int io_index;
+    uint8_t *ptr;
+    uint64_t val;
+    unsigned long pd;
+    PhysPageDesc *p;
+
+    p = phys_page_find(addr >> TARGET_PAGE_BITS);
+    if (!p) {
+        pd = IO_MEM_UNASSIGNED;
+    } else {
+        pd = p->phys_offset;
+    }
+
+    if ((pd & ~TARGET_PAGE_MASK) > IO_MEM_ROM &&
+        !(pd & IO_MEM_ROMD)) {
+        /* I/O case */
+        io_index = (pd >> IO_MEM_SHIFT) & (IO_MEM_NB_ENTRIES - 1);
+        if (p)
+            addr = (addr & ~TARGET_PAGE_MASK) + p->region_offset;
+        val = io_mem_read[io_index][1](io_mem_opaque[io_index], addr);
+    } else {
+        /* RAM case */
+        ptr = qemu_get_ram_ptr(pd & TARGET_PAGE_MASK) +
+            (addr & ~TARGET_PAGE_MASK);
+        val = lduw_p(ptr);
+    }
+    return val;
 }
 
 /* warning: addr must be aligned. The ram page is not masked as dirty
@@ -3578,7 +3823,9 @@ void stl_phys_notdirty(target_phys_addr_t addr, uint32_t val)
                 /* invalidate code */
                 tb_invalidate_phys_page_range(addr1, addr1 + 4, 0);
                 /* set dirty bit */
-                phys_ram_dirty[addr1 >> TARGET_PAGE_BITS] |=
+                    if (!cpu_physical_memory_get_dirty(addr1, MIGRATION_DIRTY_FLAG))
+                        ram_list.dirty_pages++;
+                ram_list.phys_dirty[addr1 >> TARGET_PAGE_BITS] |=
                     (0xff & ~CODE_DIRTY_FLAG);
             }
         }
@@ -3647,7 +3894,9 @@ void stl_phys(target_phys_addr_t addr, uint32_t val)
             /* invalidate code */
             tb_invalidate_phys_page_range(addr1, addr1 + 4, 0);
             /* set dirty bit */
-            phys_ram_dirty[addr1 >> TARGET_PAGE_BITS] |=
+            if (!cpu_physical_memory_get_dirty(addr1, MIGRATION_DIRTY_FLAG))
+                ram_list.dirty_pages++;
+            ram_list.phys_dirty[addr1 >> TARGET_PAGE_BITS] |=
                 (0xff & ~CODE_DIRTY_FLAG);
         }
     }
@@ -3660,11 +3909,42 @@ void stb_phys(target_phys_addr_t addr, uint32_t val)
     cpu_physical_memory_write(addr, &v, 1);
 }
 
-/* XXX: optimize */
+/* warning: addr must be aligned */
 void stw_phys(target_phys_addr_t addr, uint32_t val)
 {
-    uint16_t v = tswap16(val);
-    cpu_physical_memory_write(addr, (const uint8_t *)&v, 2);
+    int io_index;
+    uint8_t *ptr;
+    unsigned long pd;
+    PhysPageDesc *p;
+
+    p = phys_page_find(addr >> TARGET_PAGE_BITS);
+    if (!p) {
+        pd = IO_MEM_UNASSIGNED;
+    } else {
+        pd = p->phys_offset;
+    }
+
+    if ((pd & ~TARGET_PAGE_MASK) != IO_MEM_RAM) {
+        io_index = (pd >> IO_MEM_SHIFT) & (IO_MEM_NB_ENTRIES - 1);
+        if (p)
+            addr = (addr & ~TARGET_PAGE_MASK) + p->region_offset;
+        io_mem_write[io_index][1](io_mem_opaque[io_index], addr, val);
+    } else {
+        unsigned long addr1;
+        addr1 = (pd & TARGET_PAGE_MASK) + (addr & ~TARGET_PAGE_MASK);
+        /* RAM case */
+        ptr = qemu_get_ram_ptr(addr1);
+        stw_p(ptr, val);
+        if (!cpu_physical_memory_is_dirty(addr1)) {
+            /* invalidate code */
+            tb_invalidate_phys_page_range(addr1, addr1 + 2, 0);
+            /* set dirty bit */
+            if (!cpu_physical_memory_get_dirty(addr1, MIGRATION_DIRTY_FLAG))
+                ram_list.dirty_pages++;
+            ram_list.phys_dirty[addr1 >> TARGET_PAGE_BITS] |=
+                (0xff & ~CODE_DIRTY_FLAG);
+        }
+    }
 }
 
 /* XXX: optimize */

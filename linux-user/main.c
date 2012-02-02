@@ -2551,6 +2551,10 @@ int main(int argc, char **argv, char **envp)
     }
 
     cpu_model = NULL;
+#if defined(cpudef_setup)
+    cpudef_setup(); /* parse cpu definitions in target config file (TBD) */
+#endif
+
     optind = 1;
     for(;;) {
         if (optind >= argc)
@@ -2622,8 +2626,8 @@ int main(int argc, char **argv, char **envp)
             cpu_model = argv[optind++];
             if (cpu_model == NULL || strcmp(cpu_model, "?") == 0) {
 /* XXX: implement xxx_cpu_list for targets that still miss it */
-#if defined(cpu_list)
-                    cpu_list(stdout, &fprintf);
+#if defined(cpu_list_id)
+                cpu_list_id(stdout, &fprintf, "");
 #endif
                 exit(1);
             }

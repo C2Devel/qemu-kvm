@@ -34,6 +34,8 @@
 #include "isa.h"
 #include "sysbus.h"
 #include "qdev-addr.h"
+#include "sysemu.h"
+#include "block_int.h"
 
 /********************************************************/
 /* debug Floppy devices */
@@ -81,7 +83,6 @@ typedef enum fdisk_flags_t {
 } fdisk_flags_t;
 
 typedef struct fdrive_t {
-    DriveInfo *dinfo;
     BlockDriverState *bs;
     /* Drive status */
     fdrive_type_t drive;
@@ -96,12 +97,12 @@ typedef struct fdrive_t {
     uint8_t max_track;        /* Nb of tracks           */
     uint16_t bps;             /* Bytes per sector       */
     uint8_t ro;               /* Is read-only           */
+    uint8_t media_changed;    /* Is media changed       */
 } fdrive_t;
 
 static void fd_init (fdrive_t *drv)
 {
     /* Drive */
-    drv->bs = drv->dinfo ? drv->dinfo->bdrv : NULL;
     drv->drive = FDRIVE_DRV_NONE;
     drv->perpendicular = 0;
     /* Disk */
@@ -524,6 +525,8 @@ typedef struct fdctrl_sysbus_t {
 typedef struct fdctrl_isabus_t {
     ISADevice busdev;
     struct fdctrl_t state;
+    int32_t bootindexA;
+    int32_t bootindexB;
 } fdctrl_isabus_t;
 
 static uint32_t fdctrl_read (void *opaque, uint32_t reg)
@@ -631,6 +634,45 @@ static CPUWriteMemoryFunc * const fdctrl_mem_write_strict[3] = {
     NULL,
 };
 
+static void fdrive_media_changed_pre_save(void *opaque)
+{
+    fdrive_t *drive = opaque;
+
+    drive->media_changed = drive->bs->media_changed;
+}
+
+static int fdrive_media_changed_post_load(void *opaque, int version_id)
+{
+    fdrive_t *drive = opaque;
+
+    if (drive->bs != NULL) {
+        drive->bs->media_changed = drive->media_changed;
+    }
+
+    /* User ejected the floppy when drive->bs == NULL */
+    return 0;
+}
+
+static bool fdrive_media_changed_needed(void *opaque)
+{
+    fdrive_t *drive = opaque;
+
+    return (drive->bs != NULL && drive->bs->media_changed != 1);
+}
+
+static const VMStateDescription vmstate_fdrive_media_changed = {
+    .name = "fdrive/media_changed",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .pre_save = fdrive_media_changed_pre_save,
+    .post_load = fdrive_media_changed_post_load,
+    .fields      = (VMStateField[]) {
+        VMSTATE_UINT8(media_changed, fdrive_t),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_fdrive = {
     .name = "fdrive",
     .version_id = 1,
@@ -641,6 +683,14 @@ static const VMStateDescription vmstate_fdrive = {
         VMSTATE_UINT8(track, fdrive_t),
         VMSTATE_UINT8(sect, fdrive_t),
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (VMStateSubsection[]) {
+        {
+            .vmsd = &vmstate_fdrive_media_changed,
+            .needed = &fdrive_media_changed_needed,
+        } , {
+            /* empty */
+        }
     }
 };
 
@@ -1848,10 +1898,16 @@ static void fdctrl_result_timer(void *opaque)
 static void fdctrl_connect_drives(fdctrl_t *fdctrl)
 {
     unsigned int i;
+    fdrive_t *drive;
 
     for (i = 0; i < MAX_FD; i++) {
-        fd_init(&fdctrl->drives[i]);
-        fd_revalidate(&fdctrl->drives[i]);
+        drive = &fdctrl->drives[i];
+
+        fd_init(drive);
+        fd_revalidate(drive);
+        if (drive->bs) {
+            bdrv_set_removable(drive->bs, 1);
+        }
     }
 }
 
@@ -1860,8 +1916,12 @@ fdctrl_t *fdctrl_init_isa(DriveInfo **fds)
     ISADevice *dev;
 
     dev = isa_create("isa-fdc");
-    qdev_prop_set_drive(&dev->qdev, "driveA", fds[0]);
-    qdev_prop_set_drive(&dev->qdev, "driveB", fds[1]);
+    if (fds[0]) {
+        qdev_prop_set_drive_nofail(&dev->qdev, "driveA", fds[0]->bdrv);
+    }
+    if (fds[1]) {
+        qdev_prop_set_drive_nofail(&dev->qdev, "driveB", fds[1]->bdrv);
+    }
     if (qdev_init(&dev->qdev) < 0)
         return NULL;
     return &(DO_UPCAST(fdctrl_isabus_t, busdev, dev)->state);
@@ -1879,8 +1939,12 @@ fdctrl_t *fdctrl_init_sysbus(qemu_irq irq, int dma_chann,
     sys = DO_UPCAST(fdctrl_sysbus_t, busdev.qdev, dev);
     fdctrl = &sys->state;
     fdctrl->dma_chann = dma_chann; /* FIXME */
-    qdev_prop_set_drive(dev, "driveA", fds[0]);
-    qdev_prop_set_drive(dev, "driveB", fds[1]);
+    if (fds[0]) {
+        qdev_prop_set_drive_nofail(dev, "driveA", fds[0]->bdrv);
+    }
+    if (fds[1]) {
+        qdev_prop_set_drive_nofail(dev, "driveB", fds[1]->bdrv);
+    }
     qdev_init_nofail(dev);
     sysbus_connect_irq(&sys->busdev, 0, irq);
     sysbus_mmio_map(&sys->busdev, 0, mmio_base);
@@ -1896,7 +1960,9 @@ fdctrl_t *sun4m_fdctrl_init (qemu_irq irq, target_phys_addr_t io_base,
     fdctrl_t *fdctrl;
 
     dev = qdev_create(NULL, "SUNW,fdtwo");
-    qdev_prop_set_drive(dev, "drive", fds[0]);
+    if (fds[0]) {
+        qdev_prop_set_drive_nofail(dev, "drive", fds[0]->bdrv);
+    }
     qdev_init_nofail(dev);
     sys = DO_UPCAST(fdctrl_sysbus_t, busdev.qdev, dev);
     fdctrl = &sys->state;
@@ -1938,7 +2004,7 @@ static int fdctrl_init_common(fdctrl_t *fdctrl, target_phys_addr_t io_base)
         DMA_register_channel(fdctrl->dma_chann, &fdctrl_transfer_handler, fdctrl);
     fdctrl_connect_drives(fdctrl);
 
-    vmstate_register(io_base, &vmstate_fdc, fdctrl);
+    vmstate_register(NULL, io_base, &vmstate_fdc, fdctrl);
     return 0;
 }
 
@@ -1959,10 +2025,16 @@ static int isabus_fdc_init1(ISADevice *dev)
                           &fdctrl_write_port, fdctrl);
     register_ioport_write(iobase + 0x07, 1, 1,
                           &fdctrl_write_port, fdctrl);
+    isa_init_ioport_range(dev, iobase, 6);
+    isa_init_ioport(dev, iobase + 7);
+
     isa_init_irq(&isa->busdev, &fdctrl->irq, isairq);
     fdctrl->dma_chann = dma_chann;
 
     ret = fdctrl_init_common(fdctrl, iobase);
+
+    add_boot_device_path(isa->bootindexA, &dev->qdev, "/floppy@0");
+    add_boot_device_path(isa->bootindexB, &dev->qdev, "/floppy@1");
 
     return ret;
 }
@@ -2003,12 +2075,15 @@ static int sun4m_fdc_init1(SysBusDevice *dev)
 static ISADeviceInfo isa_fdc_info = {
     .init = isabus_fdc_init1,
     .qdev.name  = "isa-fdc",
+    .qdev.fw_name  = "fdc",
     .qdev.size  = sizeof(fdctrl_isabus_t),
     .qdev.no_user = 1,
     .qdev.reset = fdctrl_external_reset_isa,
     .qdev.props = (Property[]) {
-        DEFINE_PROP_DRIVE("driveA", fdctrl_isabus_t, state.drives[0].dinfo),
-        DEFINE_PROP_DRIVE("driveB", fdctrl_isabus_t, state.drives[1].dinfo),
+        DEFINE_PROP_DRIVE("driveA", fdctrl_isabus_t, state.drives[0].bs),
+        DEFINE_PROP_DRIVE("driveB", fdctrl_isabus_t, state.drives[1].bs),
+        DEFINE_PROP_INT32("bootindexA", fdctrl_isabus_t, bootindexA, -1),
+        DEFINE_PROP_INT32("bootindexB", fdctrl_isabus_t, bootindexB, -1),
         DEFINE_PROP_END_OF_LIST(),
     },
 };
@@ -2019,8 +2094,8 @@ static SysBusDeviceInfo sysbus_fdc_info = {
     .qdev.size  = sizeof(fdctrl_sysbus_t),
     .qdev.reset = fdctrl_external_reset_sysbus,
     .qdev.props = (Property[]) {
-        DEFINE_PROP_DRIVE("driveA", fdctrl_sysbus_t, state.drives[0].dinfo),
-        DEFINE_PROP_DRIVE("driveB", fdctrl_sysbus_t, state.drives[1].dinfo),
+        DEFINE_PROP_DRIVE("driveA", fdctrl_sysbus_t, state.drives[0].bs),
+        DEFINE_PROP_DRIVE("driveB", fdctrl_sysbus_t, state.drives[1].bs),
         DEFINE_PROP_END_OF_LIST(),
     },
 };
@@ -2031,7 +2106,7 @@ static SysBusDeviceInfo sun4m_fdc_info = {
     .qdev.size  = sizeof(fdctrl_sysbus_t),
     .qdev.reset = fdctrl_external_reset_sysbus,
     .qdev.props = (Property[]) {
-        DEFINE_PROP_DRIVE("drive", fdctrl_sysbus_t, state.drives[0].dinfo),
+        DEFINE_PROP_DRIVE("drive", fdctrl_sysbus_t, state.drives[0].bs),
         DEFINE_PROP_END_OF_LIST(),
     },
 };

@@ -125,15 +125,15 @@ static int pci_piix_ide_initfn(PCIIDEState *d)
 
     pci_register_bar(&d->dev, 4, 0x10, PCI_BASE_ADDRESS_SPACE_IO, bmdma_map);
 
-    vmstate_register(0, &vmstate_ide_pci, d);
+    vmstate_register(&d->dev.qdev, 0, &vmstate_ide_pci, d);
 
-    ide_bus_new(&d->bus[0], &d->dev.qdev);
-    ide_bus_new(&d->bus[1], &d->dev.qdev);
+    ide_bus_new(&d->bus[0], &d->dev.qdev, 0);
+    ide_bus_new(&d->bus[1], &d->dev.qdev, 1);
     ide_init_ioport(&d->bus[0], 0x1f0, 0x3f6);
     ide_init_ioport(&d->bus[1], 0x170, 0x376);
 
-    ide_init2(&d->bus[0], NULL, NULL, isa_reserve_irq(14));
-    ide_init2(&d->bus[1], NULL, NULL, isa_reserve_irq(15));
+    ide_init2(&d->bus[0], isa_reserve_irq(14));
+    ide_init2(&d->bus[1], isa_reserve_irq(15));
     return 0;
 }
 
@@ -180,11 +180,13 @@ static PCIDeviceInfo piix_ide_info[] = {
         .qdev.name    = "piix3-ide",
         .qdev.size    = sizeof(PCIIDEState),
         .qdev.no_user = 1,
+        .no_hotplug   = 1,
         .init         = pci_piix3_ide_initfn,
     },{
         .qdev.name    = "piix4-ide",
         .qdev.size    = sizeof(PCIIDEState),
         .qdev.no_user = 1,
+        .no_hotplug   = 1,
         .init         = pci_piix4_ide_initfn,
     },{
         /* end of list */

@@ -27,6 +27,7 @@
 #include "net.h"
 #include "net/checksum.h"
 #include "loader.h"
+#include "sysemu.h"
 
 #include "e1000_hw.h"
 
@@ -341,6 +342,15 @@ is_vlan_txd(uint32_t txd_lower)
     return ((txd_lower & E1000_TXD_CMD_VLE) != 0);
 }
 
+/* FCS aka Ethernet CRC-32. We don't get it from backends and can't
+ * fill it in, just pad descriptor length by 4 bytes unless guest
+ * told us to strip it off the packet. */
+static inline int
+fcs_len(E1000State *s)
+{
+    return (s->mac_reg[RCTL] & E1000_RCTL_SECRC) ? 0 : 4;
+}
+
 static void
 xmit_seg(E1000State *s)
 {
@@ -372,9 +382,12 @@ xmit_seg(E1000State *s)
         } else	// UDP
             cpu_to_be16wu((uint16_t *)(tp->data+css+4), len);
         if (tp->sum_needed & E1000_TXD_POPTS_TXSM) {
+            unsigned int phsum;
             // add pseudo-header length before checksum calculation
             sp = (uint16_t *)(tp->data + tp->tucso);
-            cpu_to_be16wu(sp, be16_to_cpup(sp) + len);
+            phsum = be16_to_cpup(sp) + len;
+            phsum = (phsum >> 16) + (phsum & 0xffff);
+            cpu_to_be16wu(sp, phsum);
         }
         tp->tso_frames++;
     }
@@ -614,6 +627,24 @@ e1000_can_receive(VLANClientState *nc)
     return (s->mac_reg[RCTL] & E1000_RCTL_EN);
 }
 
+static bool e1000_has_rxbufs(E1000State *s, size_t total_size)
+{
+    int bufs;
+    /* Fast-path short packets */
+    if (total_size <= s->rxbuf_size) {
+        return s->mac_reg[RDH] != s->mac_reg[RDT] || !s->check_rxov;
+    }
+    if (s->mac_reg[RDH] < s->mac_reg[RDT]) {
+        bufs = s->mac_reg[RDT] - s->mac_reg[RDH];
+    } else if (s->mac_reg[RDH] > s->mac_reg[RDT] || !s->check_rxov) {
+        bufs = s->mac_reg[RDLEN] /  sizeof(struct e1000_rx_desc) +
+            s->mac_reg[RDT] - s->mac_reg[RDH];
+    } else {
+        return false;
+    }
+    return total_size <= bufs * s->rxbuf_size;
+}
+
 static ssize_t
 e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
 {
@@ -624,15 +655,11 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
     uint32_t rdh_start;
     uint16_t vlan_special = 0;
     uint8_t vlan_status = 0, vlan_offset = 0;
+    size_t desc_offset;
+    size_t desc_size;
 
     if (!(s->mac_reg[RCTL] & E1000_RCTL_EN))
         return -1;
-
-    if (size > s->rxbuf_size) {
-        DBGOUT(RX, "packet too large for buffers (%lu > %d)\n",
-               (unsigned long)size, s->rxbuf_size);
-        return -1;
-    }
 
     if (!receive_filter(s, buf, size))
         return size;
@@ -646,11 +673,16 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
     }
 
     rdh_start = s->mac_reg[RDH];
-    size += 4; // for the header
-    do {
-        if (s->mac_reg[RDH] == s->mac_reg[RDT] && s->check_rxov) {
+    size += fcs_len(s);
+    desc_offset = 0;
+    if (!e1000_has_rxbufs(s, size)) {
             set_ics(s, 0, E1000_ICS_RXO);
             return -1;
+    }
+    do {
+        desc_size = size - desc_offset;
+        if (desc_size > s->rxbuf_size) {
+            desc_size = s->rxbuf_size;
         }
         base = ((uint64_t)s->mac_reg[RDBAH] << 32) + s->mac_reg[RDBAL] +
                sizeof(desc) * s->mac_reg[RDH];
@@ -659,9 +691,17 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
         desc.status |= (vlan_status | E1000_RXD_STAT_DD);
         if (desc.buffer_addr) {
             cpu_physical_memory_write(le64_to_cpu(desc.buffer_addr),
-                                      (void *)(buf + vlan_offset), size);
-            desc.length = cpu_to_le16(size);
-            desc.status |= E1000_RXD_STAT_EOP|E1000_RXD_STAT_IXSM;
+                                      (void *)(buf + desc_offset + vlan_offset),
+                                      desc_size);
+            desc_offset += desc_size;
+            desc.length = cpu_to_le16(desc_size);
+            if (desc_offset >= size) {
+                desc.status |= E1000_RXD_STAT_EOP | E1000_RXD_STAT_IXSM;
+            } else {
+                /* Guest zeroing out status is not a hardware requirement.
+                   Clear EOP in case guest didn't do it. */
+                desc.status &= ~E1000_RXD_STAT_EOP;
+            }
         } else // as per intel docs; skip descriptors with null buf addr
             DBGOUT(RX, "Null RX descriptor!!\n");
         cpu_physical_memory_write(base, (void *)&desc, sizeof(desc));
@@ -676,7 +716,7 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
             set_ics(s, 0, E1000_ICS_RXO);
             return -1;
         }
-    } while (desc.buffer_addr == 0);
+    } while (desc_offset < size);
 
     s->mac_reg[GPRC]++;
     s->mac_reg[TPR]++;
@@ -1120,6 +1160,9 @@ static int pci_e1000_init(PCIDevice *pci_dev)
                           d->dev.qdev.info->name, d->dev.qdev.id, d);
 
     qemu_format_nic_info_str(&d->nic->nc, macaddr);
+
+    add_boot_device_path(d->conf.bootindex, &pci_dev->qdev, "/ethernet-phy@0");
+
     return 0;
 }
 

@@ -30,11 +30,13 @@ struct ISABus {
 static ISABus *isabus;
 
 static void isabus_dev_print(Monitor *mon, DeviceState *dev, int indent);
+static char *isabus_get_fw_dev_path(DeviceState *dev);
 
 static struct BusInfo isa_bus_info = {
     .name      = "ISA",
     .size      = sizeof(ISABus),
     .print_dev = isabus_dev_print,
+    .get_fw_dev_path = isabus_get_fw_dev_path,
 };
 
 ISABus *isa_bus_new(DeviceState *dev)
@@ -89,6 +91,31 @@ void isa_init_irq(ISADevice *dev, qemu_irq *p, int isairq)
     dev->isairq[dev->nirqs] = isairq;
     *p = isabus->irqs[isairq];
     dev->nirqs++;
+}
+
+static void isa_init_ioport_one(ISADevice *dev, uint16_t ioport)
+{
+    assert(dev->nioports < ARRAY_SIZE(dev->ioports));
+    dev->ioports[dev->nioports++] = ioport;
+}
+
+static int isa_cmp_ports(const void *p1, const void *p2)
+{
+    return *(uint16_t*)p1 - *(uint16_t*)p2;
+}
+
+void isa_init_ioport_range(ISADevice *dev, uint16_t start, uint16_t length)
+{
+    int i;
+    for (i = start; i < start + length; i++) {
+        isa_init_ioport_one(dev, i);
+    }
+    qsort(dev->ioports, dev->nioports, sizeof(dev->ioports[0]), isa_cmp_ports);
+}
+
+void isa_init_ioport(ISADevice *dev, uint16_t ioport)
+{
+    isa_init_ioport_range(dev, ioport, 1);
 }
 
 static int isa_qdev_init(DeviceState *qdev, DeviceInfo *base)
@@ -152,6 +179,7 @@ static int isabus_bridge_init(SysBusDevice *dev)
 static SysBusDeviceInfo isabus_bridge_info = {
     .init = isabus_bridge_init,
     .qdev.name  = "isabus-bridge",
+    .qdev.fw_name  = "isa",
     .qdev.size  = sizeof(SysBusDevice),
     .qdev.no_user = 1,
 };
@@ -159,6 +187,20 @@ static SysBusDeviceInfo isabus_bridge_info = {
 static void isabus_register_devices(void)
 {
     sysbus_register_withprop(&isabus_bridge_info);
+}
+
+static char *isabus_get_fw_dev_path(DeviceState *dev)
+{
+    ISADevice *d = (ISADevice*)dev;
+    char path[40];
+    int off;
+
+    off = snprintf(path, sizeof(path), "%s", qdev_fw_name(dev));
+    if (d->nioports) {
+        snprintf(path + off, sizeof(path) - off, "@%04x", d->ioports[0]);
+    }
+
+    return strdup(path);
 }
 
 device_init(isabus_register_devices)

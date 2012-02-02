@@ -584,7 +584,7 @@ void hpet_init(qemu_irq *irq) {
         HPETTimer *timer = &s->timer[i];
         timer->qemu_timer = qemu_new_timer(vm_clock, hpet_timer, timer);
     }
-    vmstate_register(-1, &vmstate_hpet, s);
+    vmstate_register(NULL, -1, &vmstate_hpet, s);
     qemu_register_reset(hpet_reset, s);
     /* HPET Area */
     iomemtype = cpu_register_io_memory(hpet_ram_read,

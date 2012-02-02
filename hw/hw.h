@@ -10,7 +10,6 @@
 #include "cpu-common.h"
 #endif
 
-#include <stdbool.h>
 #include "ioport.h"
 #include "irq.h"
 
@@ -248,14 +247,16 @@ typedef int SaveLiveStateHandler(Monitor *mon, QEMUFile *f, int stage,
                                  void *opaque);
 typedef int LoadStateHandler(QEMUFile *f, void *opaque, int version_id);
 
-int register_savevm(const char *idstr,
+int register_savevm(DeviceState *dev,
+                    const char *idstr,
                     int instance_id,
                     int version_id,
                     SaveStateHandler *save_state,
                     LoadStateHandler *load_state,
                     void *opaque);
 
-int register_savevm_live(const char *idstr,
+int register_savevm_live(DeviceState *dev,
+                         const char *idstr,
                          int instance_id,
                          int version_id,
                          SaveSetParamsHandler *set_params,
@@ -264,7 +265,9 @@ int register_savevm_live(const char *idstr,
                          LoadStateHandler *load_state,
                          void *opaque);
 
-void unregister_savevm(const char *idstr, void *opaque);
+void unregister_savevm(DeviceState *dev, const char *idstr, void *opaque);
+void register_device_unmigratable(DeviceState *dev, const char *idstr,
+                                                                void *opaque);
 
 typedef void QEMUResetHandler(void *opaque);
 
@@ -314,6 +317,11 @@ typedef struct {
     bool (*field_exists)(void *opaque, int version_id);
 } VMStateField;
 
+typedef struct VMStateSubsection {
+    const VMStateDescription *vmsd;
+    bool (*needed)(void *opaque);
+} VMStateSubsection;
+
 struct VMStateDescription {
     const char *name;
     int version_id;
@@ -325,7 +333,10 @@ struct VMStateDescription {
     void (*pre_save)(void *opaque);
     void (*post_save)(void *opaque);
     VMStateField *fields;
+    const VMStateSubsection *subsections;
 };
+
+extern const VMStateInfo vmstate_info_bool;
 
 extern const VMStateInfo vmstate_info_int8;
 extern const VMStateInfo vmstate_info_int16;
@@ -514,6 +525,17 @@ extern const VMStateInfo vmstate_info_unused_buffer;
     .start        = (_start),                                        \
 }
 
+#define VMSTATE_VBUFFER_UINT32(_field, _state, _version, _test, _start, _field_size) { \
+    .name         = (stringify(_field)),                             \
+    .version_id   = (_version),                                      \
+    .field_exists = (_test),                                         \
+    .size_offset  = vmstate_offset_value(_state, _field_size, uint32_t),\
+    .info         = &vmstate_info_buffer,                            \
+    .flags        = VMS_VBUFFER|VMS_POINTER,                         \
+    .offset       = offsetof(_state, _field),                        \
+    .start        = (_start),                                        \
+}
+
 #define VMSTATE_BUFFER_UNSAFE_INFO(_field, _state, _version, _info, _size) { \
     .name       = (stringify(_field)),                               \
     .version_id = (_version),                                        \
@@ -590,6 +612,9 @@ extern const VMStateDescription vmstate_i2c_slave;
 #define VMSTATE_STRUCT_POINTER(_field, _state, _vmsd, _type)          \
     VMSTATE_STRUCT_POINTER_TEST(_field, _state, NULL, _vmsd, _type)
 
+#define VMSTATE_BOOL_V(_f, _s, _v)                                    \
+    VMSTATE_SINGLE(_f, _s, _v, vmstate_info_bool, bool)
+
 #define VMSTATE_INT8_V(_f, _s, _v)                                    \
     VMSTATE_SINGLE(_f, _s, _v, vmstate_info_int8, int8_t)
 #define VMSTATE_INT16_V(_f, _s, _v)                                   \
@@ -607,6 +632,9 @@ extern const VMStateDescription vmstate_i2c_slave;
     VMSTATE_SINGLE(_f, _s, _v, vmstate_info_uint32, uint32_t)
 #define VMSTATE_UINT64_V(_f, _s, _v)                                  \
     VMSTATE_SINGLE(_f, _s, _v, vmstate_info_uint64, uint64_t)
+
+#define VMSTATE_BOOL(_f, _s)                                          \
+    VMSTATE_BOOL_V(_f, _s, 0)
 
 #define VMSTATE_INT8(_f, _s)                                          \
     VMSTATE_INT8_V(_f, _s, 0)
@@ -671,6 +699,12 @@ extern const VMStateDescription vmstate_i2c_slave;
 #define VMSTATE_PTIMER(_f, _s)                                        \
     VMSTATE_PTIMER_V(_f, _s, 0)
 
+#define VMSTATE_BOOL_ARRAY_V(_f, _s, _n, _v)                         \
+    VMSTATE_ARRAY(_f, _s, _n, _v, vmstate_info_bool, bool)
+
+#define VMSTATE_BOOL_ARRAY(_f, _s, _n)                               \
+    VMSTATE_BOOL_ARRAY_V(_f, _s, _n, 0)
+
 #define VMSTATE_UINT16_ARRAY_V(_f, _s, _n, _v)                         \
     VMSTATE_ARRAY(_f, _s, _n, _v, vmstate_info_uint16, uint16_t)
 
@@ -728,6 +762,9 @@ extern const VMStateDescription vmstate_i2c_slave;
 #define VMSTATE_PARTIAL_VBUFFER(_f, _s, _size)                        \
     VMSTATE_VBUFFER(_f, _s, 0, NULL, 0, _size)
 
+#define VMSTATE_PARTIAL_VBUFFER_UINT32(_f, _s, _size)                        \
+    VMSTATE_VBUFFER_UINT32(_f, _s, 0, NULL, 0, _size)
+
 #define VMSTATE_SUB_VBUFFER(_f, _s, _start, _size)                    \
     VMSTATE_VBUFFER(_f, _s, 0, NULL, _start, _size)
 
@@ -772,7 +809,8 @@ extern int vmstate_load_state(QEMUFile *f, const VMStateDescription *vmsd,
                               void *opaque, int version_id);
 extern void vmstate_save_state(QEMUFile *f, const VMStateDescription *vmsd,
                                void *opaque);
-extern int vmstate_register(int instance_id, const VMStateDescription *vmsd,
-                            void *base);
-void vmstate_unregister(const VMStateDescription *vmsd, void *opaque);
+extern int vmstate_register(DeviceState *dev, int instance_id,
+                            const VMStateDescription *vmsd, void *base);
+void vmstate_unregister(DeviceState *dev, const VMStateDescription *vmsd,
+                        void *opaque);
 #endif

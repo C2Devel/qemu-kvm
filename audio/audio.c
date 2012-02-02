@@ -44,6 +44,9 @@
     that we generate the list.
 */
 static struct audio_driver *drvtab[] = {
+#ifdef CONFIG_SPICE
+    &spice_audio_driver,
+#endif
     CONFIG_AUDIO_DRIVERS
     &no_audio_driver,
     &wav_audio_driver
@@ -321,10 +324,10 @@ void AUD_vlog (const char *cap, const char *fmt, va_list ap)
 {
     if (conf.log_to_monitor) {
         if (cap) {
-            monitor_printf(cur_mon, "%s: ", cap);
+            monitor_printf(default_mon, "%s: ", cap);
         }
 
-        monitor_vprintf(cur_mon, fmt, ap);
+        monitor_vprintf(default_mon, fmt, ap);
     }
     else {
         if (cap) {
@@ -1892,7 +1895,7 @@ static void audio_init (void)
     }
 
     QLIST_INIT (&s->card_head);
-    vmstate_register (0, &vmstate_audio, s);
+    vmstate_register (NULL, 0, &vmstate_audio, s);
 }
 
 void AUD_register_card (const char *name, QEMUSoundCard *card)

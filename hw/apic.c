@@ -23,6 +23,7 @@
 #include "qemu-timer.h"
 #include "host-utils.h"
 #include "kvm.h"
+#include "trace.h"
 
 #include "qemu-kvm.h"
 
@@ -159,6 +160,8 @@ static void apic_local_deliver(CPUState *env, int vector)
     uint32_t lvt = s->lvt[vector];
     int trigger_mode;
 
+    trace_apic_local_deliver(vector, (lvt >> 8) & 7);
+
     if (lvt & APIC_LVT_MASKED)
         return;
 
@@ -288,6 +291,9 @@ void apic_deliver_irq(uint8_t dest, uint8_t dest_mode,
 {
     uint32_t deliver_bitmask[MAX_APIC_WORDS];
 
+    trace_apic_deliver_irq(dest, dest_mode, delivery_mode, vector_num,
+                           polarity, trigger_mode);
+
     apic_get_delivery_bitmask(deliver_bitmask, dest, dest_mode);
     apic_bus_deliver(deliver_bitmask, delivery_mode, vector_num, polarity,
                      trigger_mode);
@@ -296,9 +302,9 @@ void apic_deliver_irq(uint8_t dest, uint8_t dest_mode,
 void cpu_set_apic_base(CPUState *env, uint64_t val)
 {
     APICState *s = env->apic_state;
-#ifdef DEBUG_APIC
-    printf("cpu_set_apic_base: %016" PRIx64 "\n", val);
-#endif
+
+    trace_cpu_set_apic_base(val);
+
     if (!s)
         return;
     if (kvm_enabled() && kvm_irqchip_in_kernel())
@@ -317,10 +323,9 @@ void cpu_set_apic_base(CPUState *env, uint64_t val)
 uint64_t cpu_get_apic_base(CPUState *env)
 {
     APICState *s = env->apic_state;
-#ifdef DEBUG_APIC
-    printf("cpu_get_apic_base: %016" PRIx64 "\n",
-           s ? (uint64_t)s->apicbase: 0);
-#endif
+
+    trace_cpu_get_apic_base(s ? (uint64_t)s->apicbase: 0);
+
     return s ? s->apicbase : 0;
 }
 
@@ -390,11 +395,15 @@ static void apic_update_irq(APICState *s)
 
 void apic_reset_irq_delivered(void)
 {
+    trace_apic_reset_irq_delivered(apic_irq_delivered);
+
     apic_irq_delivered = 0;
 }
 
 int apic_get_irq_delivered(void)
 {
+    trace_apic_get_irq_delivered(apic_irq_delivered);
+
     return apic_irq_delivered;
 }
 
@@ -406,6 +415,8 @@ void apic_set_irq_delivered(void)
 static void apic_set_irq(APICState *s, int vector_num, int trigger_mode)
 {
     apic_irq_delivered += !get_bit(s->irr, vector_num);
+
+    trace_apic_set_irq(apic_irq_delivered);
 
     set_bit(s->irr, vector_num);
     if (trigger_mode)
@@ -772,9 +783,7 @@ static uint32_t apic_mem_readl(void *opaque, target_phys_addr_t addr)
         val = 0;
         break;
     }
-#ifdef DEBUG_APIC
-    printf("APIC read: %08x = %08x\n", (uint32_t)addr, val);
-#endif
+    trace_apic_mem_readl(addr, val);
     return val;
 }
 
@@ -809,9 +818,7 @@ static void apic_mem_writel(void *opaque, target_phys_addr_t addr, uint32_t val)
         return;
     s = env->apic_state;
 
-#ifdef DEBUG_APIC
-    printf("APIC write: %08x = %08x\n", (uint32_t)addr, val);
-#endif
+    trace_apic_mem_writel(addr, val);
 
     switch(index) {
     case 0x02:
@@ -1128,7 +1135,7 @@ int apic_init(CPUState *env)
     }
     s->timer = qemu_new_timer(vm_clock, apic_timer, s);
 
-    vmstate_register(s->idx, &vmstate_apic, s);
+    vmstate_register(NULL, s->idx, &vmstate_apic, s);
     qemu_register_reset(apic_reset, s);
 
     /* apic_reset must be called before the vcpu threads are initialized and load

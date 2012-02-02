@@ -1151,6 +1151,7 @@ typedef struct KVMState {
     QTAILQ_HEAD(, kvm_sw_breakpoint) kvm_sw_breakpoints;
 #endif
     int irqchip_in_kernel;
+    int many_ioeventfds;
 
     struct kvm_context kvm_context;
 } KVMState;

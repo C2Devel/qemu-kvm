@@ -1,11 +1,13 @@
 #ifndef QEMU_CHAR_H
 #define QEMU_CHAR_H
 
+#include <stdbool.h>
 #include "qemu-common.h"
 #include "qemu-queue.h"
 #include "qemu-option.h"
 #include "qemu-config.h"
 #include "qobject.h"
+#include "qstring.h"
 
 /* character device */
 
@@ -59,29 +61,42 @@ struct CharDriverState {
     IOEventHandler *chr_event;
     IOCanRWHandler *chr_can_read;
     IOReadHandler *chr_read;
+    IOHandler *chr_write_unblocked;
+    void (*chr_enable_write_fd_handler)(struct CharDriverState *chr);
+    void (*chr_disable_write_fd_handler)(struct CharDriverState *chr);
     void *handler_opaque;
     void (*chr_send_event)(struct CharDriverState *chr, int event);
     void (*chr_close)(struct CharDriverState *chr);
     void (*chr_accept_input)(struct CharDriverState *chr);
+    void (*chr_guest_open)(struct CharDriverState *chr);
+    void (*chr_guest_close)(struct CharDriverState *chr);
     void *opaque;
     QEMUBH *bh;
     char *label;
     char *filename;
+    /* Are we in a blocked state? */
+    bool write_blocked;
     QTAILQ_ENTRY(CharDriverState) next;
 };
+
+typedef struct QemuChrHandlers {
+    IOCanRWHandler *fd_can_read;
+    IOReadHandler *fd_read;
+    IOHandler *fd_write_unblocked;
+    IOEventHandler *fd_event;
+} QemuChrHandlers;
 
 QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename);
 CharDriverState *qemu_chr_open_opts(QemuOpts *opts,
                                     void (*init)(struct CharDriverState *s));
 CharDriverState *qemu_chr_open(const char *label, const char *filename, void (*init)(struct CharDriverState *s));
+void qemu_chr_guest_open(struct CharDriverState *chr);
+void qemu_chr_guest_close(struct CharDriverState *chr);
 void qemu_chr_close(CharDriverState *chr);
 void qemu_chr_printf(CharDriverState *s, const char *fmt, ...);
 int qemu_chr_write(CharDriverState *s, const uint8_t *buf, int len);
 void qemu_chr_send_event(CharDriverState *s, int event);
-void qemu_chr_add_handlers(CharDriverState *s,
-                           IOCanRWHandler *fd_can_read,
-                           IOReadHandler *fd_read,
-                           IOEventHandler *fd_event,
+void qemu_chr_add_handlers(CharDriverState *s, const QemuChrHandlers *handlers,
                            void *opaque);
 int qemu_chr_ioctl(CharDriverState *s, int cmd, void *arg);
 void qemu_chr_generic_open(CharDriverState *s);
@@ -95,7 +110,16 @@ CharDriverState *qemu_chr_find(const char *name);
 
 extern int term_escape_char;
 
+/* memory chardev */
+void qemu_chr_init_mem(CharDriverState *chr);
+void qemu_chr_close_mem(CharDriverState *chr);
+QString *qemu_chr_mem_to_qs(CharDriverState *chr);
+size_t qemu_chr_mem_osize(const CharDriverState *chr);
+
 /* async I/O support */
+
+void enable_write_fd_handler(int fd, IOHandler *fd_write);
+void disable_write_fd_handler(int fd);
 
 int qemu_set_fd_handler2(int fd,
                          IOCanRWHandler *fd_read_poll,

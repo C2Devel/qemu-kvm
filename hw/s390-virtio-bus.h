@@ -38,8 +38,12 @@ typedef struct VirtIOS390Device {
     ram_addr_t feat_offs;
     uint8_t feat_len;
     VirtIODevice *vdev;
-    DriveInfo *dinfo;
+    BlockConf block;
     NICConf nic;
+    uint32_t host_features;
+    /* Max. number of ports we can have for a the virtio-serial device */
+    uint32_t max_virtserial_ports;
+    virtio_net_conf net;
 } VirtIOS390Device;
 
 typedef struct VirtIOS390Bus {

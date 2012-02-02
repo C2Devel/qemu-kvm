@@ -203,7 +203,8 @@ static int msix_add_config(struct PCIDevice *pdev, unsigned short nentries,
     }
 
     pdev->msix_bar_size = new_size;
-    config_offset = pci_add_capability(pdev, PCI_CAP_ID_MSIX, MSIX_CAP_LENGTH);
+    config_offset = pci_add_capability(pdev, PCI_CAP_ID_MSIX,
+                                       0, MSIX_CAP_LENGTH);
     if (config_offset < 0)
         return config_offset;
     config = pdev->config + config_offset;
@@ -318,6 +319,11 @@ static void msix_mmio_writel(void *opaque, target_phys_addr_t addr,
     if (kvm_enabled() && kvm_irqchip_in_kernel()) {
         kvm_msix_update(dev, vector, was_masked, msix_is_masked(dev, vector));
     }
+    if (was_masked != msix_is_masked(dev, vector) && dev->msix_mask_notifier) {
+        int r = dev->msix_mask_notifier(dev, vector,
+					msix_is_masked(dev, vector));
+        assert(r >= 0);
+    }
     msix_handle_mask_update(dev, vector);
 }
 
@@ -356,10 +362,17 @@ void msix_mmio_map(PCIDevice *d, int region_num,
 
 static void msix_mask_all(struct PCIDevice *dev, unsigned nentries)
 {
-    int vector;
+    int vector, r;
     for (vector = 0; vector < nentries; ++vector) {
         unsigned offset = vector * MSIX_ENTRY_SIZE + MSIX_VECTOR_CTRL;
+        int was_masked = msix_is_masked(dev, vector);
         dev->msix_table_page[offset] |= MSIX_VECTOR_MASK;
+        if (was_masked != msix_is_masked(dev, vector) &&
+            dev->msix_mask_notifier) {
+            r = dev->msix_mask_notifier(dev, vector,
+                                        msix_is_masked(dev, vector));
+            assert(r >= 0);
+        }
     }
 }
 
@@ -382,6 +395,7 @@ int msix_init(struct PCIDevice *dev, unsigned short nentries,
                                             sizeof *dev->msix_irq_entries);
     }
 #endif
+    dev->msix_mask_notifier = NULL;
     dev->msix_entry_used = qemu_mallocz(MSIX_MAX_ENTRIES *
                                         sizeof *dev->msix_entry_used);
 
@@ -586,4 +600,81 @@ void msix_unuse_all_vectors(PCIDevice *dev)
     if (!(dev->cap_present & QEMU_PCI_CAP_MSIX))
         return;
     msix_free_irq_entries(dev);
+}
+
+static int msix_set_mask_notifier_for_vector(PCIDevice *dev, unsigned vector)
+{
+    int r = 0;
+    if (vector >= dev->msix_entries_nr || !dev->msix_entry_used[vector])
+        return 0;
+
+    assert(dev->msix_mask_notifier);
+
+    /* Unmask the new notifier unless vector is masked. */
+    if (!msix_is_masked(dev, vector)) {
+        r = dev->msix_mask_notifier(dev, vector, false);
+        if (r < 0) {
+            return r;
+        }
+    }
+    return r;
+}
+
+static int msix_unset_mask_notifier_for_vector(PCIDevice *dev, unsigned vector)
+{
+    int r = 0;
+    if (vector >= dev->msix_entries_nr || !dev->msix_entry_used[vector])
+        return 0;
+
+    assert(dev->msix_mask_notifier);
+
+    /* Mask the old notifier unless it is already masked. */
+    if (!msix_is_masked(dev, vector)) {
+        r = dev->msix_mask_notifier(dev, vector, true);
+        if (r < 0) {
+            return r;
+        }
+    }
+    return r;
+}
+
+int msix_set_mask_notifier(PCIDevice *dev, msix_mask_notifier_func f)
+{
+    int r, n;
+    assert(!dev->msix_mask_notifier);
+    dev->msix_mask_notifier = f;
+    for (n = 0; n < dev->msix_entries_nr; ++n) {
+        r = msix_set_mask_notifier_for_vector(dev, n);
+        if (r < 0) {
+            goto undo;
+        }
+    }
+    return 0;
+
+undo:
+    while (--n >= 0) {
+        msix_unset_mask_notifier_for_vector(dev, n);
+    }
+    dev->msix_mask_notifier = NULL;
+    return r;
+}
+
+int msix_unset_mask_notifier(PCIDevice *dev)
+{
+    int r, n;
+    assert(dev->msix_mask_notifier);
+    for (n = 0; n < dev->msix_entries_nr; ++n) {
+        r = msix_unset_mask_notifier_for_vector(dev, n);
+        if (r < 0) {
+            goto undo;
+        }
+    }
+    dev->msix_mask_notifier = NULL;
+    return 0;
+
+undo:
+    while (--n >= 0) {
+        msix_set_mask_notifier_for_vector(dev, n);
+    }
+    return r;
 }

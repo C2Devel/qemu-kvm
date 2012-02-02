@@ -29,6 +29,7 @@
 #include <hw/sh.h>
 #include "block.h"
 #include "block_int.h"
+#include "qemu-error.h"
 #include "qemu-timer.h"
 #include "sysemu.h"
 #include "dma.h"
@@ -64,6 +65,7 @@ static void ide_dma_start(IDEState *s, BlockDriverCompletionFunc *dma_cb);
 static void ide_dma_restart(IDEState *s, int is_read);
 static void ide_atapi_cmd_read_dma_cb(void *opaque, int ret);
 static int ide_handle_rw_error(IDEState *s, int error, int op);
+static void ide_flush_cache(IDEState *s);
 
 static void padstr(char *str, const char *src, int len)
 {
@@ -97,6 +99,7 @@ static void ide_identify(IDEState *s)
 {
     uint16_t *p;
     unsigned int oldsize;
+    IDEDevice *dev;
 
     if (s->identify_set) {
 	memcpy(s->io_buffer, s->identify_data, sizeof(s->identify_data));
@@ -115,7 +118,7 @@ static void ide_identify(IDEState *s)
     put_le16(p + 20, 3); /* XXX: retired, remove ? */
     put_le16(p + 21, 512); /* cache size in sectors */
     put_le16(p + 22, 4); /* ecc bytes */
-    padstr((char *)(p + 23), QEMU_VERSION, 8); /* firmware version */
+    padstr((char *)(p + 23), s->version, 8); /* firmware version */
     padstr((char *)(p + 27), "QEMU HARDDISK", 40); /* model */
 #if MAX_MULT_SECTORS > 1
     put_le16(p + 47, 0x8000 | MAX_MULT_SECTORS);
@@ -164,6 +167,9 @@ static void ide_identify(IDEState *s)
     put_le16(p + 101, s->nb_sectors >> 16);
     put_le16(p + 102, s->nb_sectors >> 32);
     put_le16(p + 103, s->nb_sectors >> 48);
+    dev = s->unit ? s->bus->slave : s->bus->master;
+    if (dev && dev->conf.physical_block_size)
+        put_le16(p + 106, 0x6000 | get_physical_block_exp(&dev->conf));
 
     memcpy(s->identify_data, p, sizeof(s->identify_data));
     s->identify_set = 1;
@@ -186,7 +192,7 @@ static void ide_atapi_identify(IDEState *s)
     put_le16(p + 20, 3); /* buffer type */
     put_le16(p + 21, 512); /* cache size in sectors */
     put_le16(p + 22, 4); /* ecc bytes */
-    padstr((char *)(p + 23), QEMU_VERSION, 8); /* firmware version */
+    padstr((char *)(p + 23), s->version, 8); /* firmware version */
     padstr((char *)(p + 27), "QEMU DVD-ROM", 40); /* model */
     put_le16(p + 48, 1); /* dword I/O (XXX: should not be set on CDROM) */
 #ifdef USE_DMA_CDROM
@@ -238,7 +244,7 @@ static void ide_cfata_identify(IDEState *s)
     put_le16(p + 8, s->nb_sectors);		/* Sectors per card */
     padstr((char *)(p + 10), s->drive_serial_str, 20); /* serial number */
     put_le16(p + 22, 0x0004);			/* ECC bytes */
-    padstr((char *) (p + 23), QEMU_VERSION, 8);	/* Firmware Revision */
+    padstr((char *) (p + 23), s->version, 8);	/* Firmware Revision */
     padstr((char *) (p + 27), "QEMU MICRODRIVE", 40);/* Model number */
 #if MAX_MULT_SECTORS > 1
     put_le16(p + 47, 0x8000 | MAX_MULT_SECTORS);
@@ -480,13 +486,16 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
     int is_read = (op & BM_STATUS_RETRY_READ);
     BlockInterfaceErrorAction action = drive_get_on_error(s->bs, is_read);
 
-    if (action == BLOCK_ERR_IGNORE)
+    if (action == BLOCK_ERR_IGNORE) {
+        bdrv_mon_event(s->bs, BDRV_ACTION_IGNORE, error, is_read);
         return 0;
+    }
 
     if ((error == ENOSPC && action == BLOCK_ERR_STOP_ENOSPC)
             || action == BLOCK_ERR_STOP_ANY) {
         s->bus->bmdma->unit = s->unit;
         s->bus->bmdma->status |= op;
+        bdrv_mon_event(s->bs, BDRV_ACTION_STOP, error, is_read);
         vm_stop(0);
     } else {
         if (op & BM_STATUS_DMA_RETRY) {
@@ -495,6 +504,7 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
         } else {
             ide_rw_error(s);
         }
+        bdrv_mon_event(s->bs, BDRV_ACTION_REPORT, error, is_read);
     }
 
     return 1;
@@ -682,6 +692,8 @@ static void ide_dma_restart_bh(void *opaque)
         } else {
             ide_sector_write(bmdma_active_if(bm));
         }
+    } else if (bm->status & BM_STATUS_RETRY_FLUSH) {
+        ide_flush_cache(bmdma_active_if(bm));
     }
 }
 
@@ -789,10 +801,30 @@ static void ide_flush_cb(void *opaque, int ret)
 {
     IDEState *s = opaque;
 
-    /* XXX: how do we signal I/O errors here? */
+    if (ret < 0) {
+        /* XXX: What sector number to set here? */
+        if (ide_handle_rw_error(s, -ret, BM_STATUS_RETRY_FLUSH)) {
+            return;
+        }
+    }
 
     s->status = READY_STAT | SEEK_STAT;
     ide_set_irq(s->bus);
+}
+
+static void ide_flush_cache(IDEState *s)
+{
+    BlockDriverAIOCB *acb;
+
+    if (s->bs == NULL) {
+        ide_flush_cb(s, 0);
+        return;
+    }
+
+    acb = bdrv_aio_flush(s->bs, ide_flush_cb, s);
+    if (acb == NULL) {
+        ide_flush_cb(s, -EIO);
+    }
 }
 
 static inline void cpu_to_ube16(uint8_t *buf, int val)
@@ -1201,6 +1233,136 @@ static int ide_dvd_read_structure(IDEState *s, int format,
     }
 }
 
+static unsigned int event_status_media(IDEState *s,
+                                       uint8_t *buf)
+{
+    enum media_event_code {
+        MEC_NO_CHANGE = 0,       /* Status unchanged */
+        MEC_EJECT_REQUESTED,     /* received a request from user to eject */
+        MEC_NEW_MEDIA,           /* new media inserted and ready for access */
+        MEC_MEDIA_REMOVAL,       /* only for media changers */
+        MEC_MEDIA_CHANGED,       /* only for media changers */
+        MEC_BG_FORMAT_COMPLETED, /* MRW or DVD+RW b/g format completed */
+        MEC_BG_FORMAT_RESTARTED, /* MRW or DVD+RW b/g format restarted */
+    };
+    enum media_status {
+        MS_TRAY_OPEN = 1,
+        MS_MEDIA_PRESENT = 2,
+    };
+    uint8_t event_code, media_status;
+
+    media_status = 0;
+    if (s->bs->tray_open) {
+        media_status = MS_TRAY_OPEN;
+    } else if (bdrv_is_inserted(s->bs)) {
+        media_status = MS_MEDIA_PRESENT;
+    }
+
+    /* Event notification descriptor */
+    event_code = MEC_NO_CHANGE;
+    if (media_status != MS_TRAY_OPEN && s->events.new_media) {
+        event_code = MEC_NEW_MEDIA;
+        s->events.new_media = false;
+    }
+
+    buf[4] = event_code;
+    buf[5] = media_status;
+
+    /* These fields are reserved, just clear them. */
+    buf[6] = 0;
+    buf[7] = 0;
+
+    return 8; /* We wrote to 4 extra bytes from the header */
+}
+
+static void handle_get_event_status_notification(IDEState *s,
+                                                 uint8_t *buf,
+                                                 const uint8_t *packet)
+{
+    struct {
+        uint8_t opcode;
+        uint8_t polled;        /* lsb bit is polled; others are reserved */
+        uint8_t reserved2[2];
+        uint8_t class;
+        uint8_t reserved3[2];
+        uint16_t len;
+        uint8_t control;
+    } __attribute__((packed)) *gesn_cdb;
+
+    struct {
+        uint16_t len;
+        uint8_t notification_class;
+        uint8_t supported_events;
+    } __attribute((packed)) *gesn_event_header;
+
+    enum notification_class_request_type {
+        NCR_RESERVED1 = 1 << 0,
+        NCR_OPERATIONAL_CHANGE = 1 << 1,
+        NCR_POWER_MANAGEMENT = 1 << 2,
+        NCR_EXTERNAL_REQUEST = 1 << 3,
+        NCR_MEDIA = 1 << 4,
+        NCR_MULTI_HOST = 1 << 5,
+        NCR_DEVICE_BUSY = 1 << 6,
+        NCR_RESERVED2 = 1 << 7,
+    };
+    enum event_notification_class_field {
+        ENC_NO_EVENTS = 0,
+        ENC_OPERATIONAL_CHANGE,
+        ENC_POWER_MANAGEMENT,
+        ENC_EXTERNAL_REQUEST,
+        ENC_MEDIA,
+        ENC_MULTIPLE_HOSTS,
+        ENC_DEVICE_BUSY,
+        ENC_RESERVED,
+    };
+    unsigned int max_len, used_len;
+
+    gesn_cdb = (void *)packet;
+    gesn_event_header = (void *)buf;
+
+    max_len = be16_to_cpu(gesn_cdb->len);
+
+    /* It is fine by the MMC spec to not support async mode operations */
+    if (!(gesn_cdb->polled & 0x01)) { /* asynchronous mode */
+        /* Only polling is supported, asynchronous mode is not. */
+        ide_atapi_cmd_error(s, SENSE_ILLEGAL_REQUEST,
+                            ASC_INV_FIELD_IN_CMD_PACKET);
+        return;
+    }
+
+    /* polling mode operation */
+
+    /*
+     * These are the supported events.
+     *
+     * We currently only support requests of the 'media' type.
+     */
+    gesn_event_header->supported_events = NCR_MEDIA;
+
+    /*
+     * We use |= below to set the class field; other bits in this byte
+     * are reserved now but this is useful to do if we have to use the
+     * reserved fields later.
+     */
+    gesn_event_header->notification_class = 0;
+
+    /*
+     * Responses to requests are to be based on request priority.  The
+     * notification_class_request_type enum above specifies the
+     * priority: upper elements are higher prio than lower ones.
+     */
+    if (gesn_cdb->class & NCR_MEDIA) {
+        gesn_event_header->notification_class |= ENC_MEDIA;
+        used_len = event_status_media(s, buf);
+    } else {
+        gesn_event_header->notification_class = 0x80; /* No event available */
+        used_len = sizeof(*gesn_event_header);
+    }
+    gesn_event_header->len = cpu_to_be16(used_len
+                                         - sizeof(*gesn_event_header));
+    ide_atapi_cmd_reply(s, used_len, max_len);
+}
+
 static void ide_atapi_cmd(IDEState *s)
 {
     const uint8_t *packet;
@@ -1219,20 +1381,67 @@ static void ide_atapi_cmd(IDEState *s)
         printf("\n");
     }
 #endif
-    /* If there's a UNIT_ATTENTION condition pending, only
-       REQUEST_SENSE and INQUIRY commands are allowed to complete. */
+    /*
+     * If there's a UNIT_ATTENTION condition pending, only
+     * REQUEST_SENSE, INQUIRY, GET_CONFIGURATION and
+     * GET_EVENT_STATUS_NOTIFICATION commands are allowed to complete.
+     * MMC-5, section 4.1.6.1 lists only these commands being allowed
+     * to complete, with other commands getting a CHECK condition
+     * response unless a higher priority status, defined by the drive
+     * here, is pending.
+     */
+    /* RHEL: We allow the TEST_UNIT_READY command to complete here as well. */
     if (s->sense_key == SENSE_UNIT_ATTENTION &&
-	s->io_buffer[0] != GPCMD_REQUEST_SENSE &&
-	s->io_buffer[0] != GPCMD_INQUIRY) {
-	ide_atapi_cmd_check_status(s);
-	return;
+        s->io_buffer[0] != GPCMD_REQUEST_SENSE &&
+        s->io_buffer[0] != GPCMD_INQUIRY &&
+        s->io_buffer[0] != GPCMD_TEST_UNIT_READY &&
+        s->io_buffer[0] != GPCMD_GET_EVENT_STATUS_NOTIFICATION) {
+        ide_atapi_cmd_check_status(s);
+        return;
     }
     switch(s->io_buffer[0]) {
     case GPCMD_TEST_UNIT_READY:
-        if (bdrv_is_inserted(s->bs) && !s->cdrom_changed) {
-            ide_atapi_cmd_ok(s);
+        if (bdrv_is_inserted(s->bs)) {
+            int sense, asc;
+
+            sense = s->sense_key;
+            asc = s->asc;
+
+            /*
+             * Check if there's any pending media change notification
+             * to be given.
+             *
+             * We want the guest to notice an empty tray after a cd
+             * change, so that the guest can trigger its new media
+             * paths.  So send one MEDIUM_NOT_PRESENT message after a
+             * cd change.
+             *
+             * After we've sent that message, the guest will poke at
+             * us again.  Send the UNIT_ATTENTION message then.  Once
+             * this is done, reset the UNIT_ATTENTION message to
+             * ensure we don't keep repeating it.
+             */
+            switch(s->cdrom_changed) {
+            case 0:
+                ide_atapi_cmd_ok(s);
+                break;
+            case 1:
+                s->sense_key = SENSE_UNIT_ATTENTION;
+                s->asc = ASC_MEDIUM_MAY_HAVE_CHANGED;
+                ide_atapi_cmd_ok(s);
+
+                sense = SENSE_NONE;
+                s->cdrom_changed--;
+                break;
+            case 2:
+                ide_atapi_cmd_error(s, SENSE_NOT_READY,
+                                    ASC_MEDIUM_NOT_PRESENT);
+                s->cdrom_changed--;
+                break;
+            }
+            s->sense_key = sense;
+            s->asc = asc;
         } else {
-            s->cdrom_changed = 0;
             ide_atapi_cmd_error(s, SENSE_NOT_READY,
                                 ASC_MEDIUM_NOT_PRESENT);
         }
@@ -1591,7 +1800,7 @@ static void ide_atapi_cmd(IDEState *s)
         buf[7] = 0; /* reserved */
         padstr8(buf + 8, 8, "QEMU");
         padstr8(buf + 16, 16, "QEMU DVD-ROM");
-        padstr8(buf + 32, 4, QEMU_VERSION);
+        padstr8(buf + 32, 4, s->version);
         ide_atapi_cmd_reply(s, 36, max_len);
         break;
     case GPCMD_GET_CONFIGURATION:
@@ -1638,6 +1847,9 @@ static void ide_atapi_cmd(IDEState *s)
             ide_atapi_cmd_reply(s, len, max_len);
             break;
         }
+    case GPCMD_GET_EVENT_STATUS_NOTIFICATION:
+        handle_get_event_status_notification(s, buf, packet);
+        break;
     default:
         ide_atapi_cmd_error(s, SENSE_ILLEGAL_REQUEST,
                             ASC_ILLEGAL_OPCODE);
@@ -1699,17 +1911,22 @@ static void ide_cfata_metadata_write(IDEState *s)
 }
 
 /* called when the inserted state of the media has changed */
-static void cdrom_change_cb(void *opaque)
+static void cdrom_change_cb(void *opaque, int reason)
 {
     IDEState *s = opaque;
     uint64_t nb_sectors;
+
+    if (!(reason & CHANGE_MEDIA)) {
+        return;
+    }
 
     bdrv_get_geometry(s->bs, &nb_sectors);
     s->nb_sectors = nb_sectors;
 
     s->sense_key = SENSE_UNIT_ATTENTION;
     s->asc = ASC_MEDIUM_MAY_HAVE_CHANGED;
-    s->cdrom_changed = 1;
+    s->cdrom_changed = 2;
+    s->events.new_media = true;
     ide_set_irq(s->bus);
 }
 
@@ -2010,10 +2227,7 @@ void ide_ioport_write(void *opaque, uint32_t addr, uint32_t val)
             break;
         case WIN_FLUSH_CACHE:
         case WIN_FLUSH_CACHE_EXT:
-            if (s->bs)
-                bdrv_aio_flush(s->bs, ide_flush_cb, s);
-            else
-                ide_flush_cb(s, 0);
+            ide_flush_cache(s);
             break;
         case WIN_STANDBY:
         case WIN_STANDBY2:
@@ -2564,6 +2778,7 @@ static void ide_reset(IDEState *s)
     s->sense_key = 0;
     s->asc = 0;
     s->cdrom_changed = 0;
+    s->media_change_notified = 0;
     s->packet_transfer_size = 0;
     s->elementary_transfer_size = 0;
     s->io_buffer_index = 0;
@@ -2590,58 +2805,108 @@ void ide_bus_reset(IDEBus *bus)
     ide_clear_hob(bus);
 }
 
-void ide_init_drive(IDEState *s, DriveInfo *dinfo)
+int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version)
 {
     int cylinders, heads, secs;
     uint64_t nb_sectors;
 
-    if (dinfo && dinfo->bdrv) {
-        s->bs = dinfo->bdrv;
-        bdrv_get_geometry(s->bs, &nb_sectors);
-        bdrv_guess_geometry(s->bs, &cylinders, &heads, &secs);
-        s->cylinders = cylinders;
-        s->heads = heads;
-        s->sectors = secs;
-        s->nb_sectors = nb_sectors;
-        /* The SMART values should be preserved across power cycles
-           but they aren't.  */
-        s->smart_enabled = 1;
-        s->smart_autosave = 1;
-        s->smart_errors = 0;
-        s->smart_selftest_count = 0;
-        if (bdrv_get_type_hint(s->bs) == BDRV_TYPE_CDROM) {
-            s->is_cdrom = 1;
-            bdrv_set_change_cb(s->bs, cdrom_change_cb, s);
-        }
-        strncpy(s->drive_serial_str, drive_get_serial(s->bs),
-                sizeof(s->drive_serial_str));
+    s->bs = bs;
+    bdrv_get_geometry(bs, &nb_sectors);
+    bdrv_guess_geometry(bs, &cylinders, &heads, &secs);
+    if (cylinders < 1 || cylinders > 16383) {
+        error_report("cyls must be between 1 and 16383");
+        return -1;
     }
-    if (strlen(s->drive_serial_str) == 0)
+    if (heads < 1 || heads > 16) {
+        error_report("heads must be between 1 and 16");
+        return -1;
+    }
+    if (secs < 1 || secs > 63) {
+        error_report("secs must be between 1 and 63");
+        return -1;
+    }
+    s->cylinders = cylinders;
+    s->heads = heads;
+    s->sectors = secs;
+    s->nb_sectors = nb_sectors;
+    /* The SMART values should be preserved across power cycles
+       but they aren't.  */
+    s->smart_enabled = 1;
+    s->smart_autosave = 1;
+    s->smart_errors = 0;
+    s->smart_selftest_count = 0;
+    if (bdrv_get_type_hint(bs) == BDRV_TYPE_CDROM) {
+        s->is_cdrom = 1;
+        bdrv_set_change_cb(bs, cdrom_change_cb, s);
+        s->bs->buffer_alignment = 2048;
+    } else {
+        if (bdrv_is_read_only(bs)) {
+            error_report("Can't use a read-only drive");
+            return -1;
+        }
+    }
+    bdrv_set_removable(s->bs, s->is_cdrom);
+    strncpy(s->drive_serial_str, drive_get_serial(s->bs),
+            sizeof(s->drive_serial_str));
+    
+    if (!*s->drive_serial_str) {
         snprintf(s->drive_serial_str, sizeof(s->drive_serial_str),
                  "QM%05d", s->drive_serial);
+    }
+    if (version) {
+        pstrcpy(s->version, sizeof(s->version), version);
+    } else {
+        pstrcpy(s->version, sizeof(s->version), QEMU_VERSION);
+    }
     ide_reset(s);
+    return 0;
 }
 
-void ide_init2(IDEBus *bus, DriveInfo *hd0, DriveInfo *hd1,
-               qemu_irq irq)
+static void ide_init1(IDEBus *bus, int unit)
 {
-    IDEState *s;
     static int drive_serial = 1;
+    IDEState *s = &bus->ifs[unit];
+
+    s->bus = bus;
+    s->unit = unit;
+    s->drive_serial = drive_serial++;
+    /* we need at least 2k alignment for accessing CDROMs using O_DIRECT */
+    s->io_buffer = qemu_memalign(2048, IDE_DMA_BUF_SECTORS*512 + 4);
+    s->io_buffer_total_len = IDE_DMA_BUF_SECTORS*512 + 4;
+    s->smart_selftest_data = qemu_blockalign(s->bs, 512);
+    s->sector_write_timer = qemu_new_timer(vm_clock,
+                                           ide_sector_write_timer_cb, s);
+}
+
+void ide_init2(IDEBus *bus, qemu_irq irq)
+{
     int i;
 
     for(i = 0; i < 2; i++) {
-        s = bus->ifs + i;
-        s->bus = bus;
-        s->unit = i;
-        s->drive_serial = drive_serial++;
-        s->io_buffer = qemu_blockalign(s->bs, IDE_DMA_BUF_SECTORS*512 + 4);
-        s->smart_selftest_data = qemu_blockalign(s->bs, 512);
-        s->sector_write_timer = qemu_new_timer(vm_clock,
-                                               ide_sector_write_timer_cb, s);
-        if (i == 0)
-            ide_init_drive(s, hd0);
-        if (i == 1)
-            ide_init_drive(s, hd1);
+        ide_init1(bus, i);
+        ide_reset(&bus->ifs[i]);
+    }
+    bus->irq = irq;
+}
+
+/* TODO convert users to qdev and remove */
+void ide_init2_with_non_qdev_drives(IDEBus *bus, DriveInfo *hd0,
+                                    DriveInfo *hd1, qemu_irq irq)
+{
+    int i;
+    DriveInfo *dinfo;
+
+    for(i = 0; i < 2; i++) {
+        dinfo = i == 0 ? hd0 : hd1;
+        ide_init1(bus, i);
+        if (dinfo) {
+            if (ide_init_drive(&bus->ifs[i], dinfo->bdrv, NULL) < 0) {
+                error_report("Can't set up IDE drive %s", dinfo->id);
+                exit(1);
+            }
+        } else {
+            ide_reset(&bus->ifs[i]);
+        }
     }
     bus->irq = irq;
 }
@@ -2669,6 +2934,26 @@ static bool is_identify_set(void *opaque, int version_id)
     return s->identify_set != 0;
 }
 
+static EndTransferFunc* transfer_end_table[] = {
+        ide_sector_read,
+        ide_sector_write,
+        ide_transfer_stop,
+        ide_atapi_cmd_reply_end,
+        ide_atapi_cmd,
+        ide_dummy_transfer_stop,
+};
+
+static int transfer_end_table_idx(EndTransferFunc *fn)
+{
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(transfer_end_table); i++)
+        if (transfer_end_table[i] == fn)
+            return i;
+
+    return -1;
+}
+
 static int ide_drive_post_load(void *opaque, int version_id)
 {
     IDEState *s = opaque;
@@ -2676,11 +2961,90 @@ static int ide_drive_post_load(void *opaque, int version_id)
     if (version_id < 3) {
         if (s->sense_key == SENSE_UNIT_ATTENTION &&
             s->asc == ASC_MEDIUM_MAY_HAVE_CHANGED) {
-            s->cdrom_changed = 1;
+            s->cdrom_changed = 2;
         }
     }
     return 0;
 }
+
+static int ide_drive_pio_post_load(void *opaque, int version_id)
+{
+    IDEState *s = opaque;
+
+    if (s->end_transfer_fn_idx < 0 ||
+        s->end_transfer_fn_idx > ARRAY_SIZE(transfer_end_table)) {
+        return -EINVAL;
+    }
+    s->end_transfer_func = transfer_end_table[s->end_transfer_fn_idx];
+    s->data_ptr = s->io_buffer + s->cur_io_buffer_offset;
+    s->data_end = s->data_ptr + s->cur_io_buffer_len;
+
+    return 0;
+}
+
+static void ide_drive_pio_pre_save(void *opaque)
+{
+    IDEState *s = opaque;
+    int idx;
+
+    s->cur_io_buffer_offset = s->data_ptr - s->io_buffer;
+    s->cur_io_buffer_len = s->data_end - s->data_ptr;
+
+    idx = transfer_end_table_idx(s->end_transfer_func);
+    if (idx == -1) {
+        fprintf(stderr, "%s: invalid end_transfer_func for DRQ_STAT\n",
+                        __func__);
+        s->end_transfer_fn_idx = 2;
+    } else {
+        s->end_transfer_fn_idx = idx;
+    }
+}
+
+static bool ide_drive_pio_state_needed(void *opaque)
+{
+    IDEState *s = opaque;
+
+    return (s->status & DRQ_STAT) != 0;
+}
+
+static bool ide_atapi_gesn_needed(void *opaque)
+{
+    IDEState *s = opaque;
+
+    return s->events.new_media || s->events.eject_request;
+}
+
+/* Fields for GET_EVENT_STATUS_NOTIFICATION ATAPI command */
+const VMStateDescription vmstate_ide_atapi_gesn_state = {
+    .name ="ide_drive/atapi/gesn_state",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField []) {
+        VMSTATE_BOOL(events.new_media, IDEState),
+        VMSTATE_BOOL(events.eject_request, IDEState),
+    }
+};
+
+const VMStateDescription vmstate_ide_drive_pio_state = {
+    .name = "ide_drive/pio_state",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .pre_save = ide_drive_pio_pre_save,
+    .post_load = ide_drive_pio_post_load,
+    .fields      = (VMStateField []) {
+        VMSTATE_INT32(req_nb_sectors, IDEState),
+        VMSTATE_VARRAY_INT32(io_buffer, IDEState, io_buffer_total_len, 1,
+			     vmstate_info_uint8, uint8_t),
+        VMSTATE_INT32(cur_io_buffer_offset, IDEState),
+        VMSTATE_INT32(cur_io_buffer_len, IDEState),
+        VMSTATE_UINT8(end_transfer_fn_idx, IDEState),
+        VMSTATE_INT32(elementary_transfer_size, IDEState),
+        VMSTATE_INT32(packet_transfer_size, IDEState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 const VMStateDescription vmstate_ide_drive = {
     .name = "ide_drive",
@@ -2709,8 +3073,18 @@ const VMStateDescription vmstate_ide_drive = {
         VMSTATE_UINT8(sense_key, IDEState),
         VMSTATE_UINT8(asc, IDEState),
         VMSTATE_UINT8_V(cdrom_changed, IDEState, 3),
-        /* XXX: if a transfer is pending, we do not save it yet */
         VMSTATE_END_OF_LIST()
+    },
+    .subsections = (VMStateSubsection []) {
+        {
+            .vmsd = &vmstate_ide_drive_pio_state,
+            .needed = ide_drive_pio_state_needed,
+        }, {
+            .vmsd = &vmstate_ide_atapi_gesn_state,
+            .needed = ide_atapi_gesn_needed,
+        }, {
+            /* empty */
+        }
     }
 };
 
@@ -2767,10 +3141,6 @@ static void ide_dma_restart(IDEState *s, int is_read)
 void ide_dma_cancel(BMDMAState *bm)
 {
     if (bm->status & BM_STATUS_DMAING) {
-        bm->status &= ~BM_STATUS_DMAING;
-        /* cancel DMA request */
-        bm->unit = -1;
-        bm->dma_cb = NULL;
         if (bm->aiocb) {
 #ifdef DEBUG_AIO
             printf("aio_cancel\n");
@@ -2778,6 +3148,10 @@ void ide_dma_cancel(BMDMAState *bm)
             bdrv_aio_cancel(bm->aiocb);
             bm->aiocb = NULL;
         }
+        bm->status &= ~BM_STATUS_DMAING;
+        /* cancel DMA request */
+        bm->unit = -1;
+        bm->dma_cb = NULL;
     }
 }
 

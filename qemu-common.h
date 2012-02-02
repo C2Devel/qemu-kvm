@@ -2,12 +2,16 @@
 #ifndef QEMU_COMMON_H
 #define QEMU_COMMON_H
 
+#include "config-host.h"
+
 #define QEMU_NORETURN __attribute__ ((__noreturn__))
 #ifdef CONFIG_GCC_ATTRIBUTE_WARN_UNUSED_RESULT
 #define QEMU_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
 #else
 #define QEMU_WARN_UNUSED_RESULT
 #endif
+
+typedef struct DeviceState DeviceState;
 
 /* Hack around the mess dyngen-exec.h causes: We need QEMU_NORETURN in files that
    cannot include the following headers without conflicts. This condition has
@@ -18,6 +22,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <string.h>
 #include <strings.h>
 #include <inttypes.h>
@@ -29,7 +34,6 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <assert.h>
-#include "config-host.h"
 
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
@@ -46,6 +50,9 @@
 #if !defined(ENOTSUP)
 #define ENOTSUP 4096
 #endif
+#ifndef TIME_MAX
+#define TIME_MAX LONG_MAX
+#endif
 
 #ifndef CONFIG_IOVEC
 #define CONFIG_IOVEC
@@ -53,6 +60,10 @@ struct iovec {
     void *iov_base;
     size_t iov_len;
 };
+/*
+ * Use the same value as Linux for now.
+ */
+#define IOV_MAX		1024
 #else
 #include <sys/uio.h>
 #endif
@@ -126,6 +137,14 @@ time_t mktimegm(struct tm *tm);
 int qemu_fls(int i);
 int qemu_fdatasync(int fd);
 
+#define STRTOSZ_DEFSUFFIX_TB	'T'
+#define STRTOSZ_DEFSUFFIX_GB	'G'
+#define STRTOSZ_DEFSUFFIX_MB	'M'
+#define STRTOSZ_DEFSUFFIX_KB	'K'
+#define STRTOSZ_DEFSUFFIX_B	'B'
+int64_t strtosz(const char *nptr, char **end);
+int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix);
+
 /* path.c */
 void init_paths(const char *prefix);
 const char *path(const char *pathname);
@@ -160,9 +179,12 @@ void qemu_mutex_lock_iothread(void);
 void qemu_mutex_unlock_iothread(void);
 
 int qemu_open(const char *name, int flags, ...);
+ssize_t qemu_write_full(int fd, const void *buf, size_t count)
+    QEMU_WARN_UNUSED_RESULT;
 void qemu_set_cloexec(int fd);
 
 #ifndef _WIN32
+int qemu_add_child_watch(pid_t pid);
 int qemu_pipe(int pipefd[2]);
 #endif
 
@@ -215,8 +237,10 @@ typedef struct PCMCIACardState PCMCIACardState;
 typedef struct MouseTransformInfo MouseTransformInfo;
 typedef struct uWireSlave uWireSlave;
 typedef struct I2SCodec I2SCodec;
-typedef struct DeviceState DeviceState;
 typedef struct SSIBus SSIBus;
+typedef struct EventNotifier EventNotifier;
+typedef struct VirtIODevice VirtIODevice;
+typedef struct BlockDriver BlockDriver;
 
 /* CPU save/load.  */
 void cpu_save(QEMUFile *f, void *opaque);
@@ -256,11 +280,16 @@ typedef struct QEMUIOVector {
 void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint);
 void qemu_iovec_init_external(QEMUIOVector *qiov, struct iovec *iov, int niov);
 void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
+void qemu_iovec_copy(QEMUIOVector *dst, QEMUIOVector *src, uint64_t skip,
+    size_t size);
 void qemu_iovec_concat(QEMUIOVector *dst, QEMUIOVector *src, size_t size);
 void qemu_iovec_destroy(QEMUIOVector *qiov);
 void qemu_iovec_reset(QEMUIOVector *qiov);
 void qemu_iovec_to_buffer(QEMUIOVector *qiov, void *buf);
 void qemu_iovec_from_buffer(QEMUIOVector *qiov, const void *buf, size_t count);
+void qemu_iovec_memset(QEMUIOVector *qiov, int c, size_t count);
+void qemu_iovec_memset_skip(QEMUIOVector *qiov, int c, size_t count,
+                            size_t skip);
 
 struct Monitor;
 typedef struct Monitor Monitor;

@@ -2595,9 +2595,11 @@ static void map_linear_vram(CirrusVGAState *s)
 static void unmap_linear_vram(CirrusVGAState *s)
 {
     vga_dirty_log_stop(&s->vga);
-    if (s->vga.map_addr && s->vga.lfb_addr && s->vga.lfb_end)
+    if (s->vga.map_addr && s->vga.lfb_addr && s->vga.lfb_end) {
         s->vga.map_addr = s->vga.map_end = 0;
-
+         cpu_register_physical_memory(s->vga.lfb_addr, s->vga.vram_size,
+                                      s->cirrus_linear_io_addr);
+    }
     cpu_register_physical_memory(isa_mem_base + 0xa0000, 0x20000,
                                  s->vga.vga_io_memory);
 
@@ -3139,7 +3141,7 @@ void isa_cirrus_vga_init(void)
     s->vga.ds = graphic_console_init(s->vga.update, s->vga.invalidate,
                                      s->vga.screen_dump, s->vga.text_update,
                                      &s->vga);
-    vmstate_register(0, &vmstate_cirrus_vga, s);
+    vmstate_register(NULL, 0, &vmstate_cirrus_vga, s);
     rom_add_vga(VGABIOS_CIRRUS_FILENAME);
     /* XXX ISA-LFB support */
 }
@@ -3240,6 +3242,7 @@ static PCIDeviceInfo cirrus_vga_info = {
     .qdev.desc    = "Cirrus CLGD 54xx VGA",
     .qdev.size    = sizeof(PCICirrusVGAState),
     .qdev.vmsd    = &vmstate_pci_cirrus_vga,
+    .no_hotplug   = 1,
     .init         = pci_cirrus_vga_initfn,
     .romfile      = VGABIOS_CIRRUS_FILENAME,
     .config_write = pci_cirrus_write_config,

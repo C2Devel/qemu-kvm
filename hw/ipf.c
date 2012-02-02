@@ -421,30 +421,31 @@ static void ipf_init1(ram_addr_t ram_size,
         }
         if (i != 0)
             env->hflags |= HF_HALTED_MASK;
-        register_savevm("cpu", i, 4, cpu_save, cpu_load, env);
+        register_savevm(NULL, "cpu", i, 4, cpu_save, cpu_load, env);
         qemu_register_reset(main_cpu_reset, 0, env);
     }
 
     /* allocate RAM */
     if (kvm_enabled()) {
-        ram_addr = qemu_ram_alloc(0xa0000);
+        ram_addr = qemu_ram_alloc(NULL, "ipf.lowmem", 0xa0000);
         cpu_register_physical_memory(0, 0xa0000, ram_addr);
 
-        ram_addr = qemu_ram_alloc(0x20000); // Workaround 0xa0000-0xc0000
+        // Workaround 0xa0000-0xc0000
+        ram_addr = qemu_ram_alloc(NULL, "ipf.vgashadow", 0x20000);
 
-        ram_addr = qemu_ram_alloc(0x40000);
+        ram_addr = qemu_ram_alloc(NULL, "ipf.biosshadow", 0x40000);
         cpu_register_physical_memory(0xc0000, 0x40000, ram_addr);
 
-        ram_addr = qemu_ram_alloc(ram_size - 0x100000);
+        ram_addr = qemu_ram_alloc(NULL, "ipf.ram", ram_size - 0x100000);
         cpu_register_physical_memory(0x100000, ram_size - 0x100000, ram_addr);
     } else {
-        ram_addr = qemu_ram_alloc(ram_size);
+        ram_addr = qemu_ram_alloc(NULL, "ipf.ram", ram_size);
         cpu_register_physical_memory(0, ram_size, ram_addr);
     }
 
     /* above 4giga memory allocation */
     if (above_4g_mem_size > 0) {
-        ram_addr = qemu_ram_alloc(above_4g_mem_size);
+        ram_addr = qemu_ram_alloc(NULL, "ipf.highmem", above_4g_mem_size);
         cpu_register_physical_memory(0x100000000, above_4g_mem_size, ram_addr);
     }
 
@@ -457,7 +458,7 @@ static void ipf_init1(ram_addr_t ram_size,
         unsigned long type = READ_FROM_NVRAM;
         unsigned long i = 0;
         unsigned long fw_offset;
-        ram_addr_t fw_mem = qemu_ram_alloc(GFW_SIZE);
+        ram_addr_t fw_mem = qemu_ram_alloc(NULL, "ipf.gfw", GFW_SIZE);
 
         snprintf(buf, sizeof(buf), "%s/%s", bios_dir, FW_FILENAME);
         image = read_image(buf, &image_size );

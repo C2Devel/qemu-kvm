@@ -846,10 +846,26 @@ int cpu_str_to_log_mask(const char *str);
 /* memory API */
 
 extern int phys_ram_fd;
-extern uint8_t *phys_ram_dirty;
 extern ram_addr_t ram_size;
-extern ram_addr_t last_ram_offset;
 extern uint8_t *bios_mem;
+
+typedef struct RAMBlock {
+    uint8_t *host;
+    ram_addr_t offset;
+    ram_addr_t length;
+    char idstr[256];
+    QLIST_ENTRY(RAMBlock) next;
+#if defined(__linux__) && !defined(TARGET_S390X)
+    int fd;
+#endif
+} RAMBlock;
+
+typedef struct RAMList {
+    uint8_t *phys_dirty;
+    uint64_t dirty_pages;
+    QLIST_HEAD(ram, RAMBlock) blocks;
+} RAMList;
+extern RAMList ram_list;
 
 /* physical memory access */
 
@@ -879,18 +895,21 @@ int cpu_memory_rw_debug(CPUState *env, target_ulong addr,
 /* read dirty bit (return 0 or 1) */
 static inline int cpu_physical_memory_is_dirty(ram_addr_t addr)
 {
-    return phys_ram_dirty[addr >> TARGET_PAGE_BITS] == 0xff;
+    return ram_list.phys_dirty[addr >> TARGET_PAGE_BITS] == 0xff;
 }
 
 static inline int cpu_physical_memory_get_dirty(ram_addr_t addr,
                                                 int dirty_flags)
 {
-    return phys_ram_dirty[addr >> TARGET_PAGE_BITS] & dirty_flags;
+    return ram_list.phys_dirty[addr >> TARGET_PAGE_BITS] & dirty_flags;
 }
 
 static inline void cpu_physical_memory_set_dirty(ram_addr_t addr)
 {
-    phys_ram_dirty[addr >> TARGET_PAGE_BITS] = 0xff;
+    if (!cpu_physical_memory_get_dirty(addr, MIGRATION_DIRTY_FLAG))
+        ram_list.dirty_pages++;
+
+    ram_list.phys_dirty[addr >> TARGET_PAGE_BITS] = 0xff;
 }
 
 void cpu_physical_memory_reset_dirty(ram_addr_t start, ram_addr_t end,

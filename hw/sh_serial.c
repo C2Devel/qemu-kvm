@@ -363,6 +363,12 @@ static CPUWriteMemoryFunc * const sh_serial_writefn[] = {
     &sh_serial_write,
 };
 
+static const QemuChrHandlers sh_serial_handlers = {
+    .fd_can_read = sh_serial_can_receive1,
+    .fd_read = sh_serial_receive1,
+    .fd_event = sh_serial_event,
+};
+
 void sh_serial_init (target_phys_addr_t base, int feat,
 		     uint32_t freq, CharDriverState *chr,
 		     qemu_irq eri_source,
@@ -401,9 +407,9 @@ void sh_serial_init (target_phys_addr_t base, int feat,
 
     s->chr = chr;
 
-    if (chr)
-        qemu_chr_add_handlers(chr, sh_serial_can_receive1, sh_serial_receive1,
-			      sh_serial_event, s);
+    if (chr) {
+        qemu_chr_add_handlers(chr, &sh_serial_handlers, s);
+    }
 
     s->eri = eri_source;
     s->rxi = rxi_source;

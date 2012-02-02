@@ -38,12 +38,12 @@
 #endif
 
 #include <stddef.h>             /* offsetof */
-#include <stdbool.h>
 #include "hw.h"
 #include "loader.h"             /* rom_add_option */
 #include "pci.h"
 #include "net.h"
 #include "eeprom93xx.h"
+#include "sysemu.h"
 
 /* Common declarations for all PCI devices. */
 
@@ -1791,8 +1791,8 @@ static int pci_nic_uninit(PCIDevice *pci_dev)
     EEPRO100State *s = DO_UPCAST(EEPRO100State, dev, pci_dev);
 
     cpu_unregister_io_memory(s->mmio_index);
-    vmstate_unregister(s->vmstate, s);
-    eeprom93xx_free(s->eeprom);
+    vmstate_unregister(&pci_dev->qdev, s->vmstate, s);
+    eeprom93xx_free(&pci_dev->qdev, s->eeprom);
     qemu_del_vlan_client(&s->nic->nc);
     return 0;
 }
@@ -1817,7 +1817,7 @@ static int nic_init(PCIDevice *pci_dev, uint32_t device)
 
     /* Add 64 * 2 EEPROM. i82557 and i82558 support a 64 word EEPROM,
      * i82559 and later support 64 or 256 word EEPROM. */
-    s->eeprom = eeprom93xx_new(EEPROM_SIZE);
+    s->eeprom = eeprom93xx_new(&pci_dev->qdev, EEPROM_SIZE);
 
     /* Handler for memory-mapped I/O */
     s->mmio_index =
@@ -1848,14 +1848,15 @@ static int nic_init(PCIDevice *pci_dev, uint32_t device)
     s->vmstate = qemu_malloc(sizeof(vmstate_eepro100));
     memcpy(s->vmstate, &vmstate_eepro100, sizeof(vmstate_eepro100));
     s->vmstate->name = s->nic->nc.model;
-    vmstate_register(-1, s->vmstate, s);
+    vmstate_register(&pci_dev->qdev, -1, s->vmstate, s);
+    add_boot_device_path(s->conf.bootindex, &pci_dev->qdev, "/ethernet-phy@0");
 
     if (!pci_dev->qdev.hotplugged) {
         static int loaded = 0;
         if (!loaded) {
             char fname[32];
             snprintf(fname, sizeof(fname), "pxe-%s.bin", s->nic->nc.model);
-            rom_add_option(fname);
+            rom_add_option(fname, -1);
             loaded = 1;
         }
     }

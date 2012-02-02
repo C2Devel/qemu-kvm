@@ -7,6 +7,7 @@
  * non-internal declarations are in hw/ide.h
  */
 #include <hw/ide.h>
+#include "block_int.h"
 
 /* debug IDE devices */
 //#define DEBUG_IDE
@@ -363,6 +364,11 @@ typedef struct BMDMAState BMDMAState;
 
 typedef void EndTransferFunc(IDEState *);
 
+struct unreported_events {
+    bool eject_request;
+    bool new_media;
+};
+
 /* NOTE: IDEState represents in fact one drive */
 struct IDEState {
     IDEBus *bus;
@@ -397,10 +403,13 @@ struct IDEState {
     /* set for lba48 access */
     uint8_t lba48;
     BlockDriverState *bs;
+    char version[9];
     /* ATAPI specific */
+    struct unreported_events events;
     uint8_t sense_key;
     uint8_t asc;
     uint8_t cdrom_changed;
+    uint8_t media_change_notified;
     int packet_transfer_size;
     int elementary_transfer_size;
     int io_buffer_index;
@@ -416,6 +425,11 @@ struct IDEState {
     uint8_t *data_ptr;
     uint8_t *data_end;
     uint8_t *io_buffer;
+    /* PIO save/restore */
+    int32_t io_buffer_total_len;
+    int cur_io_buffer_offset;
+    int cur_io_buffer_len;
+    uint8_t end_transfer_fn_idx;
     QEMUTimer *sector_write_timer; /* only used for win2k install hack */
     uint32_t irq_count; /* counts IRQs when using win2k install hack */
     /* CF-ATA extended error */
@@ -440,6 +454,7 @@ struct IDEBus {
     IDEDevice *slave;
     BMDMAState *bmdma;
     IDEState ifs[2];
+    int bus_id;
     uint8_t unit;
     uint8_t cmd;
     qemu_irq irq;
@@ -448,7 +463,8 @@ struct IDEBus {
 struct IDEDevice {
     DeviceState qdev;
     uint32_t unit;
-    DriveInfo *dinfo;
+    BlockConf conf;
+    char *version;
 };
 
 typedef int (*ide_qdev_initfn)(IDEDevice *dev);
@@ -464,7 +480,8 @@ struct IDEDeviceInfo {
 #define BM_STATUS_INT    0x04
 #define BM_STATUS_DMA_RETRY  0x08
 #define BM_STATUS_PIO_RETRY  0x10
-#define BM_STATUS_RETRY_READ 0x20
+#define BM_STATUS_RETRY_READ  0x20
+#define BM_STATUS_RETRY_FLUSH 0x40
 
 #define BM_CMD_START     0x01
 #define BM_CMD_READ      0x08
@@ -548,13 +565,14 @@ uint32_t ide_data_readw(void *opaque, uint32_t addr);
 void ide_data_writel(void *opaque, uint32_t addr, uint32_t val);
 uint32_t ide_data_readl(void *opaque, uint32_t addr);
 
-void ide_init_drive(IDEState *s, DriveInfo *dinfo);
-void ide_init2(IDEBus *bus, DriveInfo *hd0, DriveInfo *hd1,
-               qemu_irq irq);
+int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version);
+void ide_init2(IDEBus *bus, qemu_irq irq);
+void ide_init2_with_non_qdev_drives(IDEBus *bus, DriveInfo *hd0,
+                                    DriveInfo *hd1, qemu_irq irq);
 void ide_init_ioport(IDEBus *bus, int iobase, int iobase2);
 
 /* hw/ide/qdev.c */
-void ide_bus_new(IDEBus *idebus, DeviceState *dev);
+void ide_bus_new(IDEBus *idebus, DeviceState *dev, int bus_id);
 IDEDevice *ide_create_drive(IDEBus *bus, int unit, DriveInfo *drive);
 
 #endif /* HW_IDE_INTERNAL_H */

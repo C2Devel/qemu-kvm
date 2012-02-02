@@ -328,7 +328,7 @@ qemu_irq *ioapic_init(void)
                                        ioapic_mem_write, s);
     cpu_register_physical_memory(0xfec00000, 0x1000, io_memory);
 
-    vmstate_register(0, &vmstate_ioapic, s);
+    vmstate_register(NULL, 0, &vmstate_ioapic, s);
     qemu_register_reset(ioapic_reset, s);
     irq = qemu_allocate_irqs(ioapic_set_irq, s, IOAPIC_NUM_PINS);
 

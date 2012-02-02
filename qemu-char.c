@@ -98,6 +98,7 @@
 #endif
 
 #include "qemu_socket.h"
+#include "ui/qemu-spice.h"
 
 #define READ_BUF_LEN 4096
 
@@ -106,6 +107,19 @@
 
 static QTAILQ_HEAD(CharDriverStateHead, CharDriverState) chardevs =
     QTAILQ_HEAD_INITIALIZER(chardevs);
+
+/*
+ * Generic routine that gets called when chardev becomes writable.
+ * Lets chardev user know it's OK to send more data.
+ */
+static void char_write_unblocked(void *opaque)
+{
+    CharDriverState *chr = opaque;
+
+    chr->write_blocked = false;
+    chr->chr_disable_write_fd_handler(chr);
+    chr->chr_write_unblocked(chr->handler_opaque);
+}
 
 static void qemu_chr_event(CharDriverState *s, int event)
 {
@@ -118,6 +132,9 @@ static void qemu_chr_generic_open_bh(void *opaque)
 {
     CharDriverState *s = opaque;
     qemu_chr_event(s, CHR_EVENT_OPENED);
+    if (s->write_blocked) {
+        char_write_unblocked(s);
+    }
     qemu_bh_delete(s->bh);
     s->bh = NULL;
 }
@@ -181,18 +198,28 @@ void qemu_chr_send_event(CharDriverState *s, int event)
         s->chr_send_event(s, event);
 }
 
+static const QemuChrHandlers null_handlers = {
+    /* All handlers are initialised to NULL */
+};
+
 void qemu_chr_add_handlers(CharDriverState *s,
-                           IOCanRWHandler *fd_can_read,
-                           IOReadHandler *fd_read,
-                           IOEventHandler *fd_event,
-                           void *opaque)
+                           const QemuChrHandlers *handlers, void *opaque)
 {
-    s->chr_can_read = fd_can_read;
-    s->chr_read = fd_read;
-    s->chr_event = fd_event;
+    if (!s) {
+        return;
+    }
+    if (!handlers) {
+        handlers = &null_handlers;
+    }
+    s->chr_can_read = handlers->fd_can_read;
+    s->chr_read = handlers->fd_read;
+    s->chr_write_unblocked = handlers->fd_write_unblocked;
+    s->chr_event = handlers->fd_event;
     s->handler_opaque = opaque;
     if (s->chr_update_read_handler)
         s->chr_update_read_handler(s);
+
+    s->write_blocked = false;
 }
 
 static int null_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
@@ -426,6 +453,12 @@ static void mux_chr_event(void *opaque, int event)
         mux_chr_send_event(d, i, event);
 }
 
+static const QemuChrHandlers mux_chr_handlers = {
+    .fd_can_read = mux_chr_can_read,
+    .fd_read = mux_chr_read,
+    .fd_event = mux_chr_event,
+};
+
 static void mux_chr_update_read_handler(CharDriverState *chr)
 {
     MuxDriver *d = chr->opaque;
@@ -440,8 +473,7 @@ static void mux_chr_update_read_handler(CharDriverState *chr)
     d->chr_event[d->mux_cnt] = chr->chr_event;
     /* Fix up the real driver with mux routines */
     if (d->mux_cnt == 0) {
-        qemu_chr_add_handlers(d->drv, mux_chr_can_read, mux_chr_read,
-                              mux_chr_event, chr);
+        qemu_chr_add_handlers(d->drv, &mux_chr_handlers, chr);
     }
     if (d->focus != -1) {
         mux_chr_send_event(d, d->focus, CHR_EVENT_MUX_OUT);
@@ -465,12 +497,16 @@ static CharDriverState *qemu_chr_open_mux(CharDriverState *drv)
     chr->chr_write = mux_chr_write;
     chr->chr_update_read_handler = mux_chr_update_read_handler;
     chr->chr_accept_input = mux_chr_accept_input;
+    /* Frontend guest-open / -close notification is not support with muxes */
+    chr->chr_guest_open = NULL;
+    chr->chr_guest_close = NULL;
+
     return chr;
 }
 
 
 #ifdef _WIN32
-int send_all(int fd, const void *buf, int len1)
+static int do_send(int fd, const void *buf, int len1, bool nonblock)
 {
     int ret, len;
 
@@ -478,9 +514,14 @@ int send_all(int fd, const void *buf, int len1)
     while (len > 0) {
         ret = send(fd, buf, len, 0);
         if (ret < 0) {
+            if (nonblock && len1 - len) {
+                return len1 - len;
+            }
             errno = WSAGetLastError();
             if (errno != WSAEWOULDBLOCK) {
                 return -1;
+            } else if (errno == WSAEWOULDBLOCK && nonblock) {
+                return WSAEWOULDBLOCK;
             }
         } else if (ret == 0) {
             break;
@@ -494,16 +535,24 @@ int send_all(int fd, const void *buf, int len1)
 
 #else
 
-static int unix_write(int fd, const uint8_t *buf, int len1)
+static int do_send(int fd, const void *_buf, int len1, bool nonblock)
 {
     int ret, len;
+    const uint8_t *buf = _buf;
 
     len = len1;
     while (len > 0) {
         ret = write(fd, buf, len);
         if (ret < 0) {
-            if (errno != EINTR && errno != EAGAIN)
+            if (nonblock && len1 - len) {
+                return len1 - len;
+            }
+            if (errno == EAGAIN && nonblock) {
+                return -EAGAIN;
+            }
+            if (errno != EINTR && errno != EAGAIN) {
                 return -1;
+            }
         } else if (ret == 0) {
             break;
         } else {
@@ -513,12 +562,56 @@ static int unix_write(int fd, const uint8_t *buf, int len1)
     }
     return len1 - len;
 }
-
-int send_all(int fd, const void *buf, int len1)
-{
-    return unix_write(fd, buf, len1);
-}
 #endif /* !_WIN32 */
+
+int send_all(CharDriverState *chr, int fd, const void *_buf, int len1)
+{
+    int ret, eagain_errno;
+    bool nonblock;
+
+    if (chr && chr->write_blocked) {
+        /*
+         * We don't handle this situation: the caller should not send
+         * us data while we're blocked.
+         *
+         * We could buffer this data here but that'll only encourage
+         * bad behaviour on part of the callers.
+         *
+         * Also, the data already in fd's buffers isn't easily
+         * migratable.  If we want full migration support, all the
+         * data landing here needs to be buffered and on migration,
+         * anything that's unsent needs to be transferred to the
+         * dest. machine (which again isn't a very good way of solving
+         * the problem, as the src may become writable just during
+         * migration and the reader could receive some data twice,
+         * essentially corrupting the data).
+         */
+        abort();
+    }
+
+    nonblock = false;
+    /*
+     * Ensure the char backend is able to receive and handle the
+     * 'write unblocked' event before we turn on nonblock support.
+     */
+    if (chr && chr->chr_enable_write_fd_handler && chr->chr_write_unblocked) {
+        nonblock = true;
+    }
+    ret = do_send(fd, _buf, len1, nonblock);
+
+#ifdef _WIN32
+    eagain_errno = WSAEWOULDBLOCK;
+#else
+    eagain_errno = -EAGAIN;
+#endif
+
+    if (nonblock && (ret == eagain_errno || (ret >= 0 && ret < len1))) {
+        /* Update fd handler to wake up when chr becomes writable */
+        chr->chr_enable_write_fd_handler(chr);
+        chr->write_blocked = true;
+    }
+    return ret;
+}
 
 #ifndef _WIN32
 
@@ -533,7 +626,7 @@ static int stdio_nb_clients = 0;
 static int fd_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
 {
     FDCharDriver *s = chr->opaque;
-    return send_all(s->fd_out, buf, len);
+    return send_all(chr, s->fd_out, buf, len);
 }
 
 static int fd_chr_read_poll(void *opaque)
@@ -845,7 +938,7 @@ static int pty_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
         pty_chr_update_read_handler(chr);
         return 0;
     }
-    return send_all(s->fd, buf, len);
+    return send_all(chr, s->fd, buf, len);
 }
 
 static int pty_chr_read_poll(void *opaque)
@@ -1002,6 +1095,9 @@ static void tty_serial_init(int fd, int speed,
            speed, parity, data_bits, stop_bits);
 #endif
     tcgetattr (fd, &tty);
+    if (!term_atexit_done) {
+        oldtty = tty;
+    }
 
 #define check_speed(val) if (speed <= val) { spd = B##val; break; }
     speed = speed * 10 / 11;
@@ -1173,6 +1269,27 @@ static int tty_serial_ioctl(CharDriverState *chr, int cmd, void *arg)
     return 0;
 }
 
+static void tty_exit(void)
+{
+    tcsetattr(0, TCSANOW, &oldtty);
+}
+
+static void qemu_chr_close_tty(CharDriverState *chr)
+{
+    FDCharDriver *s = chr->opaque;
+    int fd = -1;
+
+    if (s) {
+        fd = s->fd_in;
+    }
+
+    fd_chr_close(chr);
+
+    if (fd >= 0) {
+        close(fd);
+    }
+}
+
 static CharDriverState *qemu_chr_open_tty(QemuOpts *opts)
 {
     const char *filename = qemu_opt_get(opts, "path");
@@ -1180,6 +1297,9 @@ static CharDriverState *qemu_chr_open_tty(QemuOpts *opts)
     int fd;
 
     TFR(fd = open(filename, O_RDWR | O_NONBLOCK));
+    if (fd < 0) {
+        return NULL;
+    }
     tty_serial_init(fd, 115200, 'N', 8, 1);
     chr = qemu_chr_open_fd(fd, fd);
     if (!chr) {
@@ -1187,7 +1307,9 @@ static CharDriverState *qemu_chr_open_tty(QemuOpts *opts)
         return NULL;
     }
     chr->chr_ioctl = tty_serial_ioctl;
-    qemu_chr_generic_open(chr);
+    chr->chr_close = qemu_chr_close_tty;
+    if (!term_atexit_done++)
+        atexit(tty_exit);
     return chr;
 }
 #else  /* ! __linux__ && ! __sun__ */
@@ -1877,11 +1999,44 @@ typedef struct {
 
 static void tcp_chr_accept(void *opaque);
 
+static void tcp_closed(void *opaque)
+{
+    CharDriverState *chr = opaque;
+    TCPCharDriver *s = chr->opaque;
+
+    s->connected = 0;
+    if (s->listen_fd >= 0) {
+        qemu_set_fd_handler(s->listen_fd, tcp_chr_accept, NULL, chr);
+    }
+    qemu_set_fd_handler(s->fd, NULL, NULL, NULL);
+    closesocket(s->fd);
+    s->fd = -1;
+    qemu_chr_event(chr, CHR_EVENT_CLOSED);
+}
+
 static int tcp_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
 {
     TCPCharDriver *s = chr->opaque;
+
     if (s->connected) {
-        return send_all(s->fd, buf, len);
+        int ret;
+
+        ret = send_all(chr, s->fd, buf, len);
+        if (ret == -1 && errno == EPIPE) {
+            tcp_closed(chr);
+
+            if (chr->chr_enable_write_fd_handler && chr->chr_write_unblocked) {
+                /*
+                 * Since we haven't written out anything, let's say
+                 * we're throttled.  This will prevent any output from
+                 * the guest getting lost if host-side chardev goes
+                 * down.  Unthrottle when we re-connect.
+                 */
+                chr->write_blocked = true;
+                return 0;
+            }
+        }
+        return ret;
     } else {
         /* XXX: indicate an error ? */
         return len;
@@ -1951,8 +2106,9 @@ static void tcp_chr_process_IAC_bytes(CharDriverState *chr,
 static int tcp_get_msgfd(CharDriverState *chr)
 {
     TCPCharDriver *s = chr->opaque;
-
-    return s->msgfd;
+    int fd = s->msgfd;
+    s->msgfd = -1;
+    return fd;
 }
 
 #ifndef _WIN32
@@ -2026,24 +2182,12 @@ static void tcp_chr_read(void *opaque)
         len = s->max_size;
     size = tcp_chr_recv(chr, (void *)buf, len);
     if (size == 0) {
-        /* connection closed */
-        s->connected = 0;
-        if (s->listen_fd >= 0) {
-            qemu_set_fd_handler(s->listen_fd, tcp_chr_accept, NULL, chr);
-        }
-        qemu_set_fd_handler(s->fd, NULL, NULL, NULL);
-        closesocket(s->fd);
-        s->fd = -1;
-        qemu_chr_event(chr, CHR_EVENT_CLOSED);
+        tcp_closed(chr);
     } else if (size > 0) {
         if (s->do_telnetopt)
             tcp_chr_process_IAC_bytes(chr, s, buf, &size);
         if (size > 0)
             qemu_chr_read(chr, buf, size);
-        if (s->msgfd != -1) {
-            close(s->msgfd);
-            s->msgfd = -1;
-        }
     }
 }
 
@@ -2134,6 +2278,25 @@ static void tcp_chr_close(CharDriverState *chr)
     qemu_chr_event(chr, CHR_EVENT_CLOSED);
 }
 
+static void tcp_enable_write_fd_handler(CharDriverState *chr)
+{
+    TCPCharDriver *s = chr->opaque;
+
+    /*
+     * This function is called only after tcp_chr_connect() is called
+     * (either in 'server' mode or client mode.  So we're sure of
+     * s->fd being initialised.
+     */
+    enable_write_fd_handler(s->fd, char_write_unblocked);
+}
+
+static void tcp_disable_write_fd_handler(CharDriverState *chr)
+{
+    TCPCharDriver *s = chr->opaque;
+
+    disable_write_fd_handler(s->fd);
+}
+
 static CharDriverState *qemu_chr_open_socket(QemuOpts *opts)
 {
     CharDriverState *chr = NULL;
@@ -2186,6 +2349,8 @@ static CharDriverState *qemu_chr_open_socket(QemuOpts *opts)
     chr->chr_write = tcp_chr_write;
     chr->chr_close = tcp_chr_close;
     chr->get_msgfd = tcp_get_msgfd;
+    chr->chr_enable_write_fd_handler = tcp_enable_write_fd_handler;
+    chr->chr_disable_write_fd_handler = tcp_disable_write_fd_handler;
 
     if (is_listen) {
         s->listen_fd = fd;
@@ -2230,6 +2395,70 @@ static CharDriverState *qemu_chr_open_socket(QemuOpts *opts)
     qemu_free(s);
     qemu_free(chr);
     return NULL;
+}
+
+/***********************************************************/
+/* Memory chardev */
+typedef struct {
+    size_t outbuf_size;
+    size_t outbuf_capacity;
+    uint8_t *outbuf;
+} MemoryDriver;
+
+static int mem_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
+{
+    MemoryDriver *d = chr->opaque;
+
+    /* TODO: the QString implementation has the same code, we should
+     * introduce a generic way to do this in cutils.c */
+    if (d->outbuf_capacity < d->outbuf_size + len) {
+        /* grow outbuf */
+        d->outbuf_capacity += len;
+        d->outbuf_capacity *= 2;
+        d->outbuf = qemu_realloc(d->outbuf, d->outbuf_capacity);
+    }
+
+    memcpy(d->outbuf + d->outbuf_size, buf, len);
+    d->outbuf_size += len;
+
+    return len;
+}
+
+void qemu_chr_init_mem(CharDriverState *chr)
+{
+    MemoryDriver *d;
+
+    d = qemu_malloc(sizeof(*d));
+    d->outbuf_size = 0;
+    d->outbuf_capacity = 4096;
+    d->outbuf = qemu_mallocz(d->outbuf_capacity);
+
+    memset(chr, 0, sizeof(*chr));
+    chr->opaque = d;
+    chr->chr_write = mem_chr_write;
+}
+
+QString *qemu_chr_mem_to_qs(CharDriverState *chr)
+{
+    MemoryDriver *d = chr->opaque;
+    return qstring_from_substr((char *) d->outbuf, 0, d->outbuf_size - 1);
+}
+
+/* NOTE: this driver can not be closed with qemu_chr_close()! */
+void qemu_chr_close_mem(CharDriverState *chr)
+{
+    MemoryDriver *d = chr->opaque;
+
+    qemu_free(d->outbuf);
+    qemu_free(chr->opaque);
+    chr->opaque = NULL;
+    chr->chr_write = NULL;
+}
+
+size_t qemu_chr_mem_osize(const CharDriverState *chr)
+{
+    const MemoryDriver *d = chr->opaque;
+    return d->outbuf_size;
 }
 
 QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)
@@ -2314,8 +2543,7 @@ QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)
         qemu_opt_set(opts, "backend", "udp");
         if (sscanf(p, "%64[^:]:%32[^@,]%n", host, port, &pos) < 2) {
             host[0] = 0;
-            if (sscanf(p, ":%32[^,]%n", port, &pos) < 1) {
-                fprintf(stderr, "udp #1\n");
+            if (sscanf(p, ":%32[^@,]%n", port, &pos) < 1) {
                 goto fail;
             }
         }
@@ -2326,7 +2554,6 @@ QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)
             if (sscanf(p, "%64[^:]:%32[^,]%n", host, port, &pos) < 2) {
                 host[0] = 0;
                 if (sscanf(p, ":%32[^,]%n", port, &pos) < 1) {
-                    fprintf(stderr, "udp #2\n");
                     goto fail;
                 }
             }
@@ -2354,7 +2581,6 @@ QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)
     }
 
 fail:
-    fprintf(stderr, "%s: fail on \"%s\"\n", __FUNCTION__, filename);
     qemu_opts_del(opts);
     return NULL;
 }
@@ -2390,6 +2616,9 @@ static const struct {
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__) \
     || defined(__FreeBSD_kernel__)
     { .name = "parport",   .open = qemu_chr_open_pp },
+#endif
+#ifdef CONFIG_SPICE
+    { .name = "spicevmc",     .open = qemu_chr_open_spice },
 #endif
 };
 
@@ -2460,6 +2689,20 @@ CharDriverState *qemu_chr_open(const char *label, const char *filename, void (*i
     return chr;
 }
 
+void qemu_chr_guest_open(struct CharDriverState *chr)
+{
+    if (chr->chr_guest_open) {
+        chr->chr_guest_open(chr);
+    }
+}
+
+void qemu_chr_guest_close(struct CharDriverState *chr)
+{
+    if (chr->chr_guest_close) {
+        chr->chr_guest_close(chr);
+    }
+}
+
 void qemu_chr_close(CharDriverState *chr)
 {
     QTAILQ_REMOVE(&chardevs, chr, next);
@@ -2485,22 +2728,6 @@ void qemu_chr_info_print(Monitor *mon, const QObject *ret_data)
     qlist_iter(qobject_to_qlist(ret_data), qemu_chr_qlist_iter, mon);
 }
 
-/**
- * qemu_chr_info(): Character devices information
- *
- * Each device is represented by a QDict. The returned QObject is a QList
- * of all devices.
- *
- * The QDict contains the following:
- *
- * - "label": device's label
- * - "filename": device's file
- *
- * Example:
- *
- * [ { "label": "monitor", "filename", "stdio" },
- *   { "label": "serial0", "filename": "vc" } ]
- */
 void qemu_chr_info(Monitor *mon, QObject **ret_data)
 {
     QList *chr_list;

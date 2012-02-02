@@ -347,6 +347,7 @@ static PCIDeviceInfo i440fx_info[] = {
         .qdev.size    = sizeof(PCII440FXState),
         .qdev.vmsd    = &vmstate_i440fx,
         .qdev.no_user = 1,
+        .no_hotplug   = 1,
         .init         = i440fx_initfn,
         .config_write = i440fx_write_config,
     },{
@@ -355,6 +356,7 @@ static PCIDeviceInfo i440fx_info[] = {
         .qdev.size    = sizeof(PIIX3State),
         .qdev.vmsd    = &vmstate_piix3,
         .qdev.no_user = 1,
+        .no_hotplug   = 1,
         .init         = piix3_initfn,
     },{
         /* end of list */
@@ -364,6 +366,7 @@ static PCIDeviceInfo i440fx_info[] = {
 static SysBusDeviceInfo i440fx_pcihost_info = {
     .init         = i440fx_pcihost_initfn,
     .qdev.name    = "i440FX-pcihost",
+    .qdev.fw_name = "pci",
     .qdev.size    = sizeof(I440FXState),
     .qdev.no_user = 1,
 };

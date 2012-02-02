@@ -58,6 +58,12 @@ extern uint32_t gen_opc_hflags[OPC_BUF_SIZE];
 
 #include "qemu-log.h"
 
+#ifdef CONFIG_FAKE_MACHINE
+extern int fake_machine;
+#else
+#define fake_machine 0
+#endif
+
 void gen_intermediate_code(CPUState *env, struct TranslationBlock *tb);
 void gen_intermediate_code_pc(CPUState *env, struct TranslationBlock *tb);
 void gen_pc_load(CPUState *env, struct TranslationBlock *tb,

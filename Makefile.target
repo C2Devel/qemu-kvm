@@ -1,7 +1,7 @@
 # -*- Mode: makefile -*-
 
 # This needs to be defined before rules.mak
-GENERATED_HEADERS = config-target.h
+GENERATED_HEADERS = config-target.h config-devices.h
 
 include ../config-host.mak
 include config-devices.mak
@@ -23,6 +23,7 @@ else
 QEMU_PROG=qemu-system-$(TARGET_ARCH2)$(EXESUF)
 endif
 endif
+QEMU_BINDIR=$(bindir)
 
 PROGS=$(QEMU_PROG)
 
@@ -35,7 +36,28 @@ CFLAGS += $(KVM_CFLAGS)
 config-target.h: config-target.h-timestamp
 config-target.h-timestamp: config-target.mak
 
-all: $(PROGS)
+ifdef CONFIG_SYSTEMTAP_TRACE
+stap: $(QEMU_PROG).stp
+
+ifdef CONFIG_USER_ONLY
+TARGET_TYPE=user
+else
+TARGET_TYPE=system
+endif
+
+$(QEMU_PROG).stp:
+	$(call quiet-command,sh $(SRC_PATH)/tracetool \
+		--$(TRACE_BACKEND) \
+		--binary $(QEMU_BINDIR)/$(QEMU_PROG) \
+		--target-arch $(TARGET_ARCH) \
+		--target-type $(TARGET_TYPE) \
+		--probe-prefix qemu.kvm \
+		--stap < $(SRC_PATH)/trace-events > $(QEMU_PROG).stp,"  GEN   $(QEMU_PROG).stp")
+else
+stap:
+endif
+
+all: $(PROGS) stap
 
 # Dummy command so that make thinks it has done something
 	@true
@@ -166,7 +188,10 @@ ifdef CONFIG_SOFTMMU
 obj-y = vl.o async.o monitor.o pci.o pci_host.o pcie_host.o machine.o gdbstub.o
 # virtio has to be here due to weird dependency between PCI and virtio-net.
 # need to fix this properly
-obj-y += virtio-blk.o virtio-balloon.o virtio-net.o virtio-console.o virtio-pci.o
+obj-y += virtio-blk.o virtio-balloon.o virtio-net.o virtio-pci.o virtio-serial-bus.o
+obj-y += event_notifier.o
+obj-y += vhost_net.o
+obj-$(CONFIG_VHOST_NET) += vhost.o
 obj-$(CONFIG_KVM) += kvm.o kvm-all.o
 # MSI-X depends on kvm for interrupt injection,
 # so moved it from Makefile.hw to Makefile.target for now
@@ -182,6 +207,7 @@ sound-obj-$(CONFIG_AC97) += ac97.o
 sound-obj-$(CONFIG_ADLIB) += fmopl.o adlib.o
 sound-obj-$(CONFIG_GUS) += gus.o gusemu_hal.o gusemu_mixer.o
 sound-obj-$(CONFIG_CS4231A) += cs4231a.o
+sound-obj-y += intel-hda.o hda-audio.o
 
 adlib.o fmopl.o: QEMU_CFLAGS += -DBUILD_Y8950=0
 
@@ -206,8 +232,8 @@ obj-i386-y += pckbd.o $(sound-obj-y) dma.o
 obj-i386-y += vga.o vga-pci.o vga-isa.o
 obj-i386-y += fdc.o mc146818rtc.o serial.o i8259.o i8254.o pcspk.o pc.o
 obj-i386-y += cirrus_vga.o apic.o ioapic.o parallel.o acpi.o piix_pci.o
-obj-i386-y += usb-uhci.o vmmouse.o vmport.o vmware_vga.o hpet.o
-obj-i386-y += device-hotplug.o pci-hotplug.o smbios.o wdt_ib700.o
+obj-i386-y += usb-uhci.o hpet.o
+obj-i386-y += device-hotplug.o smbios.o wdt_ib700.o
 obj-i386-y += extboot.o
 obj-i386-y += ne2000-isa.o
 obj-i386-y += testdev.o
@@ -221,6 +247,11 @@ obj-ia64-y += fdc.o mc146818rtc.o serial.o i8259.o ipf.o
 obj-ia64-y += cirrus_vga.o parallel.o acpi.o piix_pci.o
 obj-ia64-y += usb-uhci.o
 obj-ia64-$(CONFIG_KVM_DEVICE_ASSIGNMENT) += device-assignment.o
+obj-i386-$(CONFIG_SPICE) += qxl.o qxl-logger.o qxl-render.o
+
+obj-i386-$(CONFIG_VMWARE_VGA) += vmware_vga.o
+obj-i386-$(CONFIG_VMMOUSE) += vmmouse.o
+obj-i386-$(CONFIG_VMPORT) += vmport.o
 
 # shared objects
 obj-ppc-y = ppc.o ide/core.o ide/qdev.o ide/isa.o ide/pci.o ide/macio.o
@@ -339,6 +370,15 @@ ARLIBS=../libqemu_common.a libqemu.a $(HWLIB)
 
 endif # CONFIG_SOFTMMU
 
+libcacard-y = cac.o event.o vcard.o vreader.o vcard_emul_nss.o vcard_emul_type.o card_7816.o
+
+ifndef CONFIG_LINUX_USER
+# libcacard needs qemu-thread support, and besides is only needed by devices
+# so not requires with linux-user targets
+obj-$(CONFIG_SMARTCARD_NSS) += $(addprefix $(SRC_PATH)/libcacard/, $(libcacard-y))
+endif # CONFIG_LINUX_USER
+
+obj-y += $(addprefix ../, $(trace-obj-y))
 obj-$(CONFIG_GDBSTUB_XML) += gdbstub-xml.o
 
 $(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y) $(ARLIBS)
@@ -358,10 +398,17 @@ clean:
 	rm -f *.o *.a *~ $(PROGS) nwfpe/*.o fpu/*.o
 	rm -f *.d */*.d tcg/*.o ide/*.o
 	rm -f qemu-options.h qemu-monitor.h gdbstub-xml.c
+ifdef CONFIG_SYSTEMTAP_TRACE
+	rm -f *.stp
+endif
 
 install: all
 ifneq ($(PROGS),)
-	$(INSTALL) -m 755 $(STRIP_OPT) $(PROGS) "$(DESTDIR)$(bindir)"
+	$(INSTALL) -m 755 $(STRIP_OPT) $(PROGS) "$(DESTDIR)$(QEMU_BINDIR)"
+endif
+ifdef CONFIG_SYSTEMTAP_TRACE
+	$(INSTALL_DIR) "$(DESTDIR)$(datadir)/../systemtap/tapset"
+	$(INSTALL_DATA) $(QEMU_PROG).stp "$(DESTDIR)$(datadir)/../systemtap/tapset"
 endif
 
 # Include automatically generated dependency files

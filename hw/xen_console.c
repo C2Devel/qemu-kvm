@@ -202,6 +202,11 @@ static int con_init(struct XenDevice *xendev)
     return 0;
 }
 
+static const QemuChrHandlers xencons_handlers = {
+    .fd_can_read = xencons_can_receive,
+    .fd_read = xencons_receive,
+};
+
 static int con_connect(struct XenDevice *xendev)
 {
     struct XenConsole *con = container_of(xendev, struct XenConsole, xendev);
@@ -222,9 +227,9 @@ static int con_connect(struct XenDevice *xendev)
 	return -1;
 
     xen_be_bind_evtchn(&con->xendev);
-    if (con->chr)
-        qemu_chr_add_handlers(con->chr, xencons_can_receive, xencons_receive,
-                              NULL, con);
+    if (con->chr) {
+        qemu_chr_add_handlers(con->chr, &xencons_handlers, con);
+    }
 
     xen_be_printf(xendev, 1, "ring mfn %d, remote port %d, local port %d, limit %zd\n",
 		  con->ring_ref,
@@ -238,8 +243,9 @@ static void con_disconnect(struct XenDevice *xendev)
 {
     struct XenConsole *con = container_of(xendev, struct XenConsole, xendev);
 
-    if (con->chr)
-        qemu_chr_add_handlers(con->chr, NULL, NULL, NULL, NULL);
+    if (con->chr) {
+        qemu_chr_add_handlers(con->chr, NULL, NULL);
+    }
     xen_be_unbind_evtchn(&con->xendev);
 
     if (con->sring) {

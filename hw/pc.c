@@ -45,8 +45,8 @@
 #include "loader.h"
 #include "elf.h"
 #include "device-assignment.h"
-
 #include "qemu-kvm.h"
+#include "ui/qemu-spice.h"
 
 /* output Bochs bios info messages */
 //#define DEBUG_BIOS
@@ -223,32 +223,33 @@ static int boot_device2nibble(char boot_device)
     return 0;
 }
 
-/* copy/pasted from cmos_init, should be made a general function
- and used there as well */
-static int pc_boot_set(void *opaque, const char *boot_device)
+static int set_boot_dev(RTCState *s, const char *boot_device, int fd_bootchk)
 {
-    Monitor *mon = cur_mon;
 #define PC_MAX_BOOT_DEVICES 3
-    RTCState *s = (RTCState *)opaque;
     int nbds, bds[3] = { 0, };
     int i;
 
     nbds = strlen(boot_device);
     if (nbds > PC_MAX_BOOT_DEVICES) {
-        monitor_printf(mon, "Too many boot devices for PC\n");
+        error_report("Too many boot devices for PC");
         return(1);
     }
     for (i = 0; i < nbds; i++) {
         bds[i] = boot_device2nibble(boot_device[i]);
         if (bds[i] == 0) {
-            monitor_printf(mon, "Invalid boot device for PC: '%c'\n",
-                           boot_device[i]);
+            error_report("Invalid boot device for PC: '%c'",
+                         boot_device[i]);
             return(1);
         }
     }
     rtc_set_memory(s, 0x3d, (bds[1] << 4) | bds[0]);
-    rtc_set_memory(s, 0x38, (bds[2] << 4));
+    rtc_set_memory(s, 0x38, (bds[2] << 4) | (fd_bootchk ? 0x0 : 0x1));
     return(0);
+}
+
+static int pc_boot_set(void *opaque, const char *boot_device)
+{
+    return set_boot_dev(opaque, boot_device, 0);
 }
 
 /* hd_table must contain 4 block drivers */
@@ -256,10 +257,30 @@ static void cmos_init(ram_addr_t ram_size, ram_addr_t above_4g_mem_size,
                       const char *boot_device, DriveInfo **hd_table)
 {
     RTCState *s = rtc_state;
-    int nbds, bds[3] = { 0, };
     int val;
     int fd0, fd1, nb;
     int i;
+
+    /*
+     * hd_table[] has only IDE drives defined with -drive if=ide, not
+     * the ones defined with -device.  A proper fix requires quite a
+     * bit of surgery.  This is just a quick, temporary patch to make
+     * things work with libvirt.  It relies on the way libvirt names
+     * drives, namely "drive-ide0-BUS-UNIT".
+     */
+    for (i = 0; i < 4; i++) {
+        char id[32];
+        int cylinders, heads, secs;
+
+        if (hd_table[i])
+            continue;
+        snprintf(id, sizeof(id), "drive-ide0-%d-%d",
+                 i / MAX_IDE_DEVS, i % MAX_IDE_DEVS);
+        hd_table[i] = drive_get_by_id(id);
+        if (hd_table[i]) {
+            bdrv_guess_geometry(hd_table[i]->bdrv, &cylinders, &heads, &secs);
+        }
+    }
 
     /* various important CMOS locations needed by PC/Bochs bios */
 
@@ -295,22 +316,9 @@ static void cmos_init(ram_addr_t ram_size, ram_addr_t above_4g_mem_size,
     rtc_set_memory(s, 0x5f, smp_cpus - 1);
 
     /* set boot devices, and disable floppy signature check if requested */
-#define PC_MAX_BOOT_DEVICES 3
-    nbds = strlen(boot_device);
-    if (nbds > PC_MAX_BOOT_DEVICES) {
-        fprintf(stderr, "Too many boot devices for PC\n");
+    if (set_boot_dev(s, boot_device, fd_bootchk)) {
         exit(1);
     }
-    for (i = 0; i < nbds; i++) {
-        bds[i] = boot_device2nibble(boot_device[i]);
-        if (bds[i] == 0) {
-            fprintf(stderr, "Invalid boot device for PC: '%c'\n",
-                    boot_device[i]);
-            exit(1);
-        }
-    }
-    rtc_set_memory(s, 0x3d, (bds[1] << 4) | bds[0]);
-    rtc_set_memory(s, 0x38, (bds[2] << 4) | (fd_bootchk ?  0x0 : 0x1));
 
     /* floppy type */
 
@@ -620,7 +628,10 @@ static int load_multiboot(void *fw_cfg,
 
         mb_kernel_data = qemu_malloc(mb_kernel_size);
         fseek(f, mb_kernel_text_offset, SEEK_SET);
-        fread(mb_kernel_data, 1, mb_kernel_size, f);
+        if (fread(mb_kernel_data, 1, mb_kernel_size, f) != mb_kernel_size) {
+            fprintf(stderr, "fread() failed\n");
+            exit(1);
+        }
         fclose(f);
     }
 
@@ -735,7 +746,8 @@ static int load_multiboot(void *fw_cfg,
     fw_cfg_add_bytes(fw_cfg, FW_CFG_INITRD_DATA, mb_bootinfo_data,
                      sizeof(bootinfo));
 
-    option_rom[nb_option_roms] = "multiboot.bin";
+    option_rom[nb_option_roms].name = "multiboot.bin";
+    option_rom[nb_option_roms].bootindex = 0;
     nb_option_roms++;
 
     return 1; /* yes, we are multiboot */
@@ -871,6 +883,12 @@ static void load_linux(void *fw_cfg,
 	}
 
 	initrd_size = get_image_size(initrd_filename);
+        if (initrd_size < 0) {
+            fprintf(stderr, "qemu: error reading initrd %s\n",
+                    initrd_filename);
+            exit(1);
+        }
+
         initrd_addr = (initrd_max-initrd_size) & ~4095;
 
         initrd_data = qemu_malloc(initrd_size);
@@ -894,8 +912,14 @@ static void load_linux(void *fw_cfg,
     setup  = qemu_malloc(setup_size);
     kernel = qemu_malloc(kernel_size);
     fseek(f, 0, SEEK_SET);
-    fread(setup, 1, setup_size, f);
-    fread(kernel, 1, kernel_size, f);
+    if (fread(setup, 1, setup_size, f) != setup_size) {
+        fprintf(stderr, "fread() failed\n");
+        exit(1);
+    }
+    if (fread(kernel, 1, kernel_size, f) != kernel_size) {
+        fprintf(stderr, "fread() failed\n");
+        exit(1);
+    }
     fclose(f);
     memcpy(setup, header, MIN(sizeof(header), setup_size));
 
@@ -907,7 +931,8 @@ static void load_linux(void *fw_cfg,
     fw_cfg_add_i32(fw_cfg, FW_CFG_SETUP_SIZE, setup_size);
     fw_cfg_add_bytes(fw_cfg, FW_CFG_SETUP_DATA, setup, setup_size);
 
-    option_rom[nb_option_roms] = "linuxboot.bin";
+    option_rom[nb_option_roms].name = "linuxboot.bin";
+    option_rom[nb_option_roms].bootindex = 0;
     nb_option_roms++;
 }
 
@@ -965,7 +990,7 @@ CPUState *pc_new_cpu(const char *cpu_model)
 
     env = cpu_init(cpu_model);
     if (!env) {
-        fprintf(stderr, "Unable to find x86 CPU definition\n");
+        fprintf(stderr, "Unable to support requested x86 CPU definition\n");
         exit(1);
     }
     env->kvm_cpu_state.regs_modified = 1;
@@ -982,6 +1007,38 @@ CPUState *pc_new_cpu(const char *cpu_model)
      */
     qemu_init_vcpu(env);
     return env;
+}
+
+/* CLI cpu model name which expands to the actual configuration default
+ */
+#define CMD_KEYWORD     "default"
+#define CMD_KEYWORD_LN	(sizeof (CMD_KEYWORD) - 1)
+
+/* set configuration default cpu model if current model string is
+ * uninitialized, or if user explicitly requests use of the config'ed
+ * default by specifying a cpu model name of "default".
+ * Use of "default" as a cpu model pseudo-name exists primarily to
+ * ease treatment of qualifier flags requested by the user without
+ * requiring knowledge of all cpu model names in advance of full "-cpu"
+ * option parsing.
+ */
+static const char *setdef_cpu_model(const char *model_str,
+                                    const char *default_str)
+{
+    int default_str_ln = strlen(default_str);
+
+    if (!model_str || !*model_str) {
+        return default_str;
+    } else if (strncmp(model_str, CMD_KEYWORD, CMD_KEYWORD_LN)) {
+        return model_str;
+    } else {
+        char *new = qemu_malloc(strlen(model_str) - CMD_KEYWORD_LN +
+                                default_str_ln + 1);
+
+        strcpy(new, default_str);
+        strcpy(new + default_str_ln, model_str + CMD_KEYWORD_LN);
+        return new;
+    }
 }
 
 /* PC hardware initialisation */
@@ -1020,13 +1077,12 @@ static void pc_init1(ram_addr_t ram_size,
     linux_boot = (kernel_filename != NULL);
 
     /* init CPUs */
-    if (cpu_model == NULL) {
+    cpu_model = setdef_cpu_model(cpu_model,
 #ifdef TARGET_X86_64
-        cpu_model = "qemu64";
+        "qemu64");
 #else
-        cpu_model = "qemu32";
+        "qemu32");
 #endif
-    }
 
     if (kvm_enabled()) {
         kvm_set_boot_cpu_id(0);
@@ -1035,27 +1091,36 @@ static void pc_init1(ram_addr_t ram_size,
         env = pc_new_cpu(cpu_model);
     }
 
+#if TARGET_PHYS_ADDR_BITS == 32
+    if (above_4g_mem_size > 0) {
+        hw_error("To much RAM for 32-bit physical address");
+    }
+#endif
     vmport_init();
 
     /* allocate RAM */
-    ram_addr = qemu_ram_alloc(below_4g_mem_size);
+    if (fake_machine) {
+        /* If user boots with -m 1000 We don't actually want to
+         * allocate a GB of RAM, so lets force all RAM allocs to one
+         * page to keep our memory footprint nice and low.
+         *
+         * TODO try to use -m 1k instead
+         */
+        ram_addr = qemu_ram_alloc(NULL, "pc.ram", 1);
+    } else {
+    ram_addr = qemu_ram_alloc(NULL, "pc.ram",
+                              below_4g_mem_size + above_4g_mem_size);
     cpu_register_physical_memory(0, 0xa0000, ram_addr);
     cpu_register_physical_memory(0x100000,
                  below_4g_mem_size - 0x100000,
                  ram_addr + 0x100000);
-
-    /* above 4giga memory allocation */
+#if TARGET_PHYS_ADDR_BITS > 32
     if (above_4g_mem_size > 0) {
-#if TARGET_PHYS_ADDR_BITS == 32
-        hw_error("To much RAM for 32-bit physical address");
-#else
-        ram_addr = qemu_ram_alloc(above_4g_mem_size);
-        cpu_register_physical_memory(0x100000000ULL,
-                                     above_4g_mem_size,
-                                     ram_addr);
+        cpu_register_physical_memory(0x100000000ULL, above_4g_mem_size,
+                                     ram_addr + below_4g_mem_size);
+    }
 #endif
     }
-
 
     /* BIOS load */
     if (bios_name == NULL)
@@ -1070,8 +1135,8 @@ static void pc_init1(ram_addr_t ram_size,
         (bios_size % 65536) != 0) {
         goto bios_error;
     }
-    bios_offset = qemu_ram_alloc(bios_size);
-    ret = rom_add_file_fixed(bios_name, (uint32_t)(-bios_size));
+    bios_offset = qemu_ram_alloc(NULL, "pc.bios", bios_size);
+    ret = rom_add_file_fixed(bios_name, (uint32_t)(-bios_size), -1);
     if (ret != 0) {
     bios_error:
         fprintf(stderr, "qemu: could not load PC BIOS '%s'\n", bios_name);
@@ -1092,12 +1157,16 @@ static void pc_init1(ram_addr_t ram_size,
                                  (bios_offset + bios_size - isa_bios_size) /* | IO_MEM_ROM */);
 
     if (extboot_drive) {
-        option_rom[nb_option_roms++] = qemu_strdup(EXTBOOT_FILENAME);
+        option_rom[nb_option_roms].name = qemu_strdup(EXTBOOT_FILENAME);
+        option_rom[nb_option_roms].bootindex = 0;
+        nb_option_roms++;
     }
-    option_rom[nb_option_roms++] = qemu_strdup(VAPIC_FILENAME);
+    option_rom[nb_option_roms].name = qemu_strdup(VAPIC_FILENAME);
+    option_rom[nb_option_roms].bootindex = -1;
+    nb_option_roms++;
 
     rom_enable_driver_roms = 1;
-    option_rom_offset = qemu_ram_alloc(PC_ROM_SIZE);
+    option_rom_offset = qemu_ram_alloc(NULL, "pc.rom", PC_ROM_SIZE);
     cpu_register_physical_memory(PC_ROM_MIN_VGA, PC_ROM_SIZE, option_rom_offset);
 
     /* map all the bios at the top of memory */
@@ -1105,13 +1174,14 @@ static void pc_init1(ram_addr_t ram_size,
                                  bios_size, bios_offset | IO_MEM_ROM);
 
     fw_cfg = bochs_bios_init();
+    rom_set_fw(fw_cfg);
 
     if (linux_boot) {
         load_linux(fw_cfg, kernel_filename, initrd_filename, kernel_cmdline, below_4g_mem_size);
     }
 
     for (i = 0; i < nb_option_roms; i++) {
-        rom_add_option(option_rom[i]);
+        rom_add_option(option_rom[i].name, option_rom[i].bootindex);
     }
 
     cpu_irq = qemu_allocate_irqs(pic_irq_request, NULL, 1);
@@ -1154,6 +1224,13 @@ static void pc_init1(ram_addr_t ram_size,
             pci_vmsvga_init(pci_bus);
         else
             fprintf(stderr, "%s: vmware_vga: no PCI bus\n", __FUNCTION__);
+#ifdef CONFIG_SPICE
+    } else if (qxl_enabled) {
+        if (pci_bus)
+            pci_create_simple(pci_bus, -1, "qxl-vga");
+        else
+            fprintf(stderr, "%s: qxl: no PCI bus\n", __FUNCTION__);
+#endif
     } else if (std_vga_enabled) {
         if (pci_enabled) {
             pci_vga_init(pci_bus, 0, 0);
@@ -1283,17 +1360,6 @@ static void pc_init1(ram_addr_t ram_size,
 	extboot_init(info->bdrv, 1);
     }
 
-    /* Add virtio console devices */
-    if (pci_enabled) {
-        for(i = 0; i < MAX_VIRTIO_CONSOLES; i++) {
-            if (virtcon_hds[i]) {
-                pci_create_simple(pci_bus, -1, "virtio-console-pci");
-            }
-        }
-    }
-
-    rom_load_fw(fw_cfg);
-
 #ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
     if (kvm_enabled()) {
         add_assigned_devices(pci_bus, assigned_devices, assigned_devices_index);
@@ -1313,6 +1379,7 @@ static void pc_init_pci(ram_addr_t ram_size,
              initrd_filename, cpu_model, 1);
 }
 
+#if 0 /* Disabled for Red Hat Enterprise Linux */
 static void pc_init_isa(ram_addr_t ram_size,
                         const char *boot_device,
                         const char *kernel_filename,
@@ -1326,6 +1393,7 @@ static void pc_init_isa(ram_addr_t ram_size,
              kernel_filename, kernel_cmdline,
              initrd_filename, cpu_model, 0);
 }
+#endif
 
 /* set CMOS shutdown status register (index 0xF) as S3_resume(0xFE)
    BIOS will read it and start S3 resume at POST Entry */
@@ -1335,13 +1403,59 @@ void cmos_set_s3_resume(void)
         rtc_set_memory(rtc_state, 0xF, 0xFE);
 }
 
+#if 0 /* Disabled for Red Hat Enterprise Linux */
 static QEMUMachine pc_machine = {
-    .name = "pc-0.11",
-    .alias = "pc",
+    .name = "pc-0.12",
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
-    .is_default = 1,
+    .compat_props = (GlobalProperty[]) {
+        {
+            .driver   = "virtio-serial-pci",
+            .property = "max_ports",
+            .value    = stringify(1),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },
+        { /* end of list */ }
+    }
+};
+
+static QEMUMachine pc_machine_v0_11 = {
+    .name = "pc-0.11",
+    .desc = "Standard PC, qemu 0.11",
+    .init = pc_init_pci,
+    .max_cpus = 255,
+    .compat_props = (GlobalProperty[]) {
+        {
+            .driver   = "virtio-blk-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "max_ports",
+            .value    = stringify(1),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },{
+            .driver   = "PCI",
+            .property = "rombar",
+            .value    = stringify(0),
+        },{
+            .driver   = "ide-drive",
+            .property = "ver",
+            .value    = "0.11",
+        },{
+            .driver   = "scsi-disk",
+            .property = "ver",
+            .value    = "0.11",
+        },
+        { /* end of list */ }
+    }
 };
 
 static QEMUMachine pc_machine_v0_10 = {
@@ -1355,9 +1469,17 @@ static QEMUMachine pc_machine_v0_10 = {
             .property = "class",
             .value    = stringify(PCI_CLASS_STORAGE_OTHER),
         },{
-            .driver   = "virtio-console-pci",
+            .driver   = "virtio-serial-pci",
             .property = "class",
             .value    = stringify(PCI_CLASS_DISPLAY_OTHER),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "max_ports",
+            .value    = stringify(1),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "vectors",
+            .value    = stringify(0),
         },{
             .driver   = "virtio-net-pci",
             .property = "vectors",
@@ -1366,6 +1488,18 @@ static QEMUMachine pc_machine_v0_10 = {
             .driver   = "virtio-blk-pci",
             .property = "vectors",
             .value    = stringify(0),
+        },{
+            .driver   = "PCI",
+            .property = "rombar",
+            .value    = stringify(0),
+        },{
+            .driver   = "ide-drive",
+            .property = "ver",
+            .value    = "0.10",
+        },{
+            .driver   = "scsi-disk",
+            .property = "ver",
+            .value    = "0.10",
         },
         { /* end of list */ }
     },
@@ -1381,8 +1515,203 @@ static QEMUMachine isapc_machine = {
 static void pc_machine_init(void)
 {
     qemu_register_machine(&pc_machine);
+    qemu_register_machine(&pc_machine_v0_11);
     qemu_register_machine(&pc_machine_v0_10);
     qemu_register_machine(&isapc_machine);
 }
 
 machine_init(pc_machine_init);
+#endif
+
+/* RHEL machine types */
+
+static void rhel_common_init(const char *type1_version,
+                             int legacy_smbios_vendor)
+{
+    char buf[32];
+
+    if (legacy_smbios_vendor) {
+        snprintf(buf, sizeof(buf), "QEMU");
+        smbios_add_field(0, offsetof(struct smbios_type_0, vendor_str),
+                         strlen(buf) + 1, buf);
+    }
+    snprintf(buf, sizeof(buf), "Red Hat");
+    smbios_add_field(1, offsetof(struct smbios_type_1, manufacturer_str),
+                     strlen(buf) + 1, buf);
+    snprintf(buf, sizeof(buf), "KVM");
+    smbios_add_field(1, offsetof(struct smbios_type_1, product_name_str),
+                     strlen(buf) + 1, buf);
+    snprintf(buf, sizeof(buf), type1_version);
+    smbios_add_field(1, offsetof(struct smbios_type_1, version_str),
+                     strlen(buf) + 1, buf);
+    snprintf(buf, sizeof(buf), "Red Hat Enterprise Linux");
+    smbios_add_field(1, offsetof(struct smbios_type_1, family_str),
+                     strlen(buf) + 1, buf);
+}
+
+static void pc_init_rhel610(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 6.1.0 PC", 0);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel610 = {
+    .name = "rhel6.1.0",
+    .alias = "pc",
+    .desc = "RHEL 6.1.0 PC",
+    .init = pc_init_rhel610,
+    .max_cpus = 255,
+    .is_default = 1,
+};
+
+static void pc_init_rhel600(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 6.0.0 PC", 0);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel600 = {
+    .name = "rhel6.0.0",
+    .desc = "RHEL 6.0.0 PC",
+    .init = pc_init_rhel600,
+    .max_cpus = 255,
+    .compat_props = (GlobalProperty[]) {
+        {
+            .driver   = "VGA",
+            .property = "rombar",
+            .value    = stringify(0),
+        },{
+            .driver   = "vmware-svga",
+            .property = "rombar",
+            .value    = stringify(0),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "flow_control",
+            .value    = stringify(0),
+        },
+        { /* end of list */ }
+    },
+};
+
+static GlobalProperty compat_rhel5[] = {
+        {
+            .driver   = "virtio-net-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },{
+            .driver   = "virtio-blk-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "max_ports",
+            .value    = stringify(1),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "vectors",
+            .value    = stringify(0),
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "flow_control",
+            .value    = stringify(0),
+        },{
+            .driver   = "PCI",
+            .property = "rombar",
+            .value    = stringify(0),
+        },
+#if 0 /* depends on "ide+scsi: device versions" patches */
+        {
+            .driver   = "ide-drive",
+            .property = "ver",
+            .value    = "0.9.1",
+        },{
+            .driver   = "scsi-disk",
+            .property = "ver",
+            .value    = "0.9.1",
+        },
+#endif
+        { /* end of list */ }
+};
+
+static void pc_init_rhel550(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 5.5.0 PC", 1);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
+}
+
+static QEMUMachine pc_machine_rhel550 = {
+    .name = "rhel5.5.0",
+    .desc = "RHEL 5.5.0 PC",
+    .init = pc_init_rhel550,
+    .max_cpus = 255,
+    .compat_props = compat_rhel5,
+};
+
+static void pc_init_rhel544(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 5.4.4 PC", 1);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
+}
+
+static QEMUMachine pc_machine_rhel544 = {
+    .name = "rhel5.4.4",
+    .desc = "RHEL 5.4.4 PC",
+    .init = pc_init_rhel544,
+    .max_cpus = 255,
+    .compat_props = compat_rhel5,
+};
+
+static void pc_init_rhel540(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 5.4.0 PC", 1);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
+}
+
+static QEMUMachine pc_machine_rhel540 = {
+    .name = "rhel5.4.0",
+    .desc = "RHEL 5.4.0 PC",
+    .init = pc_init_rhel540,
+    .max_cpus = 255,
+    .compat_props = compat_rhel5,
+};
+
+static void rhel_machine_init(void)
+{
+    qemu_register_machine(&pc_machine_rhel610);
+    qemu_register_machine(&pc_machine_rhel600);
+    qemu_register_machine(&pc_machine_rhel550);
+    qemu_register_machine(&pc_machine_rhel544);
+    qemu_register_machine(&pc_machine_rhel540);
+}
+
+machine_init(rhel_machine_init);

@@ -13,7 +13,8 @@ QEMU_CFLAGS+=-I.. -I$(SRC_PATH)/fpu
 
 obj-y =
 obj-y += loader.o
-obj-y += virtio.o
+obj-y += iov.o
+obj-y += virtio.o virtio-console.o
 obj-y += fw_cfg.o
 obj-y += watchdog.o
 obj-$(CONFIG_ECC) += ecc.o
@@ -36,7 +37,6 @@ obj-$(CONFIG_SMC91C111) += smc91c111.o
 obj-$(CONFIG_LAN9118) += lan9118.o
 
 # SCSI layer
-obj-y += lsi53c895a.o
 obj-$(CONFIG_ESP) += esp.o
 
 obj-y += dma-helpers.o sysbus.o isa-bus.o

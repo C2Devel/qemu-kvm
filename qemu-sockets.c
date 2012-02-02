@@ -91,14 +91,14 @@ static void inet_setport(struct addrinfo *e, int port)
     }
 }
 
-static const char *inet_strfamily(int family)
+const char *inet_strfamily(int family)
 {
     switch (family) {
     case PF_INET6: return "ipv6";
     case PF_INET:  return "ipv4";
     case PF_UNIX:  return "unix";
     }
-    return "????";
+    return "unknown";
 }
 
 static void inet_print_addrinfo(const char *tag, struct addrinfo *res)
@@ -424,7 +424,7 @@ static int inet_parse(QemuOpts *opts, const char *str)
                     __FUNCTION__, str);
             return -1;
         }
-        qemu_opt_set(opts, "ipv6", "yes");
+        qemu_opt_set(opts, "ipv6", "on");
     } else if (qemu_isdigit(str[0])) {
         /* IPv4 addr */
         if (2 != sscanf(str,"%64[0-9.]:%32[^,]%n",addr,port,&pos)) {
@@ -432,7 +432,7 @@ static int inet_parse(QemuOpts *opts, const char *str)
                     __FUNCTION__, str);
             return -1;
         }
-        qemu_opt_set(opts, "ipv4", "yes");
+        qemu_opt_set(opts, "ipv4", "on");
     } else {
         /* hostname */
         if (2 != sscanf(str,"%64[^:]:%32[^,]%n",addr,port,&pos)) {
@@ -450,9 +450,9 @@ static int inet_parse(QemuOpts *opts, const char *str)
     if (h)
         qemu_opt_set(opts, "to", h+4);
     if (strstr(optstr, ",ipv4"))
-        qemu_opt_set(opts, "ipv4", "yes");
+        qemu_opt_set(opts, "ipv4", "on");
     if (strstr(optstr, ",ipv6"))
-        qemu_opt_set(opts, "ipv6", "yes");
+        qemu_opt_set(opts, "ipv6", "on");
     return 0;
 }
 

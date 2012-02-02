@@ -268,6 +268,12 @@ static void mcf_uart_receive(void *opaque, const uint8_t *buf, int size)
     mcf_uart_push_byte(s, buf[0]);
 }
 
+static const QemuChrHandlers mcf_uart_handlers = {
+    .fd_can_read = mcf_uart_can_receive,
+    .fd_read = mcf_uart_receive,
+    .fd_event = mcf_uart_event,
+};
+
 void *mcf_uart_init(qemu_irq irq, CharDriverState *chr)
 {
     mcf_uart_state *s;
@@ -276,8 +282,7 @@ void *mcf_uart_init(qemu_irq irq, CharDriverState *chr)
     s->chr = chr;
     s->irq = irq;
     if (chr) {
-        qemu_chr_add_handlers(chr, mcf_uart_can_receive, mcf_uart_receive,
-                              mcf_uart_event, s);
+        qemu_chr_add_handlers(chr, &mcf_uart_handlers, s);
     }
     mcf_uart_reset(s);
     return s;

@@ -43,13 +43,21 @@ static int file_write(FdMigrationState *s, const void * buf, size_t size)
 
 static int exec_close(FdMigrationState *s)
 {
+    int ret = 0;
     dprintf("exec_close\n");
     if (s->opaque) {
-        qemu_fclose(s->opaque);
+        ret = qemu_fclose(s->opaque);
         s->opaque = NULL;
         s->fd = -1;
+        if (ret != -1 &&
+            WIFEXITED(ret)
+            && WEXITSTATUS(ret) == 0) {
+            ret = 0;
+        } else {
+            ret = -1;
+        }
     }
-    return 0;
+    return ret;
 }
 
 MigrationState *exec_start_outgoing_migration(Monitor *mon,
@@ -111,21 +119,9 @@ err_after_alloc:
 static void exec_accept_incoming_migration(void *opaque)
 {
     QEMUFile *f = opaque;
-    int ret;
 
-    ret = qemu_loadvm_state(f);
-    if (ret < 0) {
-        fprintf(stderr, "load of migration failed\n");
-        goto err;
-    }
-    qemu_announce_self();
-    dprintf("successfully loaded vm state\n");
-    /* we've successfully migrated, close the fd */
+    process_incoming_migration(f);
     qemu_set_fd_handler2(qemu_stdio_fd(f), NULL, NULL, NULL, NULL);
-    if (autostart)
-        vm_start();
-
-err:
     qemu_fclose(f);
 }
 

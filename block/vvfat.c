@@ -868,7 +868,8 @@ static int init_directories(BDRVVVFATState* s,
     {
 	direntry_t* entry=array_get_next(&(s->directory));
 	entry->attributes=0x28; /* archive | volume label */
-	snprintf((char*)entry->name,11,"QEMU VVFAT");
+	memcpy(entry->name,"QEMU VVF",8);
+	memcpy(entry->extension,"AT ",3);
     }
 
     /* Now build FAT, and write back information into directory */
@@ -882,7 +883,7 @@ static int init_directories(BDRVVVFATState* s,
     mapping->dir_index = 0;
     mapping->info.dir.parent_mapping_index = -1;
     mapping->first_mapping_index = -1;
-    mapping->path = strdup(dirname);
+    mapping->path = qemu_strdup(dirname);
     i = strlen(mapping->path);
     if (i > 0 && mapping->path[i - 1] == '/')
 	mapping->path[i - 1] = '\0';
@@ -1632,10 +1633,10 @@ static uint32_t get_cluster_count_for_direntry(BDRVVVFATState* s,
 
 	    /* rename */
 	    if (strcmp(basename, basename2))
-		schedule_rename(s, cluster_num, strdup(path));
+		schedule_rename(s, cluster_num, qemu_strdup(path));
 	} else if (is_file(direntry))
 	    /* new file */
-	    schedule_new_file(s, strdup(path), cluster_num);
+	    schedule_new_file(s, qemu_strdup(path), cluster_num);
 	else {
 	    assert(0);
 	    return 0;
@@ -1752,10 +1753,10 @@ static int check_directory_consistency(BDRVVVFATState *s,
 	mapping->mode &= ~MODE_DELETED;
 
 	if (strcmp(basename, basename2))
-	    schedule_rename(s, cluster_num, strdup(path));
+	    schedule_rename(s, cluster_num, qemu_strdup(path));
     } else
 	/* new directory */
-	schedule_mkdir(s, cluster_num, strdup(path));
+	schedule_mkdir(s, cluster_num, qemu_strdup(path));
 
     lfn_init(&lfn);
     do {
@@ -2256,7 +2257,11 @@ static int commit_one_file(BDRVVVFATState* s,
 	c = c1;
     }
 
-    ftruncate(fd, size);
+    if (ftruncate(fd, size)) {
+        perror("ftruncate()");
+        close(fd);
+        return -4;
+    }
     close(fd);
 
     return commit_mappings(s, first_cluster, dir_index);
@@ -2787,8 +2792,11 @@ static int enable_write_target(BDRVVVFATState *s)
     if (bdrv_create(bdrv_qcow, s->qcow_filename, options) < 0)
 	return -1;
     s->qcow = bdrv_new("");
-    if (s->qcow == NULL || bdrv_open(s->qcow, s->qcow_filename, 0) < 0)
+    if (s->qcow == NULL ||
+        bdrv_open(s->qcow, s->qcow_filename, BDRV_O_RDWR, bdrv_qcow) < 0)
+    {
 	return -1;
+    }
 
 #ifndef _WIN32
     unlink(s->qcow_filename);
@@ -2816,7 +2824,7 @@ static void vvfat_close(BlockDriverState *bs)
 static BlockDriver bdrv_vvfat = {
     .format_name	= "vvfat",
     .instance_size	= sizeof(BDRVVVFATState),
-    .bdrv_open		= vvfat_open,
+    .bdrv_file_open	= vvfat_open,
     .bdrv_read		= vvfat_read,
     .bdrv_write		= vvfat_write,
     .bdrv_close		= vvfat_close,

@@ -56,7 +56,7 @@ typedef struct {
     uint16_t region_number; /* number of active regions */
 
     /* Port I/O or MMIO Regions */
-    PCIRegion regions[PCI_NUM_REGIONS];
+    PCIRegion regions[PCI_NUM_REGIONS - 1];
     int config_fd;
 } PCIDevRegions;
 
@@ -70,6 +70,7 @@ typedef struct {
     int num;            /* our index within v_addrs[] */
     pcibus_t e_size;    /* emulated size of region in bytes */
     pcibus_t r_size;    /* real size of region in bytes */
+    PCIRegion *region;
 } AssignedDevRegion;
 
 typedef struct AssignedDevice {
@@ -78,7 +79,7 @@ typedef struct AssignedDevice {
     uint32_t use_iommu;
     int intpin;
     uint8_t debug_flags;
-    AssignedDevRegion v_addrs[PCI_NUM_REGIONS];
+    AssignedDevRegion v_addrs[PCI_NUM_REGIONS - 1];
     PCIDevRegions real_device;
     int run;
     int girq;
@@ -86,7 +87,6 @@ typedef struct AssignedDevice {
     unsigned int h_devfn;
     int irq_requested_type;
     int bound;
-    struct pci_dev *pdev;
     struct {
 #define ASSIGNED_DEVICE_CAP_MSI (1 << 0)
 #define ASSIGNED_DEVICE_CAP_MSIX (1 << 1)
@@ -102,6 +102,8 @@ typedef struct AssignedDevice {
     target_phys_addr_t msix_table_addr;
     int mmio_index;
     int need_emulate_cmd;
+    char *configfd_name;
+    int32_t bootindex;
     QLIST_ENTRY(AssignedDevice) next;
 } AssignedDevice;
 

@@ -185,6 +185,7 @@ void pci_host_conf_register_ioport(pio_addr_t ioport, PCIHostState *s)
 {
     register_ioport_write(ioport, 4, 4, pci_host_config_writel_ioport, s);
     register_ioport_read(ioport, 4, 4, pci_host_config_readl_ioport, s);
+    sysbus_init_ioports(&s->busdev, ioport, 4);
 }
 
 #define PCI_ADDR_T      target_phys_addr_t
@@ -227,4 +228,5 @@ void pci_host_data_register_ioport(pio_addr_t ioport, PCIHostState *s)
     register_ioport_read(ioport, 4, 1, pci_host_data_readb_ioport, s);
     register_ioport_read(ioport, 4, 2, pci_host_data_readw_ioport, s);
     register_ioport_read(ioport, 4, 4, pci_host_data_readl_ioport, s);
+    sysbus_init_ioports(&s->busdev, ioport, 4);
 }

@@ -706,16 +706,12 @@ int net_init_tap(QemuOpts *opts, Monitor *mon, const char *name, VLANState *vlan
     ifname = qemu_opt_get(opts, "ifname");
 
     if (!ifname) {
-        qemu_error("tap: no interface name\n");
+        error_report("tap: no interface name");
         return -1;
     }
 
     if (tap_win32_init(vlan, "tap", name, ifname) == -1) {
         return -1;
-    }
-
-    if (vlan) {
-        vlan->nb_host_devs++;
     }
 
     return 0;
@@ -729,6 +725,15 @@ int tap_has_ufo(VLANClientState *vc)
 int tap_has_vnet_hdr(VLANClientState *vc)
 {
     return 0;
+}
+
+int tap_probe_vnet_hdr_len(int fd, int len)
+{
+    return 0;
+}
+
+void tap_fd_set_vnet_hdr_len(int fd, int len)
+{
 }
 
 void tap_using_vnet_hdr(VLANClientState *vc, int using_vnet_hdr)
