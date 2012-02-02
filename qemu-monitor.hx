@@ -2293,6 +2293,25 @@ show list of VM snapshots
 ETEXI
 
 STEXI
+@item info incoming
+show current incoming migration status (active|not active)
+ETEXI
+SQMP
+query-incoming
+------------
+
+Return a json-object with the following information:
+
+- "active": true if an incoming migration is active now, or false if it's already finished or hasn't been started (json-bool)
+
+Example:
+
+-> { "execute": "query-incoming" }
+<- { "return": { "active": true } }
+
+EQMP
+
+STEXI
 @item info status
 show the current VM status (running|paused)
 ETEXI

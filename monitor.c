@@ -469,6 +469,9 @@ void monitor_protocol_event(MonitorEvent event, QObject *data)
         case QEVENT_RH_SPICE_DISCONNECTED:
             event_name = RFQDN_REDHAT "SPICE_DISCONNECTED";
             break;
+        case QEVENT_INCOMING_FINISHED:
+            event_name = "INCOMING_FINISHED";
+            break;
         default:
             abort();
             break;
@@ -2575,6 +2578,14 @@ static void do_inject_nmi(Monitor *mon, const QDict *qdict)
 }
 #endif
 
+static void do_info_incoming_print(Monitor *mon, const QObject *data)
+{
+    QDict *qdict = qobject_to_qdict(data);
+    monitor_printf(mon, "Incoming migration status: ");
+    monitor_printf(mon, qdict_get_bool(qdict, "active") ? "active" : "not active");
+    monitor_printf(mon, "\n");
+}
+
 static void do_info_status_print(Monitor *mon, const QObject *data)
 {
     QDict *qdict;
@@ -2592,6 +2603,11 @@ static void do_info_status_print(Monitor *mon, const QObject *data)
     }
 
     monitor_printf(mon, "\n");
+}
+
+static void do_info_incoming(Monitor *mon, QObject **ret_data)
+{
+    *ret_data = qobject_from_jsonf("{ 'active': %i }", incoming_expected);
 }
 
 static void do_info_status(Monitor *mon, QObject **ret_data)
@@ -3074,6 +3090,14 @@ static const mon_cmd_t info_cmds[] = {
         .params     = "",
         .help       = "show the currently saved VM snapshots",
         .mhandler.info = do_info_snapshots,
+    },
+    {
+        .name       = "incoming",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show current incoming migration status (active|not active)",
+        .user_print = do_info_incoming_print,
+        .mhandler.info_new = do_info_incoming,
     },
     {
         .name       = "status",
