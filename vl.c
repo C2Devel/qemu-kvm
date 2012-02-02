@@ -3136,6 +3136,8 @@ int qemu_set_fd_handler2(int fd,
         QLIST_FOREACH(ioh, &io_handlers, next) {
             if (ioh->fd == fd) {
                 ioh->deleted = 1;
+                ioh->fd_read = NULL;
+                ioh->fd_write = NULL;
                 break;
             }
         }
