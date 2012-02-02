@@ -51,6 +51,9 @@ unsigned vhost_net_get_features(struct vhost_net *net, unsigned features)
     if (!(net->dev.features & (1 << VIRTIO_RING_F_INDIRECT_DESC))) {
         features &= ~(1 << VIRTIO_RING_F_INDIRECT_DESC);
     }
+    if (!(net->dev.features & (1 << VIRTIO_RING_F_EVENT_IDX))) {
+        features &= ~(1 << VIRTIO_RING_F_EVENT_IDX);
+    }
     if (!(net->dev.features & (1 << VIRTIO_NET_F_MRG_RXBUF))) {
         features &= ~(1 << VIRTIO_NET_F_MRG_RXBUF);
     }
@@ -65,6 +68,9 @@ void vhost_net_ack_features(struct vhost_net *net, unsigned features)
     }
     if (features & (1 << VIRTIO_RING_F_INDIRECT_DESC)) {
         net->dev.acked_features |= (1 << VIRTIO_RING_F_INDIRECT_DESC);
+    }
+    if (features & (1 << VIRTIO_RING_F_EVENT_IDX)) {
+        net->dev.acked_features |= (1 << VIRTIO_RING_F_EVENT_IDX);
     }
     if (features & (1 << VIRTIO_NET_F_MRG_RXBUF)) {
         net->dev.acked_features |= (1 << VIRTIO_NET_F_MRG_RXBUF);
@@ -133,16 +139,22 @@ int vhost_net_start(struct vhost_net *net,
 {
     struct vhost_vring_file file = { };
     int r;
+
+    net->dev.nvqs = 2;
+    net->dev.vqs = net->vqs;
+
+    r = vhost_dev_enable_notifiers(&net->dev, dev);
+    if (r < 0) {
+        goto fail_notifiers;
+    }
     if (net->dev.acked_features & (1 << VIRTIO_NET_F_MRG_RXBUF)) {
         tap_set_vnet_hdr_len(net->vc,
                              sizeof(struct virtio_net_hdr_mrg_rxbuf));
     }
 
-    net->dev.nvqs = 2;
-    net->dev.vqs = net->vqs;
     r = vhost_dev_start(&net->dev, dev);
     if (r < 0) {
-        return r;
+        goto fail_start;
     }
 
     net->vc->info->poll(net->vc, false);
@@ -167,6 +179,9 @@ fail:
     if (net->dev.acked_features & (1 << VIRTIO_NET_F_MRG_RXBUF)) {
         tap_set_vnet_hdr_len(net->vc, sizeof(struct virtio_net_hdr));
     }
+fail_start:
+    vhost_dev_disable_notifiers(&net->dev, dev);
+fail_notifiers:
     return r;
 }
 
@@ -184,6 +199,7 @@ void vhost_net_stop(struct vhost_net *net,
     if (net->dev.acked_features & (1 << VIRTIO_NET_F_MRG_RXBUF)) {
         tap_set_vnet_hdr_len(net->vc, sizeof(struct virtio_net_hdr));
     }
+    vhost_dev_disable_notifiers(&net->dev, dev);
 }
 
 void vhost_net_cleanup(struct vhost_net *net)

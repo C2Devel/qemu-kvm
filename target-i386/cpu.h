@@ -738,6 +738,11 @@ typedef struct CPUX86State {
     uint16_t fpregs_format_vmstate;
 
     int update_vapic;
+
+    uint64_t xstate_bv;
+    XMMReg ymmh_regs[CPU_NB_REGS];
+
+    uint64_t xcr0;
 } CPUX86State;
 
 CPUX86State *cpu_x86_init(const char *cpu_model);

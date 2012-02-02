@@ -1,5 +1,5 @@
 /* fdc.c */
-#include "sysemu.h"
+#include "blockdev.h"
 #define MAX_FD 2
 
 typedef struct fdctrl_t fdctrl_t;

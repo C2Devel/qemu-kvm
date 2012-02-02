@@ -191,16 +191,21 @@ void qemu_macaddr_default_if_unset(MACAddr *macaddr)
 static char *assign_name(VLANClientState *vc1, const char *model)
 {
     VLANState *vlan;
+    VLANClientState *vc;
     char buf[256];
     int id = 0;
 
     QTAILQ_FOREACH(vlan, &vlans, next) {
-        VLANClientState *vc;
-
         QTAILQ_FOREACH(vc, &vlan->clients, next) {
             if (vc != vc1 && strcmp(vc->model, model) == 0) {
                 id++;
             }
+        }
+    }
+
+    QTAILQ_FOREACH(vc, &non_vlan_clients, next) {
+        if (vc != vc1 && strcmp(vc->model, model) == 0) {
+            id++;
         }
     }
 
@@ -711,6 +716,8 @@ VLANClientState *qemu_find_netdev(const char *id)
     VLANClientState *vc;
 
     QTAILQ_FOREACH(vc, &non_vlan_clients, next) {
+        if (vc->info->type == NET_CLIENT_TYPE_NIC)
+            continue;
         if (!strcmp(vc->name, id)) {
             return vc;
         }
@@ -834,18 +841,12 @@ static int net_init_nic(QemuOpts *opts,
         nd->devaddr = qemu_strdup(qemu_opt_get(opts, "addr"));
     }
 
-    nd->macaddr[0] = 0x52;
-    nd->macaddr[1] = 0x54;
-    nd->macaddr[2] = 0x00;
-    nd->macaddr[3] = 0x12;
-    nd->macaddr[4] = 0x34;
-    nd->macaddr[5] = 0x56 + idx;
-
     if (qemu_opt_get(opts, "macaddr") &&
-        net_parse_macaddr(nd->macaddr, qemu_opt_get(opts, "macaddr")) < 0) {
+        net_parse_macaddr(nd->macaddr.a, qemu_opt_get(opts, "macaddr")) < 0) {
         error_report("invalid syntax for ethernet address");
         return -1;
     }
+    qemu_macaddr_default_if_unset(&nd->macaddr);
 
     nd->nvectors = qemu_opt_get_number(opts, "vectors",
                                        DEV_NVECTORS_UNSPECIFIED);
@@ -1266,7 +1267,7 @@ int do_netdev_del(Monitor *mon, const QDict *qdict, QObject **ret_data)
     VLANClientState *vc;
 
     vc = qemu_find_netdev(id);
-    if (!vc || vc->info->type == NET_CLIENT_TYPE_NIC) {
+    if (!vc) {
         qerror_report(QERR_DEVICE_NOT_FOUND, id);
         return -1;
     }
@@ -1311,7 +1312,11 @@ int do_set_link(Monitor *mon, const QDict *qdict, QObject **ret_data)
             }
         }
     }
-    vc = qemu_find_netdev(name);
+    QTAILQ_FOREACH(vc, &non_vlan_clients, next) {
+        if (!strcmp(vc->name, name)) {
+            goto done;
+        }
+    }
 done:
 
     if (!vc) {

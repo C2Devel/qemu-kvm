@@ -87,8 +87,8 @@ uint64_t qemu_get_be64(QEMUFile *f);
 int qemu_file_rate_limit(QEMUFile *f);
 size_t qemu_file_set_rate_limit(QEMUFile *f, size_t new_rate);
 size_t qemu_file_get_rate_limit(QEMUFile *f);
-int qemu_file_has_error(QEMUFile *f);
-void qemu_file_set_error(QEMUFile *f);
+int qemu_file_get_error(QEMUFile *f);
+void qemu_file_set_error(QEMUFile *f, int error);
 
 /* Try to send any outstanding data.  This function is useful when output is
  * halted due to rate limiting or EAGAIN errors occur as it can be used to
@@ -324,6 +324,7 @@ typedef struct VMStateSubsection {
 
 struct VMStateDescription {
     const char *name;
+    int unmigratable;
     int version_id;
     int minimum_version_id;
     int minimum_version_id_old;
@@ -582,6 +583,16 @@ extern const VMStateDescription vmstate_i2c_slave;
     .vmsd       = &vmstate_i2c_slave,                                \
     .flags      = VMS_STRUCT,                                        \
     .offset     = vmstate_offset_value(_state, _field, i2c_slave),   \
+}
+
+extern const VMStateDescription vmstate_usb_device;
+
+#define VMSTATE_USB_DEVICE(_field, _state) {                         \
+    .name       = (stringify(_field)),                               \
+    .size       = sizeof(USBDevice),                                 \
+    .vmsd       = &vmstate_usb_device,                               \
+    .flags      = VMS_STRUCT,                                        \
+    .offset     = vmstate_offset_value(_state, _field, USBDevice),   \
 }
 
 #define vmstate_offset_macaddr(_state, _field)                       \

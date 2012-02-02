@@ -1,4 +1,3 @@
-#include "sysemu.h"
 #include "net.h"
 #include "qdev.h"
 #include "qerror.h"
@@ -52,7 +51,7 @@ static int parse_bit(DeviceState *dev, Property *prop, const char *str)
 
 static int print_bit(DeviceState *dev, Property *prop, char *dest, size_t len)
 {
-    uint8_t *p = qdev_get_prop_ptr(dev, prop);
+    uint32_t *p = qdev_get_prop_ptr(dev, prop);
     return snprintf(dest, len, (*p & qdev_get_prop_mask(prop)) ? "on" : "off");
 }
 
@@ -313,7 +312,7 @@ static int parse_drive(DeviceState *dev, Property *prop, const char *str)
     bs = bdrv_find(str);
     if (bs == NULL)
         return -ENOENT;
-    if (bdrv_attach(bs, dev) < 0)
+    if (bdrv_attach_dev(bs, dev) < 0)
         return -EEXIST;
     *ptr = bs;
     return 0;
@@ -324,7 +323,7 @@ static void free_drive(DeviceState *dev, Property *prop)
     BlockDriverState **ptr = qdev_get_prop_ptr(dev, prop);
 
     if (*ptr) {
-        bdrv_detach(*ptr, dev);
+        bdrv_detach_dev(*ptr, dev);
         blockdev_auto_del(*ptr);
     }
 }
@@ -352,8 +351,13 @@ static int parse_chr(DeviceState *dev, Property *prop, const char *str)
     CharDriverState **ptr = qdev_get_prop_ptr(dev, prop);
 
     *ptr = qemu_chr_find(str);
-    if (*ptr == NULL)
+    if (*ptr == NULL) {
         return -ENOENT;
+    }
+    if ((*ptr)->avail_connections < 1) {
+        return -EEXIST;
+    }
+    --(*ptr)->avail_connections;
     return 0;
 }
 
@@ -520,6 +524,8 @@ static int parse_pci_devfn(DeviceState *dev, Property *prop, const char *str)
         return -EINVAL;
     if (fn > 7)
         return -EINVAL;
+    if (slot > 31)
+	return -EINVAL;
     *ptr = slot << 3 | fn;
     return 0;
 }
@@ -635,6 +641,11 @@ void qdev_prop_set(DeviceState *dev, const char *name, void *src, enum PropertyT
     qdev_prop_cpy(dev, prop, src);
 }
 
+void qdev_prop_set_bit(DeviceState *dev, const char *name, bool value)
+{
+    qdev_prop_set(dev, name, &value, PROP_TYPE_BIT);
+}
+
 void qdev_prop_set_uint8(DeviceState *dev, const char *name, uint8_t value)
 {
     qdev_prop_set(dev, name, &value, PROP_TYPE_UINT8);
@@ -664,7 +675,7 @@ int qdev_prop_set_drive(DeviceState *dev, const char *name, BlockDriverState *va
 {
     int res;
 
-    res = bdrv_attach(value, dev);
+    res = bdrv_attach_dev(value, dev);
     if (res < 0) {
         error_report("Can't attach drive %s to %s.%s: %s",
                      bdrv_get_device_name(value),

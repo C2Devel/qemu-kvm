@@ -19,6 +19,7 @@
 #include <sys/time.h>
 
 QEMUClock *rt_clock;
+QEMUClock *vm_clock;
 
 FILE *logfile;
 
@@ -72,6 +73,24 @@ void monitor_protocol_event(MonitorEvent event, QObject *data)
 {
 }
 
+QEMUTimer *qemu_new_timer(QEMUClock *clock, QEMUTimerCB *cb, void *opaque)
+{
+    return qemu_malloc(1);
+}
+
+void qemu_free_timer(QEMUTimer *ts)
+{
+    qemu_free(ts);
+}
+
+void qemu_del_timer(QEMUTimer *ts)
+{
+}
+
+void qemu_mod_timer(QEMUTimer *ts, int64_t expire_time)
+{
+}
+
 QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque)
 {
     QEMUBH *bh;
@@ -116,4 +135,13 @@ int64_t qemu_get_clock(QEMUClock *clock)
     qemu_timeval tv;
     qemu_gettimeofday(&tv);
     return (tv.tv_sec * 1000000000LL + (tv.tv_usec * 1000)) / 1000000;
+}
+
+/*
+ * XXX: non-functional stub, but we do not need block latency accounting
+ * in the tools anyway.
+ */
+int64_t get_clock(void)
+{
+	return 0;
 }

@@ -124,8 +124,8 @@ void qxl_render_update(PCIQXLDevice *qxl)
     update.bottom = qxl->guest_primary.surface.height;
 
     memset(dirty, 0, sizeof(dirty));
-    qxl->ssd.worker->update_area(qxl->ssd.worker, 0, &update,
-                                 dirty, ARRAY_SIZE(dirty), 1);
+    qxl_spice_update_area(qxl, 0, &update,
+                          dirty, ARRAY_SIZE(dirty), 1, QXL_SYNC);
 
     for (i = 0; i < ARRAY_SIZE(dirty); i++) {
         if (qemu_spice_rect_is_empty(dirty+i)) {
@@ -178,13 +178,13 @@ fail:
     return NULL;
 }
 
+
 /* called from spice server thread context only */
 void qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext)
 {
     QXLCursorCmd *cmd = qxl_phys2virt(qxl, ext->cmd.data, ext->group_id);
     QXLCursor *cursor;
     QEMUCursor *c;
-    int x = -1, y = -1;
 
     if (!qxl->ssd.ds->mouse_set || !qxl->ssd.ds->cursor_define) {
         return;
@@ -197,8 +197,6 @@ void qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext)
     }
     switch (cmd->type) {
     case QXL_CURSOR_SET:
-        x = cmd->u.set.position.x;
-        y = cmd->u.set.position.y;
         cursor = qxl_phys2virt(qxl, cmd->u.set.shape, ext->group_id);
         if (cursor->chunk.data_size != cursor->data_size) {
             fprintf(stderr, "%s: multiple chunks\n", __FUNCTION__);
@@ -208,26 +206,20 @@ void qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext)
         if (c == NULL) {
             c = cursor_builtin_left_ptr();
         }
-        qxl_server_request_cursor_set(qxl, c, x, y);
+        qemu_mutex_lock(&qxl->ssd.lock);
+        if (qxl->ssd.cursor) {
+            cursor_put(qxl->ssd.cursor);
+        }
+        qxl->ssd.cursor = c;
+        qxl->ssd.mouse_x = cmd->u.set.position.x;
+        qxl->ssd.mouse_y = cmd->u.set.position.y;
+        qemu_mutex_unlock(&qxl->ssd.lock);
         break;
     case QXL_CURSOR_MOVE:
-        x = cmd->u.position.x;
-        y = cmd->u.position.y;
-        qxl_server_request_cursor_move(qxl, x, y);
+        qemu_mutex_lock(&qxl->ssd.lock);
+        qxl->ssd.mouse_x = cmd->u.position.x;
+        qxl->ssd.mouse_y = cmd->u.position.y;
+        qemu_mutex_unlock(&qxl->ssd.lock);
         break;
     }
-}
-
-/* called from iothread only (via qxl.c:pipe_read) */
-void qxl_render_cursor_set(SimpleSpiceDisplay *ssd, QEMUCursor *c, int x, int y)
-{
-    ssd->ds->cursor_define(c);
-    ssd->ds->mouse_set(x, y, 1);
-    cursor_put(c);
-}
-
-/* called from iothread only (via qxl.c:pipe_read) */
-void qxl_render_cursor_move(SimpleSpiceDisplay *ssd, int x, int y)
-{
-    ssd->ds->mouse_set(x, y, 1);
 }

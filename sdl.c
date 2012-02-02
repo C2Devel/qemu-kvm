@@ -412,7 +412,7 @@ static void sdl_update_caption(void)
     char icon_title[1024];
     const char *status = "";
 
-    if (!vm_running)
+    if (!runstate_is_running())
         status = " [Stopped]";
     else if (gui_grab) {
         if (alt_grab)
@@ -549,8 +549,8 @@ static void sdl_refresh(DisplayState *ds)
     int mod_state;
     int buttonstate = SDL_GetMouseState(NULL, NULL);
 
-    if (last_vm_running != vm_running) {
-        last_vm_running = vm_running;
+    if (last_vm_running != runstate_is_running()) {
+        last_vm_running = runstate_is_running();
         sdl_update_caption();
     }
 

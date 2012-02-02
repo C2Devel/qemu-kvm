@@ -33,10 +33,10 @@
 //#define DEBUG_BLK_MIGRATION
 
 #ifdef DEBUG_BLK_MIGRATION
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { printf("blk_migration: " fmt, ## __VA_ARGS__); } while (0)
 #else
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
 
@@ -203,7 +203,7 @@ static int mig_save_device_bulk(Monitor *mon, QEMUFile *f,
 
 error:
     monitor_printf(mon, "Error reading sector %" PRId64 "\n", cur_sector);
-    qemu_file_set_error(f);
+    qemu_file_set_error(f, -EIO);
     qemu_free(blk->buf);
     qemu_free(blk);
     return 0;
@@ -236,6 +236,7 @@ static void init_blk_migration_it(void *opaque, BlockDriverState *bs)
         bmds->total_sectors = sectors;
         bmds->completed_sectors = 0;
         bmds->shared_base = block_mig_state.shared_base;
+        bdrv_set_in_use(bs, 1);
 
         block_mig_state.total_sector_sum += sectors;
 
@@ -309,11 +310,12 @@ static void blk_mig_save_dirty_blocks(Monitor *mon, QEMUFile *f)
     QSIMPLEQ_FOREACH(bmds, &block_mig_state.bmds_list, entry) {
         for (sector = 0; sector < bmds->cur_sector;) {
             if (bdrv_get_dirty(bmds->bs, sector)) {
-                if (bdrv_read(bmds->bs, sector, blk.buf,
-                              BDRV_SECTORS_PER_DIRTY_CHUNK) < 0) {
+                int ret = bdrv_read(bmds->bs, sector, blk.buf,
+                                    BDRV_SECTORS_PER_DIRTY_CHUNK);
+                if (ret < 0) {
                     monitor_printf(mon, "Error reading sector %" PRId64 "\n",
                                    sector);
-                    qemu_file_set_error(f);
+                    qemu_file_set_error(f, ret);
                     qemu_free(blk.buf);
                     return;
                 }
@@ -335,7 +337,7 @@ static void flush_blks(QEMUFile* f)
 {
     BlkMigBlock *blk;
 
-    dprintf("%s Enter submitted %d read_done %d transferred %d\n",
+    DPRINTF("%s Enter submitted %d read_done %d transferred %d\n",
             __FUNCTION__, block_mig_state.submitted, block_mig_state.read_done,
             block_mig_state.transferred);
 
@@ -344,7 +346,7 @@ static void flush_blks(QEMUFile* f)
             break;
         }
         if (blk->ret < 0) {
-            qemu_file_set_error(f);
+            qemu_file_set_error(f, blk->ret);
             break;
         }
         blk_send(f, blk);
@@ -358,7 +360,7 @@ static void flush_blks(QEMUFile* f)
         assert(block_mig_state.read_done >= 0);
     }
 
-    dprintf("%s Exit submitted %d read_done %d transferred %d\n", __FUNCTION__,
+    DPRINTF("%s Exit submitted %d read_done %d transferred %d\n", __FUNCTION__,
             block_mig_state.submitted, block_mig_state.read_done,
             block_mig_state.transferred);
 }
@@ -387,6 +389,7 @@ static void blk_mig_cleanup(Monitor *mon)
 
     while ((bmds = QSIMPLEQ_FIRST(&block_mig_state.bmds_list)) != NULL) {
         QSIMPLEQ_REMOVE_HEAD(&block_mig_state.bmds_list, entry);
+        bdrv_set_in_use(bmds->bs, 0);
         qemu_free(bmds);
     }
 
@@ -403,7 +406,9 @@ static void blk_mig_cleanup(Monitor *mon)
 
 static int block_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 {
-    dprintf("Enter save live stage %d submitted %d transferred %d\n",
+    int ret;
+
+    DPRINTF("Enter save live stage %d submitted %d transferred %d\n",
             stage, block_mig_state.submitted, block_mig_state.transferred);
 
     if (stage < 0) {
@@ -426,9 +431,10 @@ static int block_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 
     flush_blks(f);
 
-    if (qemu_file_has_error(f)) {
+    ret = qemu_file_get_error(f);
+    if (ret) {
         blk_mig_cleanup(mon);
-        return 0;
+        return ret;
     }
 
     /* control the rate of transfer */
@@ -443,9 +449,10 @@ static int block_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 
     flush_blks(f);
 
-    if (qemu_file_has_error(f)) {
+    ret = qemu_file_get_error(f);
+    if (ret) {
         blk_mig_cleanup(mon);
-        return 0;
+        return ret;
     }
 
     if (stage == 3) {
@@ -459,8 +466,9 @@ static int block_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
         /* report completion */
         qemu_put_be64(f, (100 << BDRV_SECTOR_BITS) | BLK_MIG_FLAG_PROGRESS);
 
-        if (qemu_file_has_error(f)) {
-            return 0;
+        ret = qemu_file_get_error(f);
+        if (ret) {
+            return ret;
         }
 
         monitor_printf(mon, "Block migration completed\n");
@@ -479,6 +487,7 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
     int64_t addr;
     BlockDriverState *bs;
     uint8_t *buf;
+    int ret;
 
     do {
         addr = qemu_get_be64(f);
@@ -517,8 +526,9 @@ static int block_load(QEMUFile *f, void *opaque, int version_id)
             fprintf(stderr, "Unknown flags\n");
             return -EINVAL;
         }
-        if (qemu_file_has_error(f)) {
-            return -EIO;
+        ret = qemu_file_get_error(f);
+        if (ret != 0) {
+            return ret;
         }
     } while (!(flags & BLK_MIG_FLAG_EOS));
 

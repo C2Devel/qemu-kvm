@@ -39,7 +39,7 @@ struct VirtIOSerial {
     /* Arrays of ivqs and ovqs: one per port */
     VirtQueue **ivqs, **ovqs;
 
-    VirtIOSerialBus *bus;
+    VirtIOSerialBus bus;
 
     DeviceState *qdev;
 
@@ -321,6 +321,13 @@ size_t virtio_serial_guest_ready(VirtIOSerialPort *port)
     return 0;
 }
 
+static void flush_queued_data_bh(void *opaque)
+{
+    VirtIOSerialPort *port = opaque;
+
+    flush_queued_data(port);
+}
+
 void virtio_serial_throttle_port(VirtIOSerialPort *port, bool throttle)
 {
     if (!port) {
@@ -331,8 +338,7 @@ void virtio_serial_throttle_port(VirtIOSerialPort *port, bool throttle)
     if (throttle) {
         return;
     }
-
-    flush_queued_data(port);
+    qemu_bh_schedule(port->bh);
 }
 
 bool virtio_serial_flow_control_enabled(VirtIOSerialPort *port)
@@ -370,7 +376,7 @@ static void handle_control_message(VirtIOSerial *vser, void *buf, size_t len)
     case VIRTIO_CONSOLE_DEVICE_READY:
         if (!cpkt.value) {
             error_report("virtio-serial-bus: Guest failure in adding device %s\n",
-                         vser->bus->qbus.name);
+                         vser->bus.qbus.name);
             break;
         }
         /*
@@ -385,7 +391,7 @@ static void handle_control_message(VirtIOSerial *vser, void *buf, size_t len)
     case VIRTIO_CONSOLE_PORT_READY:
         if (!cpkt.value) {
             error_report("virtio-serial-bus: Guest failure in adding port %u for device %s\n",
-                         port->id, vser->bus->qbus.name);
+                         port->id, vser->bus.qbus.name);
             break;
         }
         /*
@@ -519,7 +525,7 @@ static uint32_t get_features(VirtIODevice *vdev, uint32_t features)
 
     vser = DO_UPCAST(VirtIOSerial, vdev, vdev);
 
-    if (vser->bus->max_nr_ports > 1) {
+    if (vser->bus.max_nr_ports > 1) {
         features |= (1 << VIRTIO_CONSOLE_F_MULTIPORT);
     }
     return features;
@@ -651,6 +657,7 @@ static int virtio_serial_load(QEMUFile *f, void *opaque, int version_id)
     for (i = 0; i < nr_active_ports; i++) {
         uint32_t id;
         bool host_connected;
+        VirtIOSerialPortInfo *info;
 
         id = qemu_get_be32(f);
         port = find_port_by_id(s, id);
@@ -659,6 +666,11 @@ static int virtio_serial_load(QEMUFile *f, void *opaque, int version_id)
         }
 
         port->guest_connected = qemu_get_byte(f);
+        info = DO_UPCAST(VirtIOSerialPortInfo, qdev, port->dev.info);
+        if (port->guest_connected && info->guest_open) {
+            /* replay guest open */
+            info->guest_open(port);
+        }
         host_connected = qemu_get_byte(f);
         if (host_connected != port->host_connected) {
             /*
@@ -702,16 +714,6 @@ static struct BusInfo virtser_bus_info = {
     .size      = sizeof(VirtIOSerialBus),
     .print_dev = virtser_bus_dev_print,
 };
-
-static VirtIOSerialBus *virtser_bus_new(DeviceState *dev)
-{
-    VirtIOSerialBus *bus;
-
-    bus = FROM_QBUS(VirtIOSerialBus, qbus_create(&virtser_bus_info, dev, NULL));
-    bus->qbus.allow_hotplug = 1;
-
-    return bus;
-}
 
 static void virtser_bus_dev_print(Monitor *mon, DeviceState *qdev, int indent)
 {
@@ -786,6 +788,7 @@ static int virtser_port_qdev_init(DeviceState *qdev, DeviceInfo *base)
     bool plugging_port0;
 
     port->vser = bus->vser;
+    port->bh = qemu_bh_new(flush_queued_data_bh, port);
 
     /*
      * Is the first console port we're seeing? If so, put it up at
@@ -852,6 +855,7 @@ static int virtser_port_qdev_exit(DeviceState *qdev)
     VirtIOSerialPort *port = DO_UPCAST(VirtIOSerialPort, dev, &dev->qdev);
     VirtIOSerial *vser = port->vser;
 
+    qemu_bh_delete(port->bh);
     remove_port(port->vser, port->id);
 
     QTAILQ_REMOVE(&vser->ports, port, next);
@@ -896,11 +900,12 @@ VirtIODevice *virtio_serial_init(DeviceState *dev, virtio_serial_conf *conf)
     vser = DO_UPCAST(VirtIOSerial, vdev, vdev);
 
     /* Spawn a new virtio-serial bus on which the ports will ride as devices */
-    vser->bus = virtser_bus_new(dev);
-    vser->bus->vser = vser;
+    qbus_create_inplace(&vser->bus.qbus, &virtser_bus_info, dev, NULL);
+    vser->bus.qbus.allow_hotplug = 1;
+    vser->bus.vser = vser;
     QTAILQ_INIT(&vser->ports);
 
-    vser->bus->max_nr_ports = conf->max_virtserial_ports;
+    vser->bus.max_nr_ports = conf->max_virtserial_ports;
     vser->ivqs = qemu_malloc(conf->max_virtserial_ports * sizeof(VirtQueue *));
     vser->ovqs = qemu_malloc(conf->max_virtserial_ports * sizeof(VirtQueue *));
 
@@ -920,7 +925,7 @@ VirtIODevice *virtio_serial_init(DeviceState *dev, virtio_serial_conf *conf)
     /* control queue: guest to host */
     vser->c_ovq = virtio_add_queue(vdev, 32, control_out);
 
-    for (i = 1; i < vser->bus->max_nr_ports; i++) {
+    for (i = 1; i < vser->bus.max_nr_ports; i++) {
         /* Add a per-port queue for host to guest transfers */
         vser->ivqs[i] = virtio_add_queue(vdev, 128, handle_input);
         /* Add a per-per queue for guest to host transfers */

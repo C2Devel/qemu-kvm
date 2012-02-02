@@ -50,8 +50,10 @@
 #endif
 #ifdef __linux__
 #include <sys/ioctl.h>
+#include <sys/vfs.h>
 #include <linux/cdrom.h>
 #include <linux/fd.h>
+#include <linux/magic.h>
 #endif
 #if defined (__FreeBSD__) || defined(__FreeBSD_kernel__)
 #include <signal.h>
@@ -121,6 +123,7 @@ typedef struct BDRVRawState {
 #endif
     uint8_t *aligned_buf;
     unsigned aligned_buf_size;
+    bool force_linearize;
 } BDRVRawState;
 
 static int fd_open(BlockDriverState *bs);
@@ -128,6 +131,38 @@ static int64_t raw_getlength(BlockDriverState *bs);
 
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
 static int cdrom_reopen(BlockDriverState *bs);
+#endif
+
+#if defined(__linux__)
+static bool is_vectored_io_slow(int fd, int bdrv_flags)
+{
+    struct statfs stfs;
+    int ret;
+    char *env_flag = getenv("QEMU_FORCE_LINEARIZE");
+
+    if (env_flag && strcasecmp(env_flag, "off") == 0) {
+        return false;
+    }
+
+    do {
+        ret = fstatfs(fd, &stfs);
+    } while (ret != 0 && errno == EINTR);
+
+    /*
+     * Linux NFS client splits vectored direct I/O requests into separate NFS
+     * requests so it is faster to submit a single buffer instead.
+     */
+    if (!ret && stfs.f_type == NFS_SUPER_MAGIC &&
+        (bdrv_flags & BDRV_O_NOCACHE)) {
+        return true;
+    }
+    return false;
+}
+#else /* !defined(__linux__) */
+static bool is_vectored_io_slow(int fd, int bdrv_flags)
+{
+    return false;
+}
 #endif
 
 static int raw_open_common(BlockDriverState *bs, const char *filename,
@@ -162,6 +197,7 @@ static int raw_open_common(BlockDriverState *bs, const char *filename,
     }
     s->fd = fd;
     s->aligned_buf = NULL;
+    s->force_linearize = is_vectored_io_slow(fd, bdrv_flags);
 
     if ((bdrv_flags & BDRV_O_NOCACHE)) {
         /*
@@ -528,20 +564,27 @@ static BlockDriverAIOCB *raw_aio_submit(BlockDriverState *bs,
         return NULL;
 
     /*
+     * Check if buffers need to be copied into a single linear buffer.
+     */
+    if (s->force_linearize && qiov->niov > 1) {
+        type |= QEMU_AIO_MISALIGNED;
+    }
+
+    /*
      * If O_DIRECT is used the buffer needs to be aligned on a sector
      * boundary.  Check if this is the case or telll the low-level
      * driver that it needs to copy the buffer.
      */
-    if (s->aligned_buf) {
-        if (!qiov_is_aligned(bs, qiov)) {
-            type |= QEMU_AIO_MISALIGNED;
-#ifdef CONFIG_LINUX_AIO
-        } else if (s->use_aio) {
-            return laio_submit(bs, s->aio_ctx, s->fd, sector_num, qiov,
-                               nb_sectors, cb, opaque, type);
-#endif
-        }
+    if (s->aligned_buf && !qiov_is_aligned(bs, qiov)) {
+        type |= QEMU_AIO_MISALIGNED;
     }
+
+#ifdef CONFIG_LINUX_AIO
+    if (s->use_aio && (type & QEMU_AIO_MISALIGNED) == 0) {
+        return laio_submit(bs, s->aio_ctx, s->fd, sector_num, qiov,
+                           nb_sectors, cb, opaque, type);
+    }
+#endif
 
     return paio_submit(bs, s->fd, sector_num, qiov, nb_sectors,
                        cb, opaque, type);
@@ -1077,7 +1120,7 @@ static int floppy_media_changed(BlockDriverState *bs)
     return ret;
 }
 
-static int floppy_eject(BlockDriverState *bs, int eject_flag)
+static void floppy_eject(BlockDriverState *bs, int eject_flag)
 {
     BDRVRawState *s = bs->opaque;
     int fd;
@@ -1092,8 +1135,6 @@ static int floppy_eject(BlockDriverState *bs, int eject_flag)
             perror("FDEJECT");
         close(fd);
     }
-
-    return 0;
 }
 
 static BlockDriver bdrv_host_floppy = {
@@ -1166,7 +1207,7 @@ static int cdrom_is_inserted(BlockDriverState *bs)
     return 0;
 }
 
-static int cdrom_eject(BlockDriverState *bs, int eject_flag)
+static void cdrom_eject(BlockDriverState *bs, int eject_flag)
 {
     BDRVRawState *s = bs->opaque;
 
@@ -1177,11 +1218,9 @@ static int cdrom_eject(BlockDriverState *bs, int eject_flag)
         if (ioctl(s->fd, CDROMCLOSETRAY, NULL) < 0)
             perror("CDROMEJECT");
     }
-
-    return 0;
 }
 
-static int cdrom_set_locked(BlockDriverState *bs, int locked)
+static void cdrom_lock_medium(BlockDriverState *bs, bool locked)
 {
     BDRVRawState *s = bs->opaque;
 
@@ -1192,8 +1231,6 @@ static int cdrom_set_locked(BlockDriverState *bs, int locked)
          */
         /* perror("CDROM_LOCKDOOR"); */
     }
-
-    return 0;
 }
 
 static BlockDriver bdrv_host_cdrom = {
@@ -1219,7 +1256,7 @@ static BlockDriver bdrv_host_cdrom = {
     /* removable device support */
     .bdrv_is_inserted   = cdrom_is_inserted,
     .bdrv_eject         = cdrom_eject,
-    .bdrv_set_locked    = cdrom_set_locked,
+    .bdrv_lock_medium   = cdrom_lock_medium,
 
     /* generic scsi device */
     .bdrv_ioctl         = hdev_ioctl,
@@ -1280,12 +1317,12 @@ static int cdrom_is_inserted(BlockDriverState *bs)
     return raw_getlength(bs) > 0;
 }
 
-static int cdrom_eject(BlockDriverState *bs, int eject_flag)
+static void cdrom_eject(BlockDriverState *bs, int eject_flag)
 {
     BDRVRawState *s = bs->opaque;
 
     if (s->fd < 0)
-        return -ENOTSUP;
+        return;
 
     (void) ioctl(s->fd, CDIOCALLOW);
 
@@ -1297,17 +1334,15 @@ static int cdrom_eject(BlockDriverState *bs, int eject_flag)
             perror("CDIOCCLOSE");
     }
 
-    if (cdrom_reopen(bs) < 0)
-        return -ENOTSUP;
-    return 0;
+    cdrom_reopen(bs);
 }
 
-static int cdrom_set_locked(BlockDriverState *bs, int locked)
+static void cdrom_lock_medium(BlockDriverState *bs, bool locked)
 {
     BDRVRawState *s = bs->opaque;
 
     if (s->fd < 0)
-        return -ENOTSUP;
+        return;
     if (ioctl(s->fd, (locked ? CDIOCPREVENT : CDIOCALLOW)) < 0) {
         /*
          * Note: an error can happen if the distribution automatically
@@ -1315,8 +1350,6 @@ static int cdrom_set_locked(BlockDriverState *bs, int locked)
          */
         /* perror("CDROM_LOCKDOOR"); */
     }
-
-    return 0;
 }
 
 static BlockDriver bdrv_host_cdrom = {
@@ -1342,7 +1375,7 @@ static BlockDriver bdrv_host_cdrom = {
     /* removable device support */
     .bdrv_is_inserted   = cdrom_is_inserted,
     .bdrv_eject         = cdrom_eject,
-    .bdrv_set_locked    = cdrom_set_locked,
+    .bdrv_lock_medium   = cdrom_lock_medium,
 };
 #endif /* __FreeBSD__ */
 

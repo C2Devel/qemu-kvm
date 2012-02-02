@@ -17,6 +17,7 @@ obj-y += iov.o
 obj-y += virtio.o virtio-console.o
 obj-y += fw_cfg.o
 obj-y += watchdog.o
+obj-y += usb-ehci.o
 obj-$(CONFIG_ECC) += ecc.o
 obj-$(CONFIG_NAND) += nand.o
 

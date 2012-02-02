@@ -38,6 +38,7 @@ typedef struct img_cmd_t {
 
 /* Default to cache=writeback as data integrity is not important for qemu-tcg. */
 #define BDRV_O_FLAGS BDRV_O_CACHE_WB
+#define BDRV_DEFAULT_CACHE "writeback"
 
 static void error(const char *fmt, ...)
 {
@@ -71,6 +72,8 @@ static void help(void)
            "Command parameters:\n"
            "  'filename' is a disk image filename\n"
            "  'fmt' is the disk image format. It is guessed automatically in most cases\n"
+           "  'cache' is the cache mode used to write the output disk image, the valid\n"
+           "    options are: 'none', 'writeback' (default), 'writethrough' and 'unsafe'\n"
            "  'size' is the disk image size in bytes. Optional suffixes\n"
            "    'k' or 'K' (kilobyte, 1024), 'M' (megabyte, 1024k), 'G' (gigabyte, 1024M)\n"
            "    and T (terabyte, 1024G) are supported. 'b' is ignored.\n"
@@ -84,6 +87,9 @@ static void help(void)
            "       match exactly. The image doesn't need a working backing file before\n"
            "       rebasing in this case (useful for renaming the backing file)\n"
            "  '-h' with or without a command shows this help and lists the supported formats\n"
+           "  '-p' show progress of command (only certain commands)\n"
+           "  '-S' indicates the consecutive number of bytes that must contain only zeros\n"
+           "       for qemu-img to create a sparse image during conversion\n"
            "\n"
            "Parameters to snapshot subcommand:\n"
            "  'snapshot' is the name of the snapshot to create, apply or delete\n"
@@ -185,6 +191,27 @@ static int read_password(char *buf, int buf_size)
     return ret;
 }
 #endif
+
+static int set_cache_flag(const char *mode, int *flags)
+{
+    *flags &= ~BDRV_O_CACHE_MASK;
+
+    if (!strcmp(mode, "none") || !strcmp(mode, "off")) {
+        *flags |= BDRV_O_CACHE_WB;
+        *flags |= BDRV_O_NOCACHE;
+    } else if (!strcmp(mode, "writeback")) {
+        *flags |= BDRV_O_CACHE_WB;
+    } else if (!strcmp(mode, "unsafe")) {
+        *flags |= BDRV_O_CACHE_WB;
+        *flags |= BDRV_O_NO_FLUSH;
+    } else if (!strcmp(mode, "writethrough")) {
+        /* this is the default */
+    } else {
+        return -1;
+    }
+
+    return 0;
+}
 
 static int print_block_option_help(const char *filename, const char *fmt)
 {
@@ -444,13 +471,14 @@ static int img_check(int argc, char **argv)
 
 static int img_commit(int argc, char **argv)
 {
-    int c, ret;
-    const char *filename, *fmt;
+    int c, ret, flags;
+    const char *filename, *fmt, *cache;
     BlockDriverState *bs;
 
     fmt = NULL;
+    cache = BDRV_DEFAULT_CACHE;
     for(;;) {
-        c = getopt(argc, argv, "f:h");
+        c = getopt(argc, argv, "f:ht:");
         if (c == -1) {
             break;
         }
@@ -462,6 +490,9 @@ static int img_commit(int argc, char **argv)
         case 'f':
             fmt = optarg;
             break;
+        case 't':
+            cache = optarg;
+            break;
         }
     }
     if (optind >= argc) {
@@ -469,7 +500,14 @@ static int img_commit(int argc, char **argv)
     }
     filename = argv[optind++];
 
-    bs = bdrv_new_open(filename, fmt, BDRV_O_FLAGS | BDRV_O_RDWR);
+    flags = BDRV_O_RDWR;
+    ret = set_cache_flag(cache, &flags);
+    if (ret < 0) {
+        error("Invalid cache option: %s\n", cache);
+        return -1;
+    }
+
+    bs = bdrv_new_open(filename, fmt, flags);
     if (!bs) {
         return 1;
     }
@@ -559,6 +597,48 @@ static int is_allocated_sectors(const uint8_t *buf, int n, int *pnum)
 }
 
 /*
+ * Like is_allocated_sectors, but if the buffer starts with a used sector,
+ * up to 'min' consecutive sectors containing zeros are ignored. This avoids
+ * breaking up write requests for only small sparse areas.
+ */
+static int is_allocated_sectors_min(const uint8_t *buf, int n, int *pnum,
+    int min)
+{
+    int ret;
+    int num_checked, num_used;
+
+    if (n < min) {
+        min = n;
+    }
+
+    ret = is_allocated_sectors(buf, n, pnum);
+    if (!ret) {
+        return ret;
+    }
+
+    num_used = *pnum;
+    buf += BDRV_SECTOR_SIZE * *pnum;
+    n -= *pnum;
+    num_checked = num_used;
+
+    while (n > 0) {
+        ret = is_allocated_sectors(buf, n, pnum);
+
+        buf += BDRV_SECTOR_SIZE * *pnum;
+        n -= *pnum;
+        num_checked += *pnum;
+        if (ret) {
+            num_used = num_checked;
+        } else if (*pnum >= min) {
+            break;
+        }
+    }
+
+    *pnum = num_used;
+    return 1;
+}
+
+/*
  * Compares two buffers sector by sector. Returns 0 if the first sector of both
  * buffers matches, non-zero otherwise.
  *
@@ -594,7 +674,8 @@ static int compare_sectors(const uint8_t *buf1, const uint8_t *buf2, int n,
 static int img_convert(int argc, char **argv)
 {
     int c, ret = 0, n, n1, bs_n, bs_i, compress, cluster_size, cluster_sectors;
-    const char *fmt, *out_fmt, *out_baseimg, *out_filename;
+    int progress = 0, flags;
+    const char *fmt, *out_fmt, *cache, *out_baseimg, *out_filename;
     BlockDriver *drv, *proto_drv;
     BlockDriverState **bs = NULL, *out_bs = NULL;
     int64_t total_sectors, nb_sectors, sector_num, bs_offset;
@@ -604,13 +685,16 @@ static int img_convert(int argc, char **argv)
     BlockDriverInfo bdi;
     QEMUOptionParameter *param = NULL, *create_options = NULL;
     char *options = NULL;
+    float local_progress;
+    int min_sparse = 8; /* Need at least 4k of zeros for sparse detection */
 
     fmt = NULL;
     out_fmt = "raw";
+    cache = "unsafe";
     out_baseimg = NULL;
     compress = 0;
     for(;;) {
-        c = getopt(argc, argv, "f:O:B:hce6o:");
+        c = getopt(argc, argv, "f:O:B:s:hce6o:pS:t:");
         if (c == -1) {
             break;
         }
@@ -642,6 +726,24 @@ static int img_convert(int argc, char **argv)
         case 'o':
             options = optarg;
             break;
+        case 'S':
+        {
+            int64_t sval;
+            sval = strtosz_suffix(optarg, NULL, STRTOSZ_DEFSUFFIX_B);
+            if (sval < 0) {
+                error("Invalid minimum zero buffer size for sparse output specified");
+                return 1;
+            }
+
+            min_sparse = sval / BDRV_SECTOR_SIZE;
+            break;
+        }
+        case 'p':
+            progress = 1;
+            break;
+        case 't':
+            cache = optarg;
+            break;
         }
     }
 
@@ -663,6 +765,9 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
         
+    qemu_progress_init(progress, 2.0);
+    qemu_progress_print(0, 100);
+
     bs = qemu_mallocz(bs_n * sizeof(BlockDriverState *));
 
     total_sectors = 0;
@@ -745,8 +850,14 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
-    out_bs = bdrv_new_open(out_filename, out_fmt,
-        BDRV_O_FLAGS | BDRV_O_RDWR | BDRV_O_NO_FLUSH);
+    flags = BDRV_O_RDWR;
+    ret = set_cache_flag(cache, &flags);
+    if (ret < 0) {
+        error("Invalid cache option: %s\n", cache);
+        return -1;
+    }
+
+    out_bs = bdrv_new_open(out_filename, out_fmt, flags);
     if (!out_bs) {
         ret = -1;
         goto out;
@@ -755,7 +866,7 @@ static int img_convert(int argc, char **argv)
     bs_i = 0;
     bs_offset = 0;
     bdrv_get_geometry(bs[0], &bs_sectors);
-    buf = qemu_malloc(IO_BUF_SIZE);
+    buf = qemu_blockalign(out_bs, IO_BUF_SIZE);
 
     if (compress) {
         ret = bdrv_get_info(out_bs, &bdi);
@@ -771,6 +882,11 @@ static int img_convert(int argc, char **argv)
         }
         cluster_sectors = cluster_size >> 9;
         sector_num = 0;
+
+        nb_sectors = total_sectors;
+        local_progress = (float)100 /
+            (nb_sectors / MIN(nb_sectors, cluster_sectors));
+
         for(;;) {
             int64_t bs_num;
             int remainder;
@@ -830,6 +946,7 @@ static int img_convert(int argc, char **argv)
                 }
             }
             sector_num += n;
+            qemu_progress_print(local_progress, 100);
         }
         /* signal EOF to align */
         bdrv_write_compressed(out_bs, 0, NULL, 0);
@@ -837,6 +954,10 @@ static int img_convert(int argc, char **argv)
         int has_zero_init = bdrv_has_zero_init(out_bs);
 
         sector_num = 0; // total number of sectors converted so far
+        nb_sectors = total_sectors - sector_num;
+        local_progress = (float)100 /
+            (nb_sectors / MIN(nb_sectors, IO_BUF_SIZE / 512));
+
         for(;;) {
             nb_sectors = total_sectors - sector_num;
             if (nb_sectors <= 0) {
@@ -899,7 +1020,7 @@ static int img_convert(int argc, char **argv)
                    sectors that are entirely 0, since whatever data was
                    already there is garbage, not 0s. */
                 if (!has_zero_init || out_baseimg ||
-                    is_allocated_sectors(buf1, n, &n1)) {
+                    is_allocated_sectors_min(buf1, n, &n1, min_sparse)) {
                     ret = bdrv_write(out_bs, sector_num, buf1, n1);
                     if (ret < 0) {
                         error("error while writing");
@@ -910,12 +1031,14 @@ static int img_convert(int argc, char **argv)
                 n -= n1;
                 buf1 += n1 * 512;
             }
+            qemu_progress_print(local_progress, 100);
         }
     }
 out:
+    qemu_progress_end();
     free_option_parameters(create_options);
     free_option_parameters(param);
-    qemu_free(buf);
+    qemu_vfree(buf);
     if (out_bs) {
         bdrv_delete(out_bs);
     }
@@ -1179,17 +1302,18 @@ static int img_rebase(int argc, char **argv)
     BlockDriverState *bs, *bs_old_backing = NULL, *bs_new_backing = NULL;
     BlockDriver *old_backing_drv, *new_backing_drv;
     char *filename;
-    const char *fmt, *out_basefmt, *out_baseimg;
+    const char *fmt, *cache, *out_basefmt, *out_baseimg;
     int c, flags, ret;
     int unsafe = 0;
+    int progress = 0;
 
     /* Parse commandline parameters */
     fmt = NULL;
+    cache = BDRV_DEFAULT_CACHE;
     out_baseimg = NULL;
     out_basefmt = NULL;
-
     for(;;) {
-        c = getopt(argc, argv, "uhf:F:b:");
+        c = getopt(argc, argv, "uhf:F:b:pt:");
         if (c == -1) {
             break;
         }
@@ -1210,6 +1334,12 @@ static int img_rebase(int argc, char **argv)
         case 'u':
             unsafe = 1;
             break;
+        case 'p':
+            progress = 1;
+            break;
+        case 't':
+            cache = optarg;
+            break;
         }
     }
 
@@ -1218,13 +1348,22 @@ static int img_rebase(int argc, char **argv)
     }
     filename = argv[optind++];
 
+    qemu_progress_init(progress, 2.0);
+    qemu_progress_print(0, 100);
+
+    flags = BDRV_O_RDWR | (unsafe ? BDRV_O_NO_BACKING : 0);
+    ret = set_cache_flag(cache, &flags);
+    if (ret < 0) {
+        error("Invalid cache option: %s\n", cache);
+        return -1;
+    }
+
     /*
      * Open the images.
      *
      * Ignore the old backing file for unsafe rebase in case we want to correct
      * the reference to a renamed or moved backing file.
      */
-    flags = BDRV_O_FLAGS | BDRV_O_RDWR | (unsafe ? BDRV_O_NO_BACKING : 0);
     bs = bdrv_new_open(filename, fmt, flags);
     if (!bs) {
         return 1;
@@ -1293,12 +1432,15 @@ static int img_rebase(int argc, char **argv)
         int n;
         uint8_t * buf_old;
         uint8_t * buf_new;
+        float local_progress;
 
-        buf_old = qemu_malloc(IO_BUF_SIZE);
-        buf_new = qemu_malloc(IO_BUF_SIZE);
+        buf_old = qemu_blockalign(bs, IO_BUF_SIZE);
+        buf_new = qemu_blockalign(bs, IO_BUF_SIZE);
 
         bdrv_get_geometry(bs, &num_sectors);
 
+        local_progress = (float)100 /
+            (num_sectors / MIN(num_sectors, IO_BUF_SIZE / 512));
         for (sector = 0; sector < num_sectors; sector += n) {
 
             /* How many sectors can we handle with the next read? */
@@ -1346,10 +1488,11 @@ static int img_rebase(int argc, char **argv)
 
                 written += pnum;
             }
+            qemu_progress_print(local_progress, 100);
         }
 
-        qemu_free(buf_old);
-        qemu_free(buf_new);
+        qemu_vfree(buf_old);
+        qemu_vfree(buf_new);
     }
 
     /*
@@ -1366,6 +1509,7 @@ static int img_rebase(int argc, char **argv)
             out_baseimg, strerror(-ret));
     }
 
+    qemu_progress_print(100, 0);
     /*
      * TODO At this point it is possible to check if any clusters that are
      * allocated in the COW file are the same in the backing file. If so, they
@@ -1373,6 +1517,7 @@ static int img_rebase(int argc, char **argv)
      * backing file, in case of a crash this would lead to corruption.
      */
 out:
+    qemu_progress_end();
     /* Cleanup */
     if (!unsafe) {
         bdrv_delete(bs_old_backing);

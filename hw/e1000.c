@@ -466,6 +466,7 @@ process_tx_desc(E1000State *s, struct e1000_tx_desc *dp)
             bytes = split_size;
             if (tp->size + bytes > msh)
                 bytes = msh - tp->size;
+            bytes = MIN(sizeof(tp->data) - tp->size, bytes);
             cpu_physical_memory_read(addr, tp->data + tp->size, bytes);
             if ((sz = tp->size + bytes) >= hdr && tp->size < hdr)
                 memmove(tp->header, tp->data, hdr);
@@ -481,6 +482,7 @@ process_tx_desc(E1000State *s, struct e1000_tx_desc *dp)
         // context descriptor TSE is not set, while data descriptor TSE is set
         DBGOUT(TXERR, "TCP segmentaion Error\n");
     } else {
+        split_size = MIN(sizeof(tp->data) - tp->size, split_size);
         cpu_physical_memory_read(addr, tp->data + tp->size, split_size);
         tp->size += split_size;
     }
@@ -619,14 +621,6 @@ e1000_set_link_status(VLANClientState *nc)
         set_ics(s, 0, E1000_ICR_LSC);
 }
 
-static int
-e1000_can_receive(VLANClientState *nc)
-{
-    E1000State *s = DO_UPCAST(NICState, nc, nc)->opaque;
-
-    return (s->mac_reg[RCTL] & E1000_RCTL_EN);
-}
-
 static bool e1000_has_rxbufs(E1000State *s, size_t total_size)
 {
     int bufs;
@@ -643,6 +637,14 @@ static bool e1000_has_rxbufs(E1000State *s, size_t total_size)
         return false;
     }
     return total_size <= bufs * s->rxbuf_size;
+}
+
+static int
+e1000_can_receive(VLANClientState *nc)
+{
+    E1000State *s = DO_UPCAST(NICState, nc, nc)->opaque;
+
+    return (s->mac_reg[RCTL] & E1000_RCTL_EN) && e1000_has_rxbufs(s, 1);
 }
 
 static ssize_t

@@ -2,7 +2,12 @@ config-devices.*
 config-all-devices.*
 config-host.*
 config-target.*
+trace.h
+trace.c
+trace-dtrace.h
+trace-dtrace.dtrace
 i386
+*-timestamp
 *-softmmu
 *-darwin-user
 *-linux-user

@@ -319,6 +319,34 @@ static inline int kvm_reset_mpstate(CPUState *env)
 }
 #endif
 
+#ifdef KVM_CAP_XSAVE
+/*!
+ *  * \brief Read VCPU xsave state
+ *
+ */
+int kvm_get_xsave(CPUState *env, struct kvm_xsave *xsave);
+
+/*!
+ *  * \brief Write VCPU xsave state
+ *
+ */
+int kvm_set_xsave(CPUState *env, struct kvm_xsave *xsave);
+#endif
+
+#ifdef KVM_CAP_XCRS
+/*!
+ *  * \brief Read VCPU XCRs
+ *
+ */
+int kvm_get_xcrs(CPUState *env, struct kvm_xcrs *xcrs);
+
+/*!
+ *  * \brief Write VCPU XCRs
+ *
+ */
+int kvm_set_xcrs(CPUState *env, struct kvm_xcrs *xcrs);
+#endif
+
 /*!
  * \brief Simulate an external vectored interrupt
  *
@@ -865,7 +893,8 @@ int kvm_assign_set_msix_entry(kvm_context_t kvm,
                               struct kvm_assigned_msix_entry *entry);
 #endif
 
-uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg);
+uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function,
+                                 uint32_t index, int reg);
 
 #else                           /* !CONFIG_KVM */
 
@@ -1115,7 +1144,7 @@ static inline void cpu_synchronize_state(CPUState *env)
 }
 
 uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
-                                      int reg);
+                                      uint32_t index, int reg);
 
 
 #endif
@@ -1166,5 +1195,8 @@ int kvm_check_extension(KVMState *s, unsigned int ext);
 int kvm_tpr_enable_vapic(CPUState *env);
 
 #endif
+
+void kvm_pause_all_threads(void);
+void kvm_resume_all_threads(void);
 
 #endif

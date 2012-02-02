@@ -24,10 +24,10 @@
 //#define DEBUG_MIGRATION_EXEC
 
 #ifdef DEBUG_MIGRATION_EXEC
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { printf("migration-exec: " fmt, ## __VA_ARGS__); } while (0)
 #else
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
 
@@ -44,7 +44,7 @@ static int file_write(FdMigrationState *s, const void * buf, size_t size)
 static int exec_close(FdMigrationState *s)
 {
     int ret = 0;
-    dprintf("exec_close\n");
+    DPRINTF("exec_close\n");
     if (s->opaque) {
         ret = qemu_fclose(s->opaque);
         s->opaque = NULL;
@@ -74,13 +74,13 @@ MigrationState *exec_start_outgoing_migration(Monitor *mon,
 
     f = popen(command, "w");
     if (f == NULL) {
-        dprintf("Unable to popen exec target\n");
+        DPRINTF("Unable to popen exec target\n");
         goto err_after_alloc;
     }
 
     s->fd = fileno(f);
     if (s->fd == -1) {
-        dprintf("Unable to retrieve file descriptor for popen'd handle\n");
+        DPRINTF("Unable to retrieve file descriptor for popen'd handle\n");
         goto err_after_open;
     }
 
@@ -129,10 +129,10 @@ int exec_start_incoming_migration(const char *command)
 {
     QEMUFile *f;
 
-    dprintf("Attempting to start an incoming migration\n");
+    DPRINTF("Attempting to start an incoming migration\n");
     f = qemu_popen_cmd(command, "r");
     if(f == NULL) {
-        dprintf("Unable to apply qemu wrapper to popen file\n");
+        DPRINTF("Unable to apply qemu wrapper to popen file\n");
         return -errno;
     }
 

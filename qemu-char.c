@@ -28,7 +28,6 @@
 #include "sysemu.h"
 #include "qemu-timer.h"
 #include "qemu-char.h"
-#include "block.h"
 #include "hw/usb.h"
 #include "hw/baum.h"
 #include "hw/msmouse.h"
@@ -207,6 +206,10 @@ void qemu_chr_add_handlers(CharDriverState *s,
 {
     if (!s) {
         return;
+    }
+    if (!opaque && !handlers) {
+        /* chr driver being released. */
+        ++s->avail_connections;
     }
     if (!handlers) {
         handlers = &null_handlers;
@@ -2662,7 +2665,10 @@ CharDriverState *qemu_chr_open_opts(QemuOpts *opts,
         snprintf(base->label, len, "%s-base", qemu_opts_id(opts));
         chr = qemu_chr_open_mux(base);
         chr->filename = base->filename;
+        chr->avail_connections = MAX_MUX;
         QTAILQ_INSERT_TAIL(&chardevs, chr, next);
+    } else {
+        chr->avail_connections = 1;
     }
     chr->label = qemu_strdup(qemu_opts_id(opts));
     return chr;

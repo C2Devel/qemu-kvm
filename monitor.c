@@ -30,6 +30,7 @@
 #include "hw/pci.h"
 #include "hw/watchdog.h"
 #include "hw/loader.h"
+#include "hw/qxl.h"
 #include "gdbstub.h"
 #include "net.h"
 #include "net/slirp.h"
@@ -39,8 +40,7 @@
 #include "monitor.h"
 #include "readline.h"
 #include "console.h"
-#include "block.h"
-#include "block_int.h"
+#include "blockdev.h"
 #include "audio/audio.h"
 #include "disas.h"
 #include "balloon.h"
@@ -469,6 +469,9 @@ void monitor_protocol_event(MonitorEvent event, QObject *data)
         case QEVENT_RH_SPICE_DISCONNECTED:
             event_name = RFQDN_REDHAT "SPICE_DISCONNECTED";
             break;
+        case QEVENT_BLOCK_JOB_COMPLETED:
+            event_name = "BLOCK_JOB_COMPLETED";
+            break;
         case QEVENT_INCOMING_FINISHED:
             event_name = "INCOMING_FINISHED";
             break;
@@ -598,21 +601,6 @@ static void help_cmd(Monitor *mon, const char *name)
 static void do_help_cmd(Monitor *mon, const QDict *qdict)
 {
     help_cmd(mon, qdict_get_try_str(qdict, "name"));
-}
-
-static void do_commit(Monitor *mon, const QDict *qdict)
-{
-    int all_devices;
-    DriveInfo *dinfo;
-    const char *device = qdict_get_str(qdict, "device");
-
-    all_devices = !strcmp(device, "all");
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (!all_devices)
-            if (strcmp(bdrv_get_device_name(dinfo->bdrv), device))
-                continue;
-        bdrv_commit(dinfo->bdrv);
-    }
 }
 
 static void user_monitor_complete(void *opaque, QObject *ret_data)
@@ -1050,200 +1038,6 @@ static int do_quit(Monitor *mon, const QDict *qdict, QObject **ret_data)
     return 0;
 }
 
-int do_snapshot_blkdev(Monitor *mon, const QDict *qdict, QObject **ret_data)
-{
-    const char *device = qdict_get_str(qdict, "device");
-    const char *filename = qdict_get_try_str(qdict, "snapshot_file");
-    const char *format = qdict_get_try_str(qdict, "format");
-    BlockDriverState *bs;
-    BlockDriver *drv, *old_drv, *proto_drv;
-    int ret = 0;
-    int flags;
-    char old_filename[1024];
-
-    if (!filename) {
-        qerror_report(QERR_MISSING_PARAMETER, "snapshot_file");
-        ret = -1;
-        goto out;
-    }
-
-    bs = bdrv_find(device);
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, device);
-        ret = -1;
-        goto out;
-    }
-
-    pstrcpy(old_filename, sizeof(old_filename), bs->filename);
-
-    old_drv = bs->drv;
-    flags = bs->open_flags;
-
-    if (!format) {
-        format = "qcow2";
-    }
-
-    drv = bdrv_find_format(format);
-    if (!drv) {
-        qerror_report(QERR_INVALID_BLOCK_FORMAT, format);
-        ret = -1;
-        goto out;
-    }
-
-    proto_drv = bdrv_find_protocol(filename);
-    if (!proto_drv) {
-        qerror_report(QERR_INVALID_BLOCK_FORMAT, format);
-        ret = -1;
-        goto out;
-    }
-
-    ret = bdrv_img_create(filename, format, bs->filename,
-                          bs->drv->format_name, NULL, -1, flags);
-    if (ret) {
-        goto out;
-    }
-
-    qemu_aio_flush();
-    bdrv_flush(bs);
-
-    bdrv_close(bs);
-    ret = bdrv_open(bs, filename, flags, drv);
-    /*
-     * If reopening the image file we just created fails, fall back
-     * and try to re-open the original image. If that fails too, we
-     * are in serious trouble.
-     */
-    if (ret != 0) {
-        ret = bdrv_open(bs, old_filename, flags, old_drv);
-        if (ret != 0) {
-            qerror_report(QERR_OPEN_FILE_FAILED, old_filename);
-        } else {
-            qerror_report(QERR_OPEN_FILE_FAILED, filename);
-        }
-    }
-out:
-    if (ret) {
-        ret = -1;
-    }
-
-    return ret;
-}
-
-/*
- * XXX: replace the QERR_UNDEFINED_ERROR errors with real values once the
- * existing QERR_ macro mess is cleaned up.  A good example for better
- * error reports can be found in the qemu-img resize code.
- */
-int do_block_resize(Monitor *mon, const QDict *qdict, QObject **ret_data)
-{
-    const char *device = qdict_get_str(qdict, "device");
-    int64_t size = qdict_get_int(qdict, "size");
-    BlockDriverState *bs;
-
-    bs = bdrv_find(device);
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, device);
-        return -1;
-    }
-
-    if (size < 0) {
-        qerror_report(QERR_UNDEFINED_ERROR);
-        return -1;
-    }
-
-    if (bdrv_truncate(bs, size)) {
-        qerror_report(QERR_UNDEFINED_ERROR);
-        return -1;
-    }
-
-    return 0;
-}
-
-static int eject_device(Monitor *mon, BlockDriverState *bs, int force)
-{
-    if (!force) {
-        if (!bdrv_is_removable(bs)) {
-            qerror_report(QERR_DEVICE_NOT_REMOVABLE,
-                           bdrv_get_device_name(bs));
-            return -1;
-        }
-        if (bdrv_is_locked(bs)) {
-            qerror_report(QERR_DEVICE_LOCKED, bdrv_get_device_name(bs));
-            return -1;
-        }
-    }
-    bdrv_close(bs);
-    return 0;
-}
-
-static int do_eject(Monitor *mon, const QDict *qdict, QObject **ret_data)
-{
-    BlockDriverState *bs;
-    int force = qdict_get_int(qdict, "force");
-    const char *filename = qdict_get_str(qdict, "device");
-
-    bs = bdrv_find(filename);
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, filename);
-        return -1;
-    }
-    return eject_device(mon, bs, force);
-}
-
-static int do_block_set_passwd(Monitor *mon, const QDict *qdict,
-                                QObject **ret_data)
-{
-    BlockDriverState *bs;
-    int err;
-
-    bs = bdrv_find(qdict_get_str(qdict, "device"));
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, qdict_get_str(qdict, "device"));
-        return -1;
-    }
-
-    err = bdrv_set_key(bs, qdict_get_str(qdict, "password"));
-    if (err == -EINVAL) {
-        qerror_report(QERR_DEVICE_NOT_ENCRYPTED, bdrv_get_device_name(bs));
-        return -1;
-    } else if (err < 0) {
-        qerror_report(QERR_INVALID_PASSWORD);
-        return -1;
-    }
-
-    return 0;
-}
-
-static int do_change_block(Monitor *mon, const char *device,
-                           const char *filename, const char *fmt)
-{
-    BlockDriverState *bs;
-    BlockDriver *drv = NULL;
-    int bdrv_flags;
-
-    bs = bdrv_find(device);
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, device);
-        return -1;
-    }
-    if (fmt) {
-        drv = bdrv_find_whitelisted_format(fmt);
-        if (!drv) {
-            qerror_report(QERR_INVALID_BLOCK_FORMAT, fmt);
-            return -1;
-        }
-    }
-    if (eject_device(mon, bs, 0) < 0) {
-        return -1;
-    }
-    bdrv_flags = bdrv_get_type_hint(bs) == BDRV_TYPE_CDROM ? 0 : BDRV_O_RDWR;
-    bdrv_flags |= bdrv_is_snapshot(bs) ? BDRV_O_SNAPSHOT : 0;
-    if (bdrv_open(bs, filename, bdrv_flags, drv)) {
-        return -1;
-    }
-    return monitor_read_bdrv_key_start(mon, bs, NULL, NULL);
-}
-
 static int change_vnc_password(const char *password)
 {
     if (vnc_display_password(NULL, password) < 0) {
@@ -1465,7 +1259,7 @@ static int redhat_set_password(Monitor *mon, const QDict *qdict, QObject **ret_d
     return 0;
 }
 
-static int client_migrate_info(Monitor *mon, const QDict *qdict, QObject **ret_data)
+static int client_migrate_info(Monitor *mon, const QDict *qdict, MonitorCompletion cb, void *opaque)
 {
     const char *protocol = qdict_get_str(qdict, "protocol");
     const char *hostname = qdict_get_str(qdict, "hostname");
@@ -1480,7 +1274,7 @@ static int client_migrate_info(Monitor *mon, const QDict *qdict, QObject **ret_d
             return -1;
         }
 
-        ret = qemu_spice_migrate_info(hostname, port, tls_port, subject);
+        ret = qemu_spice_migrate_info(hostname, port, tls_port, subject, cb, opaque);
         if (ret != 0) {
             qerror_report(QERR_UNDEFINED_ERROR);
             return -1;
@@ -1492,7 +1286,7 @@ static int client_migrate_info(Monitor *mon, const QDict *qdict, QObject **ret_d
     return -1;
 }
 
-static int redhat_spice_migrate_info(Monitor *mon, const QDict *qdict, QObject **ret_data)
+static int redhat_spice_migrate_info(Monitor *mon, const QDict *qdict, MonitorCompletion cb, void *opaque)
 {
     const char *hostname = qdict_get_str(qdict, "hostname");
     const char *subject  = qdict_get_try_str(qdict, "cert-subject");
@@ -1505,7 +1299,7 @@ static int redhat_spice_migrate_info(Monitor *mon, const QDict *qdict, QObject *
         return -1;
     }
 
-    ret = qemu_spice_migrate_info(hostname, port, tls_port, subject);
+    ret = qemu_spice_migrate_info(hostname, port, tls_port, subject, cb, opaque);
     if (ret != 0) {
         qerror_report(QERR_UNDEFINED_ERROR);
         return -1;
@@ -1513,9 +1307,23 @@ static int redhat_spice_migrate_info(Monitor *mon, const QDict *qdict, QObject *
     return 0;
 }
 
-static void do_screen_dump(Monitor *mon, const QDict *qdict)
+static int do_screen_dump(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     vga_hw_screen_dump(qdict_get_str(qdict, "filename"));
+    return 0;
+}
+
+static int rhel6_qxl_do_screen_dump(Monitor *mon, const QDict *qdict, QObject **ret_data)
+{
+    int ret;
+
+    ret = rhel6_qxl_screendump(qdict_get_str(qdict, "id"),
+                               qdict_get_str(qdict, "filename"));
+    if (ret != 0) {
+        qerror_report(QERR_UNDEFINED_ERROR);
+        return -1;
+    }
+    return 0;
 }
 
 static void do_logfile(Monitor *mon, const QDict *qdict)
@@ -1557,7 +1365,7 @@ static void do_singlestep(Monitor *mon, const QDict *qdict)
  */
 static int do_stop(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
-    vm_stop(EXCP_INTERRUPT);
+    vm_stop(RUN_STATE_PAUSED);
     return 0;
 }
 
@@ -1575,10 +1383,15 @@ static int do_cont(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     struct bdrv_iterate_context context = { mon, 0 };
 
-    if (incoming_expected) {
+    if (runstate_check(RUN_STATE_INMIGRATE)) {
         qerror_report(QERR_MIGRATION_EXPECTED);
         return -1;
+    } else if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
+               runstate_check(RUN_STATE_SHUTDOWN)) {
+        qerror_report(QERR_RESET_REQUIRED);
+        return -1;
     }
+
     bdrv_iterate(encrypted_bdrv_it, &context);
     /* only resume the vm if all keys are set and valid */
     if (!context.err) {
@@ -2562,21 +2375,36 @@ static void do_wav_capture(Monitor *mon, const QDict *qdict)
 #endif
 
 #if defined(TARGET_I386)
-static void do_inject_nmi(Monitor *mon, const QDict *qdict)
+static int do_inject_nmi(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     CPUState *env;
-    int cpu_index = qdict_get_int(qdict, "cpu_index");
 
-    for (env = first_cpu; env != NULL; env = env->next_cpu)
-        if (env->cpu_index == cpu_index) {
-            if (kvm_enabled())
-                kvm_inject_interrupt(env, CPU_INTERRUPT_NMI);
-            else
+    for (env = first_cpu; env != NULL; env = env->next_cpu) {
+        if (kvm_enabled()) {
+            kvm_inject_interrupt(env, CPU_INTERRUPT_NMI);
+        } else {
+            if (!env->apic_state) {
                 cpu_interrupt(env, CPU_INTERRUPT_NMI);
-            break;
+            } else {
+                apic_deliver_nmi(env->apic_state);
+            }
         }
+    }
+
+    return 0;
+}
+#else
+static int do_inject_nmi(Monitor *mon, const QDict *qdict, QObject **ret_data)
+{
+    qerror_report(QERR_UNSUPPORTED);
+    return -1;
 }
 #endif
+
+static void do_inject_nmi_hmp(Monitor *mon, const QDict *qdict)
+{
+    do_inject_nmi(mon, qdict, NULL);
+}
 
 static void do_info_incoming_print(Monitor *mon, const QObject *data)
 {
@@ -2589,6 +2417,7 @@ static void do_info_incoming_print(Monitor *mon, const QObject *data)
 static void do_info_status_print(Monitor *mon, const QObject *data)
 {
     QDict *qdict;
+    const char *status;
 
     qdict = qobject_to_qdict(data);
 
@@ -2602,103 +2431,22 @@ static void do_info_status_print(Monitor *mon, const QObject *data)
         monitor_printf(mon, "paused");
     }
 
+    status = qdict_get_str(qdict, "status");
+    if (strcmp(status, "paused") && strcmp(status, "running")) {
+        monitor_printf(mon, " (%s)", status);
+    }
+
     monitor_printf(mon, "\n");
 }
 
 static void do_info_incoming(Monitor *mon, QObject **ret_data)
 {
-    *ret_data = qobject_from_jsonf("{ 'active': %i }", incoming_expected);
+    *ret_data = qobject_from_jsonf("{ 'active': %i }", runstate_check(RUN_STATE_INMIGRATE));
 }
 
 static void do_info_status(Monitor *mon, QObject **ret_data)
 {
-    *ret_data = qobject_from_jsonf("{ 'running': %i, 'singlestep': %i }",
-                                    vm_running, singlestep);
-}
-
-static void print_balloon_stat(const char *key, QObject *obj, void *opaque)
-{
-    Monitor *mon = opaque;
-
-    if (strcmp(key, "actual"))
-        monitor_printf(mon, ",%s=%" PRId64, key,
-                       qint_get_int(qobject_to_qint(obj)));
-}
-
-static void monitor_print_balloon(Monitor *mon, const QObject *data)
-{
-    QDict *qdict;
-
-    qdict = qobject_to_qdict(data);
-    if (!qdict_haskey(qdict, "actual"))
-        return;
-
-    monitor_printf(mon, "balloon: actual=%" PRId64,
-                   qdict_get_int(qdict, "actual") >> 20);
-    qdict_iter(qdict, print_balloon_stat, mon);
-    monitor_printf(mon, "\n");
-}
-
-/**
- * do_info_balloon(): Balloon information
- *
- * Make an asynchronous request for balloon info.  When the request completes
- * a QDict will be returned according to the following specification:
- *
- * - "actual": current balloon value in bytes
- * The following fields may or may not be present:
- * - "mem_swapped_in": Amount of memory swapped in (bytes)
- * - "mem_swapped_out": Amount of memory swapped out (bytes)
- * - "major_page_faults": Number of major faults
- * - "minor_page_faults": Number of minor faults
- * - "free_mem": Total amount of free and unused memory (bytes)
- * - "total_mem": Total amount of available memory (bytes)
- *
- * Example:
- *
- * { "actual": 1073741824, "mem_swapped_in": 0, "mem_swapped_out": 0,
- *   "major_page_faults": 142, "minor_page_faults": 239245,
- *   "free_mem": 1014185984, "total_mem": 1044668416 }
- */
-static int do_info_balloon(Monitor *mon, MonitorCompletion cb, void *opaque)
-{
-    int ret;
-
-    if (kvm_enabled() && !kvm_has_sync_mmu()) {
-        qerror_report(QERR_KVM_MISSING_CAP, "synchronous MMU", "balloon");
-        return -1;
-    }
-
-    ret = qemu_balloon_status(cb, opaque);
-    if (!ret) {
-        qerror_report(QERR_DEVICE_NOT_ACTIVE, "balloon");
-        return -1;
-    }
-
-    return 0;
-}
-
-/**
- * do_balloon(): Request VM to change its memory allocation
- */
-static int do_balloon(Monitor *mon, const QDict *params,
-                       MonitorCompletion cb, void *opaque)
-{
-    int ret;
-
-    if (kvm_enabled() && !kvm_has_sync_mmu()) {
-        qerror_report(QERR_KVM_MISSING_CAP, "synchronous MMU", "balloon");
-        return -1;
-    }
-
-    ret = qemu_balloon(qdict_get_int(params, "value"), cb, opaque);
-    if (ret == 0) {
-        qerror_report(QERR_DEVICE_NOT_ACTIVE, "balloon");
-        return -1;
-    }
-
-    cb(opaque, NULL);
-    return 0;
+    *ret_data = qobject_from_jsonf("{ 'running': %i, 'singlestep': %i, 'status': %s }", runstate_is_running(), singlestep, runstate_as_string());
 }
 
 static qemu_acl *find_acl(Monitor *mon, const char *name)
@@ -2885,10 +2633,10 @@ static int do_closefd(Monitor *mon, const QDict *qdict, QObject **ret_data)
 
 static void do_loadvm(Monitor *mon, const QDict *qdict)
 {
-    int saved_vm_running  = vm_running;
+    int saved_vm_running  = runstate_is_running();
     const char *name = qdict_get_str(qdict, "name");
 
-    vm_stop(0);
+    vm_stop(RUN_STATE_RESTORE_VM);
 
     if (load_vmstate(name) >= 0 && saved_vm_running)
         vm_start();
@@ -3211,6 +2959,14 @@ static const mon_cmd_t info_cmds[] = {
         .params     = "",
         .help       = "show roms",
         .mhandler.info = do_info_roms,
+    },
+    {
+        .name       = "block-jobs",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show block job status",
+        .user_print = monitor_print_block_jobs,
+        .mhandler.info_new = do_info_block_jobs,
     },
     {
         .name       = NULL,

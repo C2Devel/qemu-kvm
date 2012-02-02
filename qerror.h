@@ -137,6 +137,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_NO_BUS_FOR_DEVICE \
     "{ 'class': 'NoBusForDevice', 'data': { 'device': %s, 'bus': %s } }"
 
+#define QERR_NOT_SUPPORTED \
+    "{ 'class': 'NotSupported', 'data': {} }"
+
 #define QERR_OPEN_FILE_FAILED \
     "{ 'class': 'OpenFileFailed', 'data': { 'filename': %s } }"
 
@@ -158,6 +161,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_QMP_BAD_INPUT_OBJECT_MEMBER \
     "{ 'class': 'QMPBadInputObjectMember', 'data': { 'member': %s, 'expected': %s } }"
 
+#define QERR_RESET_REQUIRED \
+    "{ 'class': 'ResetRequired', 'data': {} }"
+
 #define QERR_SET_PASSWD_FAILED \
     "{ 'class': 'SetPasswdFailed', 'data': {} }"
 
@@ -167,10 +173,16 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_UNDEFINED_ERROR \
     "{ 'class': 'UndefinedError', 'data': {} }"
 
+#define QERR_UNSUPPORTED \
+    "{ 'class': 'Unsupported', 'data': {} }"
+
 #define QERR_UNKNOWN_BLOCK_FORMAT_FEATURE \
     "{ 'class': 'UnknownBlockFormatFeature', 'data': { 'device': %s, 'format': %s, 'feature': %s } }"
 
 #define QERR_VNC_SERVER_FAILED \
     "{ 'class': 'VNCServerFailed', 'data': { 'target': %s } }"
+
+#define QERR_STREAMING_ERROR \
+    "{ 'class': 'StreamingError', 'data': { 'msg': %s } }"
 
 #endif /* QERROR_H */

@@ -56,4 +56,6 @@ void ptimer_stop(ptimer_state *s);
 void qemu_put_ptimer(QEMUFile *f, ptimer_state *s);
 void qemu_get_ptimer(QEMUFile *f, ptimer_state *s);
 
+int64_t get_clock(void);
+
 #endif

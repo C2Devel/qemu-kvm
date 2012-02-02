@@ -602,8 +602,8 @@ static void ccid_handle_reset(USBDevice *dev)
     ccid_reset(s);
 }
 
-static int ccid_handle_control(USBDevice *dev, int request, int value,
-                                  int index, int length, uint8_t *data)
+static int ccid_handle_control(USBDevice *dev, USBPacket *p, int request,
+                               int value, int index, int length, uint8_t *data)
 {
     USBCCIDState *s = DO_UPCAST(USBCCIDState, dev, dev);
     int ret = 0;
@@ -1283,6 +1283,7 @@ static int ccid_initfn(USBDevice *dev)
     s->migration_target_ip = 0;
     s->migration_target_port = 0;
     s->dev.speed = USB_SPEED_FULL;
+    s->dev.speedmask = USB_SPEED_MASK_FULL;
     s->notify_slot_change = false;
     s->powered = true;
     s->pending_answers_num = 0;
