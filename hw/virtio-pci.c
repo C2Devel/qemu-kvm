@@ -23,7 +23,6 @@
 #include "qemu-error.h"
 #include "msix.h"
 #include "net.h"
-#include "block_int.h"
 #include "loader.h"
 #include "kvm.h"
 
@@ -765,7 +764,6 @@ static void virtio_init_pci(VirtIOPCIProxy *proxy, VirtIODevice *vdev,
 
     config[0x09] = pif;
     pci_config_set_class(config, class_code);
-    config[PCI_HEADER_TYPE] = PCI_HEADER_TYPE_NORMAL;
 
     config[0x2c] = vendor & 0xFF;
     config[0x2d] = (vendor >> 8) & 0xFF;
@@ -907,12 +905,24 @@ static int virtio_balloon_init_pci(PCIDevice *pci_dev)
     VirtIODevice *vdev;
 
     vdev = virtio_balloon_init(&pci_dev->qdev);
+    if (!vdev) {
+        return -1;
+    }
     virtio_init_pci(proxy, vdev,
                     PCI_VENDOR_ID_REDHAT_QUMRANET,
                     PCI_DEVICE_ID_VIRTIO_BALLOON,
                     PCI_CLASS_MEMORY_RAM,
                     0x00);
     return 0;
+}
+
+static int virtio_balloon_exit_pci(PCIDevice *pci_dev)
+{
+    VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
+
+    virtio_pci_stop_ioeventfd(proxy);
+    virtio_balloon_exit(proxy->vdev);
+    return virtio_exit_pci(pci_dev);
 }
 
 static PCIDeviceInfo virtio_info[] = {
@@ -974,7 +984,7 @@ static PCIDeviceInfo virtio_info[] = {
         .qdev.name = "virtio-balloon-pci",
         .qdev.size = sizeof(VirtIOPCIProxy),
         .init      = virtio_balloon_init_pci,
-        .exit      = virtio_exit_pci,
+        .exit      = virtio_balloon_exit_pci,
         .qdev.props = (Property[]) {
             DEFINE_VIRTIO_COMMON_FEATURES(VirtIOPCIProxy, host_features),
             DEFINE_PROP_END_OF_LIST(),

@@ -849,10 +849,14 @@ extern int phys_ram_fd;
 extern ram_addr_t ram_size;
 extern uint8_t *bios_mem;
 
+/* RAM is pre-allocated and passed into qemu_ram_alloc_from_ptr */
+#define RAM_PREALLOC_MASK   (1 << 0)
+
 typedef struct RAMBlock {
     uint8_t *host;
     ram_addr_t offset;
     ram_addr_t length;
+    uint32_t flags;
     char idstr[256];
     QLIST_ENTRY(RAMBlock) next;
 #if defined(__linux__) && !defined(TARGET_S390X)
@@ -866,6 +870,8 @@ typedef struct RAMList {
     QLIST_HEAD(ram, RAMBlock) blocks;
 } RAMList;
 extern RAMList ram_list;
+
+extern int mem_prealloc;
 
 /* physical memory access */
 

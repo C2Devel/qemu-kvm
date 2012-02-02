@@ -470,7 +470,7 @@ void mcf_fec_init(NICInfo *nd, target_phys_addr_t base, qemu_irq *irq)
                                            mcf_fec_writefn, s);
     cpu_register_physical_memory(base, 0x400, s->mmio_index);
 
-    memcpy(s->conf.macaddr.a, nd->macaddr, sizeof(nd->macaddr));
+    s->conf.macaddr = nd->macaddr;
     s->conf.vlan = nd->vlan;
     s->conf.peer = nd->netdev;
 

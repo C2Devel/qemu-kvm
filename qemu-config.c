@@ -83,6 +83,14 @@ QemuOptsList qemu_drive_opts = {
             .name = "boot",
             .type = QEMU_OPT_BOOL,
             .help = "make this a boot drive",
+        },{
+            .name = "copy-on-read",
+            .type = QEMU_OPT_BOOL,
+            .help = "copy read data from backing file into image file",
+        },{
+            .name = "stream",
+            .type = QEMU_OPT_BOOL,
+            .help = "copy backing file data into image file while guest runs",
         },
         { /* end if list */ }
     },
@@ -342,6 +350,9 @@ QemuOptsList qemu_spice_opts = {
             .type = QEMU_OPT_STRING,
         },{
             .name = "disable-ticketing",
+            .type = QEMU_OPT_BOOL,
+        },{
+            .name = "disable-copy-paste",
             .type = QEMU_OPT_BOOL,
         },{
             .name = "x509-dir",

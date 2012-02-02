@@ -53,6 +53,7 @@ disable bdrv_aio_multiwrite_earlyfail(void *mcb) "mcb %p"
 disable bdrv_aio_multiwrite_latefail(void *mcb, int i) "mcb %p i %d"
 disable bdrv_aio_readv(void *bs, int64_t sector_num, int nb_sectors, void *opaque) "bs %p sector_num %"PRId64" nb_sectors %d opaque %p"
 disable bdrv_aio_writev(void *bs, int64_t sector_num, int nb_sectors, void *opaque) "bs %p sector_num %"PRId64" nb_sectors %d opaque %p"
+disable bdrv_lock_medium(void *bs, int locked) "bs %p locked %d"
 
 # hw/virtio-blk.c
 disable virtio_blk_req_complete(void *req, int status) "req %p status %d"
@@ -82,5 +83,78 @@ disable apic_reset_irq_delivered(int apic_irq_delivered) "old coalescing %d"
 disable apic_get_irq_delivered(int apic_irq_delivered) "returning coalescing %d"
 disable apic_set_irq(int apic_irq_delivered) "coalescing %d"
 
+
+# hw/usb-bus.c
+disable usb_port_claim(int bus, const char *port) "bus %d, port %s"
+disable usb_port_attach(int bus, const char *port) "bus %d, port %s"
+disable usb_port_detach(int bus, const char *port) "bus %d, port %s"
+disable usb_port_release(int bus, const char *port) "bus %d, port %s"
+
+# hw/usb-ehci.c
+disable usb_ehci_reset(void) "=== RESET ==="
+disable usb_ehci_mmio_readl(uint32_t addr, const char *str, uint32_t val) "rd mmio %04x [%s] = %x"
+disable usb_ehci_mmio_writel(uint32_t addr, const char *str, uint32_t val) "wr mmio %04x [%s] = %x"
+disable usb_ehci_mmio_change(uint32_t addr, const char *str, uint32_t new, uint32_t old) "ch mmio %04x [%s] = %x [old: %x]"
+disable usb_ehci_usbsts(const char *sts, int state) "usbsts %s %d"
+disable usb_ehci_state(const char *schedule, const char *state) "%s schedule %s"
+disable usb_ehci_qh_ptrs(void *q, uint32_t addr, uint32_t nxt, uint32_t c_qtd, uint32_t n_qtd, uint32_t a_qtd) "q %p - QH @ %08x: next %08x qtds %08x,%08x,%08x"
+disable usb_ehci_qh_fields(uint32_t addr, int rl, int mplen, int eps, int ep, int devaddr) "QH @ %08x - rl %d, mplen %d, eps %d, ep %d, dev %d"
+disable usb_ehci_qh_bits(uint32_t addr, int c, int h, int dtc, int i) "QH @ %08x - c %d, h %d, dtc %d, i %d"
+disable usb_ehci_qtd_ptrs(void *q, uint32_t addr, uint32_t nxt, uint32_t altnext) "q %p - QTD @ %08x: next %08x altnext %08x"
+disable usb_ehci_qtd_fields(uint32_t addr, int tbytes, int cpage, int cerr, int pid) "QTD @ %08x - tbytes %d, cpage %d, cerr %d, pid %d"
+disable usb_ehci_qtd_bits(uint32_t addr, int ioc, int active, int halt, int babble, int xacterr) "QTD @ %08x - ioc %d, active %d, halt %d, babble %d, xacterr %d"
+disable usb_ehci_itd(uint32_t addr, uint32_t nxt, uint32_t mplen, uint32_t mult, uint32_t ep, uint32_t devaddr) "ITD @ %08x: next %08x - mplen %d, mult %d, ep %d, dev %d"
+disable usb_ehci_port_attach(uint32_t port, const char *device) "attach port #%d - %s"
+disable usb_ehci_port_detach(uint32_t port) "detach port #%d"
+disable usb_ehci_port_reset(uint32_t port, int enable) "reset port #%d - %d"
+disable usb_ehci_data(int rw, uint32_t cpage, uint32_t offset, uint32_t addr, uint32_t len, uint32_t bufpos) "write %d, cpage %d, offset 0x%03x, addr 0x%08x, len %d, bufpos %d"
+disable usb_ehci_queue_action(void *q, const char *action) "q %p: %s"
+
+# hw/usb-desc.c
+disable usb_desc_device(int addr, int len, int ret) "dev %d query device, len %d, ret %d"
+disable usb_desc_device_qualifier(int addr, int len, int ret) "dev %d query device qualifier, len %d, ret %d"
+disable usb_desc_config(int addr, int index, int len, int ret) "dev %d query config %d, len %d, ret %d"
+disable usb_desc_other_speed_config(int addr, int index, int len, int ret) "dev %d query config %d, len %d, ret %d"
+disable usb_desc_string(int addr, int index, int len, int ret) "dev %d query string %d, len %d, ret %d"
+disable usb_set_addr(int addr) "dev %d"
+disable usb_set_config(int addr, int config, int ret) "dev %d, config %d, ret %d"
+disable usb_clear_device_feature(int addr, int feature, int ret) "dev %d, feature %d, ret %d"
+disable usb_set_device_feature(int addr, int feature, int ret) "dev %d, feature %d, ret %d"
+
+# hw/scsi-bus.c
+disable scsi_req_alloc(int target, int lun, int tag) "target %d lun %d tag %d"
+disable scsi_req_data(int target, int lun, int tag, int len) "target %d lun %d tag %d len %d"
+disable scsi_req_dequeue(int target, int lun, int tag) "target %d lun %d tag %d"
+disable scsi_req_continue(int target, int lun, int tag) "target %d lun %d tag %d"
+disable scsi_req_parsed(int target, int lun, int tag, int cmd, int mode, int xfer) "target %d lun %d tag %d command %d dir %d length %d"
+disable scsi_req_parsed_lba(int target, int lun, int tag, int cmd, uint64_t lba) "target %d lun %d tag %d command %d lba %"PRIu64""
+disable scsi_req_parse_bad(int target, int lun, int tag, int cmd) "target %d lun %d tag %d command %d"
+disable scsi_req_build_sense(int target, int lun, int tag, int key, int asc, int ascq) "target %d lun %d tag %d key %#02x asc %#02x ascq %#02x"
+
 # vl.c
 disable vm_state_notify(int running, int reason) "running %d reason %d"
+
+# block/qed-l2-cache.c
+disable qed_alloc_l2_cache_entry(void *l2_cache, void *entry) "l2_cache %p entry %p"
+disable qed_unref_l2_cache_entry(void *entry, int ref) "entry %p ref %d"
+disable qed_find_l2_cache_entry(void *l2_cache, void *entry, uint64_t offset, int ref) "l2_cache %p entry %p offset %"PRIu64" ref %d"
+
+# block/qed-table.c
+disable qed_read_table(void *s, uint64_t offset, void *table) "s %p offset %"PRIu64" table %p"
+disable qed_read_table_cb(void *s, void *table, int ret) "s %p table %p ret %d"
+disable qed_write_table(void *s, uint64_t offset, void *table, unsigned int index, unsigned int n) "s %p offset %"PRIu64" table %p index %u n %u"
+disable qed_write_table_cb(void *s, void *table, int flush, int ret) "s %p table %p flush %d ret %d"
+
+# block/qed.c
+disable qed_need_check_timer_cb(void *s) "s %p"
+disable qed_start_need_check_timer(void *s) "s %p"
+disable qed_cancel_need_check_timer(void *s) "s %p"
+disable qed_aio_complete(void *s, void *acb, int ret) "s %p acb %p ret %d"
+disable qed_aio_setup(void *s, void *acb, int64_t sector_num, int nb_sectors, void *opaque, int flags) "s %p acb %p sector_num %"PRId64" nb_sectors %d opaque %p flags %#x"
+disable qed_aio_next_io(void *s, void *acb, int ret, uint64_t cur_pos) "s %p acb %p ret %d cur_pos %"PRIu64""
+disable qed_aio_read_data(void *s, void *acb, int ret, uint64_t offset, size_t len) "s %p acb %p ret %d offset %"PRIu64" len %zu"
+disable qed_copy_on_read_cb(void *acb, int ret) "acb %p ret %d"
+disable qed_aio_write_data(void *s, void *acb, int ret, uint64_t offset, size_t len) "s %p acb %p ret %d offset %"PRIu64" len %zu"
+disable qed_aio_write_prefill(void *s, void *acb, uint64_t start, size_t len, uint64_t offset) "s %p acb %p start %"PRIu64" len %zu offset %"PRIu64""
+disable qed_aio_write_postfill(void *s, void *acb, uint64_t start, size_t len, uint64_t offset) "s %p acb %p start %"PRIu64" len %zu offset %"PRIu64""
+disable qed_aio_write_main(void *s, void *acb, int ret, uint64_t offset, size_t len) "s %p acb %p ret %d offset %"PRIu64" len %zu"

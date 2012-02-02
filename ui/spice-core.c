@@ -19,6 +19,7 @@
 #include <spice-experimental.h>
 
 #include <netdb.h>
+#include <pthread.h>
 
 #include "qemu-common.h"
 #include "qemu-spice.h"
@@ -43,6 +44,8 @@ static const char *auth = "spice";
 static char *auth_passwd;
 static time_t auth_expires = TIME_MAX;
 int using_spice = 0;
+
+static pthread_t me;
 
 struct SpiceTimer {
     QEMUTimer *timer;
@@ -236,6 +239,20 @@ static void channel_event(int event, SpiceChannelEventInfo *info)
     QDict *server, *client;
     QObject *data;
 
+    /*
+     * Spice server might have called us from spice worker thread
+     * context (happens on display channel disconnects).  Spice should
+     * not do that.  It isn't that easy to fix it in spice and even
+     * when it is fixed we still should cover the already released
+     * spice versions.  So detect that we've been called from another
+     * thread and grab the iothread lock if so before calling qemu
+     * functions.
+     */
+    bool need_lock = !pthread_equal(me, pthread_self());
+    if (need_lock) {
+        qemu_mutex_lock_iothread();
+    }
+
     client = qdict_new();
     add_addr_info(client, &info->paddr, info->plen);
 
@@ -261,6 +278,10 @@ static void channel_event(int event, SpiceChannelEventInfo *info)
                               QOBJECT(client), QOBJECT(server));
     monitor_protocol_event(qevent[event], data);
     qobject_decref(data);
+
+    if (need_lock) {
+        qemu_mutex_unlock_iothread();
+    }
 }
 
 #else /* SPICE_INTERFACE_CORE_MINOR >= 3 */
@@ -291,6 +312,38 @@ static SpiceCoreInterface core_interface = {
     .channel_event      = channel_event,
 #endif
 };
+
+#ifdef SPICE_INTERFACE_MIGRATION
+typedef struct SpiceMigration {
+    SpiceMigrateInstance sin;
+    struct {
+        MonitorCompletion *cb;
+        void *opaque;
+    } connect_complete;
+} SpiceMigration;
+
+static void migrate_connect_complete_cb(SpiceMigrateInstance *sin);
+
+static const SpiceMigrateInterface migrate_interface = {
+    .base.type = SPICE_INTERFACE_MIGRATION,
+    .base.description = "migration",
+    .base.major_version = SPICE_INTERFACE_MIGRATION_MAJOR,
+    .base.minor_version = SPICE_INTERFACE_MIGRATION_MINOR,
+    .migrate_connect_complete = migrate_connect_complete_cb,
+    .migrate_end_complete = NULL,
+};
+
+static SpiceMigration spice_migrate;
+
+static void migrate_connect_complete_cb(SpiceMigrateInstance *sin)
+{
+    SpiceMigration *sm = container_of(sin, SpiceMigration, sin);
+    if (sm->connect_complete.cb) {
+        sm->connect_complete.cb(sm->connect_complete.opaque, NULL);
+    }
+    sm->connect_complete.cb = NULL;
+}
+#endif
 
 /* config string parsing */
 
@@ -448,19 +501,39 @@ void do_info_spice(Monitor *mon, QObject **ret_data)
 static void migration_state_notifier(Notifier *notifier)
 {
     int state = get_migration_state();
-
-    if (state == MIG_STATE_COMPLETED) {
+    if (state == MIG_STATE_ACTIVE) {
+#ifdef SPICE_INTERFACE_MIGRATION
+        spice_server_migrate_start(spice_server);
+#endif
+    } else if (state == MIG_STATE_COMPLETED) {
 #if SPICE_SERVER_VERSION >= 0x000701 /* 0.7.1 */
+#ifndef SPICE_INTERFACE_MIGRATION
         spice_server_migrate_switch(spice_server);
+#else
+        spice_server_migrate_end(spice_server, true);
+    } else if (state == MIG_STATE_CANCELLED || state == MIG_STATE_ERROR) {
+        spice_server_migrate_end(spice_server, false);
+#endif
 #endif
     }
 }
 
 int qemu_spice_migrate_info(const char *hostname, int port, int tls_port,
-                            const char *subject)
+                            const char *subject,
+                            MonitorCompletion *cb, void *opaque)
 {
-    return spice_server_migrate_info(spice_server, hostname,
-                                     port, tls_port, subject);
+    int ret;
+#ifdef SPICE_INTERFACE_MIGRATION
+    spice_migrate.connect_complete.cb = cb;
+    spice_migrate.connect_complete.opaque = opaque;
+    ret = spice_server_migrate_connect(spice_server, hostname,
+                                       port, tls_port, subject);
+#else
+    ret = spice_server_migrate_info(spice_server, hostname,
+                                    port, tls_port, subject);
+    cb(opaque, NULL);
+#endif
+    return ret;
 }
 
 static int add_channel(const char *name, const char *value, void *opaque)
@@ -503,13 +576,24 @@ void qemu_spice_init(void)
     spice_image_compression_t compression;
     spice_wan_compression_t wan_compr;
 
-    if (!opts) {
+    me = pthread_self();
+
+   if (!opts) {
         return;
     }
     port = qemu_opt_get_number(opts, "port", 0);
     tls_port = qemu_opt_get_number(opts, "tls-port", 0);
     if (!port && !tls_port) {
-        return;
+        fprintf(stderr, "neither port nor tls-port specified for spice.");
+        exit(1);
+    }
+    if (port < 0 || port > 65535) {
+        fprintf(stderr, "spice port is out of range");
+        exit(1);
+    }
+    if (tls_port < 0 || tls_port > 65535) {
+        fprintf(stderr, "spice tls-port is out of range");
+        exit(1);
     }
     password = qemu_opt_get(opts, "password");
 
@@ -579,6 +663,12 @@ void qemu_spice_init(void)
         spice_server_set_noauth(spice_server);
     }
 
+#if SPICE_SERVER_VERSION >= 0x000801
+    if (qemu_opt_get_bool(opts, "disable-copy-paste", 0)) {
+        spice_server_set_agent_copypaste(spice_server, false);
+    }
+#endif
+
     compression = SPICE_IMAGE_COMPRESS_AUTO_GLZ;
     str = qemu_opt_get(opts, "image-compression");
     if (str) {
@@ -617,11 +707,19 @@ void qemu_spice_init(void)
 
     qemu_opt_foreach(opts, add_channel, NULL, 0);
 
-    spice_server_init(spice_server, &core_interface);
+    if (0 != spice_server_init(spice_server, &core_interface)) {
+        fprintf(stderr, "failed to initialize spice server");
+        exit(1);
+    };
     using_spice = 1;
 
     migration_state.notify = migration_state_notifier;
     add_migration_state_change_notifier(&migration_state);
+#ifdef SPICE_INTERFACE_MIGRATION
+    spice_migrate.sin.base.sif = &migrate_interface.base;
+    spice_migrate.connect_complete.cb = NULL;
+    qemu_spice_add_interface(&spice_migrate.sin.base);
+#endif
 
     qemu_spice_input_init();
     qemu_spice_audio_init();

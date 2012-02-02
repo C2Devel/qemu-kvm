@@ -11,6 +11,7 @@
  */
 
 #include "qemu-char.h"
+#include "qemu-error.h"
 #include "virtio-serial.h"
 
 typedef struct VirtConsole {
@@ -33,8 +34,24 @@ static void chr_write_unblocked(void *opaque)
 static ssize_t flush_buf(VirtIOSerialPort *port, const uint8_t *buf, size_t len)
 {
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
+    ssize_t ret;
 
-    return qemu_chr_write(vcon->chr, buf, len);
+    ret = qemu_chr_write(vcon->chr, buf, len);
+    if (ret < 0 && ret != -EAGAIN) {
+        /*
+         * Ideally we'd get a better error code than just -1, but
+         * that's what the chardev interface gives us right now.  If
+         * we had a finer-grained message, like -EPIPE, we could close
+         * this connection.  Absent such error messages, the most we
+         * can do is to return 0 here.
+         *
+         * This will prevent stray -1 values to go to
+         * virtio-serial-bus.c and cause abort()s in
+         * do_flush_queued_data().
+         */
+        ret = 0;
+    }
+    return ret;
 }
 
 /* Callback function that's called when the guest opens the port */
@@ -131,8 +148,11 @@ static int virtconsole_exitfn(VirtIOSerialDevice *dev)
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
 
     if (vcon->chr) {
-        port->info->have_data = NULL;
-        qemu_chr_close(vcon->chr);
+	/*
+	 * Instead of closing the chardev, free it so it can be used
+	 * for other purposes.
+	 */
+        qemu_chr_add_handlers(vcon->chr, NULL, NULL);
     }
 
     return 0;
@@ -164,6 +184,14 @@ static int virtserialport_initfn(VirtIOSerialDevice *dev)
     VirtIOSerialPort *port = DO_UPCAST(VirtIOSerialPort, dev, &dev->qdev);
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
 
+    if (port->id == 0) {
+        /*
+         * Disallow a generic port at id 0, that's reserved for
+         * console ports.
+         */
+        error_report("Port number 0 on virtio-serial devices reserved for virtconsole devices for backward compatibility.");
+        return -1;
+    }
     return generic_port_init(vcon, dev);
 }
 

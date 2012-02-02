@@ -291,6 +291,10 @@ void qemu_iovec_memset(QEMUIOVector *qiov, int c, size_t count);
 void qemu_iovec_memset_skip(QEMUIOVector *qiov, int c, size_t count,
                             size_t skip);
 
+void qemu_progress_init(int enabled, float min_skip);
+void qemu_progress_end(void);
+void qemu_progress_print(float delta, int max);
+
 struct Monitor;
 typedef struct Monitor Monitor;
 

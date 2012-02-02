@@ -2564,7 +2564,6 @@ static void *file_ram_alloc(RAMBlock *block,
     int flags;
 #endif
     unsigned long hpagesize;
-    extern int mem_prealloc;
 
     if (!path) {
         return NULL;
@@ -2638,6 +2637,7 @@ static void *file_ram_alloc(ram_addr_t memory, const char *path)
 #endif
 
 extern const char *mem_path;
+extern int disable_KSM;
 
 #if defined(__linux__) && defined(__x86_64__)
 /*
@@ -2688,10 +2688,10 @@ static ram_addr_t last_ram_offset(void)
     return last;
 }
 
-ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
+ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
+                                   ram_addr_t size, void *host)
 {
     RAMBlock *new_block, *block;
-    extern int disable_KSM;
 
     size = TARGET_PAGE_ALIGN(size);
     new_block = qemu_mallocz(sizeof(*new_block));
@@ -2713,24 +2713,28 @@ ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
         }
     }
 
-    new_block->host = file_ram_alloc(new_block, size, mem_path);
-    if (!new_block->host) {
+    if (host) {
+        new_block->host = host;
+        new_block->flags |= RAM_PREALLOC_MASK;
+    } else {
+        new_block->host = file_ram_alloc(new_block, size, mem_path);
+        if (!new_block->host) {
 #if defined(TARGET_S390X) && defined(CONFIG_KVM)
-    /* XXX S390 KVM requires the topmost vma of the RAM to be < 256GB */
-        new_block->host = mmap((void*)0x1000000, size,
-                               PROT_EXEC|PROT_READ|PROT_WRITE,
-                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+            /* XXX S390 KVM requires the topmost vma of the RAM to be < 256GB */
+            new_block->host = mmap((void*)0x1000000, size,
+                                   PROT_EXEC|PROT_READ|PROT_WRITE,
+                                   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 #else
 #ifdef PREFERRED_RAM_ALIGN
-	if (size >= PREFERRED_RAM_ALIGN)
-		new_block->host = qemu_memalign(PREFERRED_RAM_ALIGN, size);
-	else
+	    if (size >= PREFERRED_RAM_ALIGN)
+		    new_block->host = qemu_memalign(PREFERRED_RAM_ALIGN, size);
+	    else
 #endif 
-		new_block->host = qemu_vmalloc(size);
+		    new_block->host = qemu_vmalloc(size);
 #endif
 #ifdef MADV_MERGEABLE
-        if (!disable_KSM)
-            madvise(new_block->host, size, MADV_MERGEABLE);
+            if (!disable_KSM)
+                madvise(new_block->host, size, MADV_MERGEABLE);
 #else
 #if defined(__linux__) 
 #error "MADV_MERGEABLE missing"
@@ -2742,12 +2746,14 @@ ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
 #endif
 #endif
 #ifdef MADV_DONTFORK
-        madvise(new_block->host, size, MADV_DONTFORK);
+            madvise(new_block->host, size, MADV_DONTFORK);
 #endif
 #ifdef MADV_HUGEPAGE
-        madvise(new_block->host, size, MADV_HUGEPAGE);
+            madvise(new_block->host, size, MADV_HUGEPAGE);
 #endif
+        }
     }
+
     new_block->offset = find_ram_offset(size);
     new_block->length = size;
 
@@ -2766,6 +2772,11 @@ ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
     return new_block->offset;
 }
 
+ram_addr_t qemu_ram_alloc(DeviceState *dev, const char *name, ram_addr_t size)
+{
+    return qemu_ram_alloc_from_ptr(dev, name, size, NULL);
+}
+
 void qemu_ram_free(ram_addr_t addr)
 {
     RAMBlock *block;
@@ -2773,7 +2784,9 @@ void qemu_ram_free(ram_addr_t addr)
     QLIST_FOREACH(block, &ram_list.blocks, next) {
         if (addr == block->offset) {
             QLIST_REMOVE(block, next);
-            if (mem_path) {
+            if (block->flags & RAM_PREALLOC_MASK) {
+                ;
+            } else if (mem_path) {
 #if defined (__linux__) && !defined(TARGET_S390X)
                 if (block->fd) {
                     munmap(block->host, block->length);
@@ -2781,6 +2794,8 @@ void qemu_ram_free(ram_addr_t addr)
                 } else {
                     qemu_vfree(block->host);
                 }
+#else
+                abort();
 #endif
             } else {
 #if defined(TARGET_S390X) && defined(CONFIG_KVM)
@@ -2795,6 +2810,69 @@ void qemu_ram_free(ram_addr_t addr)
     }
 
 }
+
+#ifndef _WIN32
+void qemu_ram_remap(ram_addr_t addr, ram_addr_t length)
+{
+    RAMBlock *block;
+    ram_addr_t offset;
+    int flags;
+    void *area, *vaddr;
+
+    QLIST_FOREACH(block, &ram_list.blocks, next) {
+        offset = addr - block->offset;
+        if (offset < block->length) {
+            vaddr = block->host + offset;
+            if (block->flags & RAM_PREALLOC_MASK) {
+                ;
+            } else {
+                flags = MAP_FIXED;
+                munmap(vaddr, length);
+                if (mem_path) {
+#if defined(__linux__) && !defined(TARGET_S390X)
+                    if (block->fd) {
+#ifdef MAP_POPULATE
+                        flags |= mem_prealloc ? MAP_POPULATE | MAP_SHARED :
+                            MAP_PRIVATE;
+#else
+                        flags |= MAP_PRIVATE;
+#endif
+                        area = mmap(vaddr, length, PROT_READ | PROT_WRITE,
+                                    flags, block->fd, offset);
+                    } else {
+                        flags |= MAP_PRIVATE | MAP_ANONYMOUS;
+                        area = mmap(vaddr, length, PROT_READ | PROT_WRITE,
+                                    flags, -1, 0);
+                    }
+#else
+                    abort();
+#endif
+                } else {
+#if defined(TARGET_S390X) && defined(CONFIG_KVM)
+                    flags |= MAP_SHARED | MAP_ANONYMOUS;
+                    area = mmap(vaddr, length, PROT_EXEC|PROT_READ|PROT_WRITE,
+                                flags, -1, 0);
+#else
+                    flags |= MAP_PRIVATE | MAP_ANONYMOUS;
+                    area = mmap(vaddr, length, PROT_READ | PROT_WRITE,
+                                flags, -1, 0);
+#endif
+                }
+                if (area != vaddr) {
+                    fprintf(stderr, "Could not remap addr: %lx@%lx\n",
+                            length, addr);
+                    exit(1);
+                }
+#ifdef MADV_MERGEABLE
+                if (!disable_KSM)
+                    madvise(vaddr, length, MADV_MERGEABLE);
+#endif
+            }
+            return;
+        }
+    }
+}
+#endif /* !_WIN32 */
 
 /* Return a host pointer to ram allocated with qemu_ram_alloc.
    With the exception of the softmmu code in this file, this should

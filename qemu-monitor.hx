@@ -99,6 +99,163 @@ Commit changes to the disk images (if -snapshot is used) or backing files.
 ETEXI
 
     {
+        .name       = "block_stream",
+        .args_type  = "device:B",
+        .params     = "device",
+        .help       = "Copy data from a backing file into a block device",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_stream,
+    },
+
+STEXI
+@item block_stream
+@findex block_stream
+Copy data from a backing file into a block device.
+ETEXI
+SQMP
+
+Copy data from a backing file into a block device.
+
+The block streaming operation is performed in the background until the entire
+backing file has been copied.  This command returns immediately once streaming
+has started.  The status of ongoing block streaming operations can be checked
+with query-block-jobs.  The operation can be stopped before it has completed
+using the block_job_cancel command.
+
+If a base file is specified then sectors are not copied from that base file and
+its backing chain.  When streaming completes the image file will have the base
+file as its backing file.  This can be used to stream a subset of the backing
+file chain instead of flattening the entire image.
+
+On successful completion the image file is updated to drop the backing file.
+
+Arguments:
+
+- device: device name (json-string)
+- base:   common backing file (json-string, optional)
+
+Errors:
+
+DeviceInUse:    streaming is already active on this device
+DeviceNotFound: device name is invalid
+NotSupported:   image streaming is not supported by this device
+
+Events:
+
+On completion the BLOCK_JOB_COMPLETED event is raised with the following
+fields:
+
+- type:     job type ("stream" for image streaming, json-string)
+- device:   device name (json-string)
+- end:      maximum progress value (json-int)
+- position: current progress value (json-int)
+- speed:    rate limit, bytes per second (json-int)
+- error:    error message (json-string, only on error)
+
+The completion event is raised both on success and on failure.  On
+success position is equal to end.  On failure position and end can be
+used to indicate at which point the operation failed.
+
+On failure the error field contains a human-readable error message.  There are
+no semantics other than that streaming has failed and clients should not try
+to interpret the error string.
+
+Examples:
+
+-> { "execute": "block_stream", "arguments": { "device": "virtio0" } }
+<- { "return":  {} }
+
+EQMP
+
+    {
+        .name       = "block_job_cancel",
+        .args_type  = "device:B",
+        .params     = "device",
+        .help       = "Stop an active block streaming operation",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_async = do_block_job_cancel,
+        .async      = 1,
+    },
+
+STEXI
+@item block_job_cancel
+@findex block_job_cancel
+Stop an active block streaming operation.
+ETEXI
+SQMP
+
+block_job_cancel
+----------------
+
+Stop an active block streaming operation.
+
+This command returns once the active block streaming operation has been
+stopped.  It is an error to call this command if no operation is in progress.
+
+The image file retains its backing file unless the streaming operation happens
+to complete just as it is being cancelled.
+
+A new block streaming operation can be started at a later time to finish
+copying all data from the backing file.
+
+Arguments:
+
+- device: device name (json-string)
+
+Errors:
+
+DeviceNotActive: streaming is not active on this device
+DeviceInUse:     cancellation already in progress
+
+Examples:
+
+-> { "execute": "block_job_cancel", "arguments": { "device": "virtio0" } }
+<- { "return":  {} }
+
+EQMP
+
+    {
+        .name       = "block_job_set_speed",
+        .args_type  = "device:B,value:o",
+        .params     = "device value",
+        .help       = "Set the maximum speed for a background block operation",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_job_set_speed,
+    },
+
+STEXI
+@item block_job_set_speed @var{device} @var{value}
+@findex block_job_set_speed
+Set the maximum speed for a background block operation.
+ETEXI
+SQMP
+block_job_set_speed
+-------------------
+
+Set maximum speed for a background block operation.
+
+This is a per-block device command that can only be issued
+when there is an active block job.
+
+Throttling can be disabled by setting the speed to 0.
+
+Arguments:
+
+- device: device name (json-string)
+- value:  maximum speed, in bytes per second (json-int)
+
+Errors:
+DeviceNotActive: streaming is not active on this device
+NotSupported:    job type does not support speed setting
+
+Example:
+
+-> { "execute": "block_job_set_speed",
+    "arguments": { "device": "virtio0", "value": 1024 } }
+
+EQMP
+
+    {
         .name       = "q|quit",
         .args_type  = "",
         .params     = "",
@@ -281,13 +438,29 @@ EQMP
         .args_type  = "filename:F",
         .params     = "filename",
         .help       = "save screen into PPM image 'filename'",
-        .mhandler.cmd = do_screen_dump,
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_screen_dump,
     },
 
 STEXI
 @item screendump @var{filename}
 @findex screendump
 Save screen into PPM image @var{filename}.
+ETEXI
+
+    {
+        .name       = RFQDN_REDHAT "qxl_screendump",
+        .args_type  = "id:s,filename:F",
+        .params     = "id filename",
+        .help       = "save screen from qxl device 'id' into PPM image 'filename'",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = rhel6_qxl_do_screen_dump,
+    },
+
+STEXI
+@item __com.redhat_screendump @var{id} @var{filename}
+@findex __com.redhat_screendump
+Save screen from qxl device @var{id} into PPM image @var{filename}.
 ETEXI
 
     {
@@ -997,10 +1170,10 @@ ETEXI
 #if defined(TARGET_I386)
     {
         .name       = "nmi",
-        .args_type  = "cpu_index:i",
-        .params     = "cpu",
-        .help       = "inject an NMI on the given CPU",
-        .mhandler.cmd = do_inject_nmi,
+        .args_type  = "",
+        .params     = "",
+        .help       = "inject an NMI on all guest's CPUs",
+        .mhandler.cmd = do_inject_nmi_hmp,
     },
 #endif
 STEXI
@@ -1008,6 +1181,33 @@ STEXI
 @findex nmi
 Inject an NMI on the given CPU (x86 only).
 ETEXI
+
+    {
+        .name       = "inject-nmi",
+        .args_type  = "",
+        .params     = "",
+        .help       = "",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_inject_nmi,
+    },
+
+SQMP
+inject-nmi
+----------
+
+Inject an NMI on guest's CPUs.
+
+Arguments: None.
+
+Example:
+
+-> { "execute": "inject-nmi" }
+<- { "return": {} }
+
+Note: inject-nmi is only supported for x86 guest currently, it will
+      returns "Unsupported" error for non-x86 guest.
+
+EQMP
 
     {
         .name       = "migrate",
@@ -1132,7 +1332,8 @@ EQMP
         .params     = "protocol hostname port tls-port cert-subject",
         .help       = "send migration info to spice/vnc client",
         .user_print = monitor_user_noop,
-        .mhandler.cmd_new = client_migrate_info,
+        .mhandler.cmd_async = client_migrate_info,
+        .async      = 1,
     },
 
 SQMP
@@ -1184,25 +1385,6 @@ Example:
 EQMP
 
     {
-        .name       = "snapshot_blkdev",
-        .args_type  = "device:s,snapshot_file:s?,format:s?",
-        .params     = "device [new-image-file] [format]",
-        .help       = "initiates a live snapshot\n\t\t\t"
-                      "of device. If a new image file is specified, the\n\t\t\t"
-                      "new image file will become the new root image.\n\t\t\t"
-                      "If format is specified, the snapshot file will\n\t\t\t"
-                      "be created in that format. Otherwise the\n\t\t\t"
-                      "snapshot will be internal! (currently unsupported)",
-        .mhandler.cmd_new = do_snapshot_blkdev,
-    },
-
-STEXI
-@item snapshot_blkdev
-@findex snapshot_blkdev
-Snapshot device, using snapshot file as target if provided
-ETEXI
-
-    {
         .name       = "block_resize",
         .args_type  = "device:B,size:o",
         .params     = "device size",
@@ -1246,7 +1428,8 @@ EQMP
                       "[file=file][,if=type][,bus=n]\n"
                       "[,unit=m][,media=d][index=i]\n"
                       "[,cyls=c,heads=h,secs=s[,trans=t]]\n"
-                      "[snapshot=on|off][,cache=on|off]",
+                      "[snapshot=on|off][,cache=on|off]\n"
+                      "[,copy-on-read=on|off][,stream=on|off]",
         .help       = "add drive to PCI storage controller",
         .mhandler.cmd = drive_hot_add,
     },
@@ -1762,7 +1945,8 @@ EQMP
         .params     = "hostname port tls-port cert-subject",
         .help       = "send migration info to spice client",
 	.user_print = monitor_user_noop,
-        .mhandler.cmd_new = redhat_spice_migrate_info,
+        .mhandler.cmd_async = redhat_spice_migrate_info,
+        .async      = 1,
     },
 
 
@@ -2042,9 +2226,12 @@ Each json-object contain the following:
 
 - "device": device name (json-string)
 - "type": device type (json-string)
-         - Possible values: "hd", "cdrom", "floppy", "unknown"
+         - deprecated, retained for backward compatibility
+         - Possible values: "unknown"
 - "removable": true if the device is removable, false otherwise (json-bool)
 - "locked": true if the device is locked, false otherwise (json-bool)
+- "tray-open": only present if removable, true if the device has a tray,
+               and it is open (json-bool)
 - "inserted": only present if the device is inserted, it is a json-object
    containing the following:
          - "file": device file name (json-string)
@@ -2073,25 +2260,25 @@ Example:
                "encrypted":false,
                "file":"disks/test.img"
             },
-            "type":"hd"
+            "type":"unknown"
          },
          {
             "device":"ide1-cd0",
             "locked":false,
             "removable":true,
-            "type":"cdrom"
+            "type":"unknown"
          },
          {
             "device":"floppy0",
             "locked":false,
             "removable":true,
-            "type": "floppy"
+            "type":"unknown"
          },
          {
             "device":"sd0",
             "locked":false,
             "removable":true,
-            "type":"floppy"
+            "type":"unknown"
          }
       ]
    }
@@ -2119,6 +2306,10 @@ Each json-object contain the following:
     - "wr_bytes": bytes written (json-int)
     - "rd_operations": read operations (json-int)
     - "wr_operations": write operations (json-int)
+    - "flush_operations": cache flush operations (json-int)
+    - "wr_total_time_ns": total time spend on writes in nano-seconds (json-int)
+    - "rd_total_time_ns": total time spend on reads in nano-seconds (json-int)
+    - "flush_total_time_ns": total time spend on cache flushes in nano-seconds (json-int)
     - "wr_highest_offset": Highest offset of a sector written since the
                            BlockDriverState has been opened (json-int)
 - "parent": Contains recursively the statistics of the underlying
@@ -2140,6 +2331,10 @@ Example:
                   "wr_operations":751,
                   "rd_bytes":122567168,
                   "rd_operations":36772
+                  "wr_total_times_ns":313253456
+                  "rd_total_times_ns":3465673657
+                  "flush_total_times_ns":49653
+                  "flush_operations":61,
                }
             },
             "stats":{
@@ -2148,6 +2343,10 @@ Example:
                "wr_operations":692,
                "rd_bytes":122739200,
                "rd_operations":36604
+               "flush_operations":51,
+               "wr_total_times_ns":313253456
+               "rd_total_times_ns":3465673657
+               "flush_total_times_ns":49653
             }
          },
          {
@@ -2158,6 +2357,10 @@ Example:
                "wr_operations":0,
                "rd_bytes":0,
                "rd_operations":0
+               "flush_operations":0,
+               "wr_total_times_ns":0
+               "rd_total_times_ns":0
+               "flush_total_times_ns":0
             }
          },
          {
@@ -2168,6 +2371,10 @@ Example:
                "wr_operations":0,
                "rd_bytes":0,
                "rd_operations":0
+               "flush_operations":0,
+               "wr_total_times_ns":0
+               "rd_total_times_ns":0
+               "flush_total_times_ns":0
             }
          },
          {
@@ -2178,6 +2385,10 @@ Example:
                "wr_operations":0,
                "rd_bytes":0,
                "rd_operations":0
+               "flush_operations":0,
+               "wr_total_times_ns":0
+               "rd_total_times_ns":0
+               "flush_total_times_ns":0
             }
          }
       ]
@@ -2305,11 +2516,28 @@ Return a json-object with the following information:
 - "running": true if the VM is running, or false if it is paused (json-bool)
 - "singlestep": true if the VM is in single step mode,
                 false otherwise (json-bool)
+- "status": one of the following values (json-string)
+    "debug" - QEMU is running on a debugger
+    "inmigrate" - guest is paused waiting for an incoming migration
+    "internal-error" - An internal error that prevents further guest
+    execution has occurred
+    "io-error" - the last IOP has failed and the device is configured
+    to pause on I/O errors
+    "paused" - guest has been paused via the 'stop' command
+    "postmigrate" - guest is paused following a successful 'migrate'
+    "prelaunch" - QEMU was started with -S and guest has not started
+    "finish-migrate" - guest is paused to finish the migration process
+    "restore-vm" - guest is paused to restore VM state
+    "running" - guest is actively running
+    "save-vm" - guest is paused to save the VM state
+    "shutdown" - guest is shut down (and -no-shutdown is in use)
+    "watchdog" - the watchdog action is configured to pause and
+     has been triggered
 
 Example:
 
 -> { "execute": "query-status" }
-<- { "return": { "running": true, "singlestep": false } }
+<- { "return": { "running": true, "singlestep": false, "status": "running" } }
 
 EQMP
 
@@ -2667,8 +2895,42 @@ show device tree
 show qdev device model list
 @item info roms
 show roms
+@item info block-jobs
+show progress of background block device operations
 @end table
 ETEXI
+
+SQMP
+query-block-jobs
+----------------
+
+Show progress of ongoing block device operations.
+
+Return a json-array of all block device operations.  If no operation is
+active then return an empty array.  Each operation is a json-object with the
+following data:
+
+- type:     job type ("stream" for image streaming, json-string)
+- device:   device name (json-string)
+- end:      maximum progress value (json-int)
+- position: current progress value (json-int)
+- speed:    rate limit, bytes per second (json-int)
+
+Progress can be observed as position increases and it reaches end when
+the operation completes.  Position and end have undefined units but can be
+used to calculate a percentage indicating the progress that has been made.
+
+Example:
+
+-> { "execute": "query-block-jobs" }
+<- { "return":[
+      { "type": "stream", "device": "virtio0",
+        "end": 10737418240, "position": 709632,
+        "speed": 0 }
+   ]
+ }
+
+EQMP
 
 HXCOMM DO NOT add new commands after 'info', move your addition before it!
 

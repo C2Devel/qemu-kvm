@@ -38,6 +38,13 @@ by the used format or see the format descriptions below for details.
 indicates that target image must be compressed (qcow format only)
 @item -h
 with or without a command shows help and lists the supported formats
+@item -p
+display progress bar (convert and rebase commands only)
+@item -S @var{size}
+indicates the consecutive number of bytes that must contain only zeros
+for qemu-img to create a sparse image during conversion. This value is rounded
+down to the nearest 512 bytes. You may use the common size suffixes like
+@code{k} for kilobytes.
 @end table
 
 Parameters to snapshot subcommand:
@@ -77,7 +84,7 @@ it doesn't need to be specified separately in this case.
 
 Commit the changes recorded in @var{filename} in its base image.
 
-@item convert [-c] [-f @var{fmt}] [-O @var{output_fmt}] [-o @var{options}] @var{filename} [@var{filename2} [...]] @var{output_filename}
+@item convert [-c] [-p] [-f @var{fmt}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
 
 Convert the disk image @var{filename} to disk image @var{output_filename}
 using format @var{output_fmt}. It can be optionally compressed (@code{-c}

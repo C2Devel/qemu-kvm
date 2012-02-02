@@ -55,7 +55,7 @@ static const char *ext_feature_name[] = {
     NULL, "cx16", "xtpr", NULL,
     NULL, NULL, "dca", "sse4.1|sse4_1",
     "sse4.2|sse4_2", "x2apic", NULL, "popcnt",
-    NULL, "aes", NULL, NULL,
+    NULL, "aes", "xsave", "osxsave",
     NULL, NULL, NULL, "hypervisor",
 };
 static const char *ext2_feature_name[] = {
@@ -141,24 +141,26 @@ static int altcmp(const char *s, const char *e, const char *altstr)
 }
 
 /* search featureset for flag *[s..e), if found set corresponding bit in
- * *pval and return success, otherwise return zero
+ * *pval and return success, otherwise return false 
  */
-static int lookup_feature(uint32_t *pval, const char *s, const char *e,
+static bool lookup_feature(uint32_t *pval, const char *s, const char *e,
     const char **featureset)
 {
     uint32_t mask;
     const char **ppc;
+    bool found = false;
 
-    for (mask = 1, ppc = featureset; mask; mask <<= 1, ++ppc)
+    for (mask = 1, ppc = featureset; mask; mask <<= 1, ++ppc) {
         if (*ppc && !altcmp(s, e, *ppc)) {
             *pval |= mask;
-            break;
+            found = true;
         }
-    return (mask ? 1 : 0);
+    }
+    return found;
 }
 
 static const char *kvm_feature_name[] = {
-    "kvmclock", "kvm_nopiodelay", "kvm_mmu", NULL, NULL, NULL, NULL, NULL,
+    "kvmclock", "kvm_nopiodelay", "kvm_mmu", "kvmclock", NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
@@ -498,7 +500,7 @@ static void summary_cpuid_features(CPUX86State *env, x86_def_t *hd)
         for (p = fmap; p->pfeat; ++p) {
             if (p->mask) {
                 *p->pfeat |= p->mask &
-                    kvm_arch_get_supported_cpuid(env, p->cmd, p->reg);
+                    kvm_arch_get_supported_cpuid(env, p->cmd, 0, p->reg);
             }
         }
     }
@@ -2139,6 +2141,19 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *ecx = 0;
         *edx = 0;
         break;
+   case 7:
+       if (kvm_enabled()) {
+           *eax = kvm_arch_get_supported_cpuid(env, 0x7, 0, R_EAX);
+           *ebx = kvm_arch_get_supported_cpuid(env, 0x7, 0, R_EBX);
+           *ecx = kvm_arch_get_supported_cpuid(env, 0x7, 0, R_ECX);
+           *edx = kvm_arch_get_supported_cpuid(env, 0x7, 0, R_EDX);
+       } else {
+           *eax = 0;
+           *ebx = 0;
+           *ecx = 0;
+           *edx = 0;
+       }
+       break;
     case 9:
         /* Direct Cache Access Information Leaf */
         *eax = 0; /* Bits 0-31 in DCA_CAP MSR */
@@ -2152,6 +2167,27 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *ebx = 0;
         *ecx = 0;
         *edx = 0;
+        break;
+    case 0xD:
+        /* Processor Extended State */
+        if (!(env->cpuid_ext_features & CPUID_EXT_XSAVE)) {
+            *eax = 0;
+            *ebx = 0;
+            *ecx = 0;
+            *edx = 0;
+            break;
+        }
+        if (kvm_enabled()) {
+            *eax = kvm_arch_get_supported_cpuid(env, 0xd, count, R_EAX);
+            *ebx = kvm_arch_get_supported_cpuid(env, 0xd, count, R_EBX);
+            *ecx = kvm_arch_get_supported_cpuid(env, 0xd, count, R_ECX);
+            *edx = kvm_arch_get_supported_cpuid(env, 0xd, count, R_EDX);
+        } else {
+            *eax = 0;
+            *ebx = 0;
+            *ecx = 0;
+            *edx = 0;
+        }
         break;
     case 0x80000000:
         *eax = env->cpuid_xlevel;
@@ -2237,6 +2273,12 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             /* 64 bit processor */
 /* XXX: The physical address space is limited to 42 bits in exec.c. */
             *eax = 0x00003028;	/* 48 bits virtual, 40 bits physical */
+            if (kvm_enabled()) {
+                uint32_t _eax;
+                host_cpuid(0x80000000, 0, &_eax, NULL, NULL, NULL);
+                if (_eax >= 0x80000008)
+                    host_cpuid(0x80000008, 0, eax, NULL, NULL, NULL);
+            }
         } else {
             if (env->cpuid_features & CPUID_PSE36)
                 *eax = 0x00000024; /* 36 bits physical */
@@ -2304,7 +2346,6 @@ CPUX86State *cpu_x86_init(const char *cpu_model)
     env = qemu_mallocz(sizeof(CPUX86State));
     cpu_exec_init(env);
     env->cpu_model_str = cpu_model;
-    fprintf(stderr, "Using CPU model \"%s\"\n", cpu_model);
 
     /* init various static tables */
     if (!inited) {

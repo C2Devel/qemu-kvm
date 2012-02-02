@@ -47,6 +47,7 @@
 #include "device-assignment.h"
 #include "qemu-kvm.h"
 #include "ui/qemu-spice.h"
+#include "kvmclock.h"
 
 /* output Bochs bios info messages */
 //#define DEBUG_BIOS
@@ -301,6 +302,7 @@ static void cmos_init(ram_addr_t ram_size, ram_addr_t above_4g_mem_size,
         rtc_set_memory(s, 0x5b, (unsigned int)above_4g_mem_size >> 16);
         rtc_set_memory(s, 0x5c, (unsigned int)above_4g_mem_size >> 24);
         rtc_set_memory(s, 0x5d, (uint64_t)above_4g_mem_size >> 32);
+        rtc_set_memory(s, 0x5e, (uint64_t)above_4g_mem_size >> 40);
     }
 
     if (ram_size > (16 * 1024 * 1024))
@@ -1098,6 +1100,8 @@ static void pc_init1(ram_addr_t ram_size,
 #endif
     vmport_init();
 
+    kvmclock_create();
+
     /* allocate RAM */
     if (fake_machine) {
         /* If user boots with -m 1000 We don't actually want to
@@ -1237,6 +1241,15 @@ static void pc_init1(ram_addr_t ram_size,
         } else {
             isa_vga_init();
         }
+    }
+
+    /*
+     * sga does not suppress normal vga output. So a machine can have both a
+     * vga card and sga manually enabled. Output will be seen on both.
+     * For nographic case, sga is enabled at all times
+     */
+    if (display_type == DT_NOGRAPHIC) {
+        isa_create_simple("sga");
     }
 
     rtc_state = rtc_init(2000);
@@ -1549,6 +1562,65 @@ static void rhel_common_init(const char *type1_version,
                      strlen(buf) + 1, buf);
 }
 
+#define PC_RHEL6_1_COMPAT \
+        {\
+            .driver   = "usb-tablet",\
+            .property = "migrate",\
+            .value    = stringify(0),\
+        },{\
+            .driver   = "usb-mouse",\
+            .property = "migrate",\
+            .value    = stringify(0),\
+        },{\
+            .driver   = "usb-kbd",\
+            .property = "migrate",\
+            .value    = stringify(0),\
+        },{\
+            .driver   = "virtio-blk-pci",\
+            .property = "event_idx",\
+            .value    = "off",\
+        },{\
+            .driver   = "virtio-serial-pci",\
+            .property = "event_idx",\
+            .value    = "off",\
+        },{\
+            .driver   = "virtio-net-pci",\
+            .property = "event_idx",\
+            .value    = "off",\
+        },{\
+            .driver   = "virtio-balloon",\
+            .property = "event_idx",\
+            .value    = "off",\
+        }
+
+#define PC_RHEL6_0_COMPAT \
+        {\
+            .driver   = "virtio-serial-pci",\
+            .property = "flow_control",\
+            .value    = stringify(0),\
+        }, PC_RHEL6_1_COMPAT
+
+static void pc_init_rhel620(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 6.2.0 PC", 0);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel620 = {
+    .name = "rhel6.2.0",
+    .alias = "pc",
+    .desc = "RHEL 6.2.0 PC",
+    .init = pc_init_rhel620,
+    .max_cpus = 255,
+    .is_default = 1,
+};
+
 static void pc_init_rhel610(ram_addr_t ram_size,
                             const char *boot_device,
                             const char *kernel_filename,
@@ -1563,11 +1635,13 @@ static void pc_init_rhel610(ram_addr_t ram_size,
 
 static QEMUMachine pc_machine_rhel610 = {
     .name = "rhel6.1.0",
-    .alias = "pc",
     .desc = "RHEL 6.1.0 PC",
     .init = pc_init_rhel610,
     .max_cpus = 255,
-    .is_default = 1,
+    .compat_props = (GlobalProperty[]) {
+        PC_RHEL6_1_COMPAT,
+        { /* end of list */ }
+    },
 };
 
 static void pc_init_rhel600(ram_addr_t ram_size,
@@ -1596,11 +1670,8 @@ static QEMUMachine pc_machine_rhel600 = {
             .driver   = "vmware-svga",
             .property = "rombar",
             .value    = stringify(0),
-        },{
-            .driver   = "virtio-serial-pci",
-            .property = "flow_control",
-            .value    = stringify(0),
         },
+        PC_RHEL6_0_COMPAT,
         { /* end of list */ }
     },
 };
@@ -1622,11 +1693,9 @@ static GlobalProperty compat_rhel5[] = {
             .driver   = "virtio-serial-pci",
             .property = "vectors",
             .value    = stringify(0),
-        },{
-            .driver   = "virtio-serial-pci",
-            .property = "flow_control",
-            .value    = stringify(0),
-        },{
+        },
+        PC_RHEL6_0_COMPAT,
+        {
             .driver   = "PCI",
             .property = "rombar",
             .value    = stringify(0),
@@ -1707,6 +1776,7 @@ static QEMUMachine pc_machine_rhel540 = {
 
 static void rhel_machine_init(void)
 {
+    qemu_register_machine(&pc_machine_rhel620);
     qemu_register_machine(&pc_machine_rhel610);
     qemu_register_machine(&pc_machine_rhel600);
     qemu_register_machine(&pc_machine_rhel550);

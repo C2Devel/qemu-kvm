@@ -1238,7 +1238,6 @@ static int pci_vmsvga_initfn(PCIDevice *dev)
     pci_config_set_class(s->card.config, PCI_CLASS_DISPLAY_VGA);
     s->card.config[0x0c]		= 0x08;		/* Cache line size */
     s->card.config[0x0d]		= 0x40;		/* Latency timer */
-    s->card.config[PCI_HEADER_TYPE]	= PCI_HEADER_TYPE_NORMAL;
     s->card.config[0x2c]		= PCI_VENDOR_ID_VMWARE & 0xff;
     s->card.config[0x2d]		= PCI_VENDOR_ID_VMWARE >> 8;
     s->card.config[0x2e]		= SVGA_PCI_DEVICE_ID & 0xff;

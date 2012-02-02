@@ -7,14 +7,14 @@
  *
  * Written by Laurent Vivier <Laurent.Vivier@bull.net>
  *
- * This code is licenced under the LGPL.
+ * This code is licensed under the LGPL.
  *
  */
 
 #include "qemu-common.h"
 #include "qemu-error.h"
-#include "block.h"
 #include "scsi.h"
+#include "blockdev.h"
 
 #ifdef __linux__
 
@@ -61,90 +61,94 @@ struct SCSIGenericState
     SCSIDevice qdev;
     BlockDriverState *bs;
     int lun;
-    int driver_status;
-    uint8_t sensebuf[SCSI_SENSE_BUF_SIZE];
-    uint8_t senselen;
 };
 
-static SCSIGenericReq *scsi_new_request(SCSIDevice *d, uint32_t tag, uint32_t lun)
+static SCSIRequest *scsi_new_request(SCSIDevice *d, uint32_t tag, uint32_t lun,
+                                     void *hba_private)
 {
     SCSIRequest *req;
 
-    req = scsi_req_alloc(sizeof(SCSIGenericReq), d, tag, lun);
-    return DO_UPCAST(SCSIGenericReq, req, req);
+    req = scsi_req_alloc(sizeof(SCSIGenericReq), d, tag, lun, hba_private);
+    return req;
 }
 
-static void scsi_remove_request(SCSIGenericReq *r)
+static void scsi_free_request(SCSIRequest *req)
 {
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
+
     qemu_free(r->buf);
-    scsi_req_free(&r->req);
-}
-
-static SCSIGenericReq *scsi_find_request(SCSIGenericState *s, uint32_t tag)
-{
-    return DO_UPCAST(SCSIGenericReq, req, scsi_req_find(&s->qdev, tag));
 }
 
 /* Helper function for command completion.  */
 static void scsi_command_complete(void *opaque, int ret)
 {
+    int status;
     SCSIGenericReq *r = (SCSIGenericReq *)opaque;
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, r->req.dev);
 
-    s->driver_status = r->io_header.driver_status;
-    if (s->driver_status & SG_ERR_DRIVER_SENSE)
-        s->senselen = r->io_header.sb_len_wr;
+    r->req.aiocb = NULL;
+    if (r->io_header.driver_status & SG_ERR_DRIVER_SENSE)
+        r->req.sense_len = r->io_header.sb_len_wr;
 
-    if (ret != 0)
-        r->req.status = BUSY << 1;
-    else {
-        if (s->driver_status & SG_ERR_DRIVER_TIMEOUT) {
-            r->req.status = BUSY << 1;
+    if (ret != 0) {
+        switch (ret) {
+        case -EDOM:
+            status = TASK_SET_FULL;
+            break;
+        case -EINVAL:
+            status = CHECK_CONDITION;
+            scsi_req_build_sense(&r->req, SENSE_CODE(INVALID_FIELD));
+            break;
+        case -ENOMEM:
+            status = CHECK_CONDITION;
+            scsi_req_build_sense(&r->req, SENSE_CODE(TARGET_FAILURE));
+            break;
+        default:
+            status = CHECK_CONDITION;
+            scsi_req_build_sense(&r->req, SENSE_CODE(IO_ERROR));
+            break;
+        }
+    } else {
+        if (r->io_header.driver_status & SG_ERR_DRIVER_TIMEOUT) {
+            status = BUSY;
             BADF("Driver Timeout\n");
-        } else if (r->io_header.status)
-            r->req.status = r->io_header.status;
-        else if (s->driver_status & SG_ERR_DRIVER_SENSE)
-            r->req.status = CHECK_CONDITION << 1;
-        else
-            r->req.status = GOOD << 1;
+        } else if (r->io_header.status) {
+            status = r->io_header.status;
+        } else if (r->io_header.driver_status & SG_ERR_DRIVER_SENSE) {
+            status = CHECK_CONDITION;
+        } else {
+            status = GOOD;
+        }
     }
     DPRINTF("Command complete 0x%p tag=0x%x status=%d\n",
-            r, r->req.tag, r->req.status);
+            r, r->req.tag, status);
 
-    scsi_req_complete(&r->req);
-    scsi_remove_request(r);
+    scsi_req_complete(&r->req, status);
 }
 
 /* Cancel a pending data transfer.  */
-static void scsi_cancel_io(SCSIDevice *d, uint32_t tag)
+static void scsi_cancel_io(SCSIRequest *req)
 {
-    DPRINTF("scsi_cancel_io 0x%x\n", tag);
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
-    DPRINTF("Cancel tag=0x%x\n", tag);
-    r = scsi_find_request(s, tag);
-    if (r) {
-        if (r->req.aiocb)
-            bdrv_aio_cancel(r->req.aiocb);
-        r->req.aiocb = NULL;
-        scsi_remove_request(r);
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
+
+    DPRINTF("Cancel tag=0x%x\n", req->tag);
+    if (r->req.aiocb) {
+        bdrv_aio_cancel(r->req.aiocb);
     }
+    r->req.aiocb = NULL;
 }
 
 static int execute_command(BlockDriverState *bdrv,
                            SCSIGenericReq *r, int direction,
 			   BlockDriverCompletionFunc *complete)
 {
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, r->req.dev);
-
     r->io_header.interface_id = 'S';
     r->io_header.dxfer_direction = direction;
     r->io_header.dxferp = r->buf;
     r->io_header.dxfer_len = r->buflen;
     r->io_header.cmdp = r->req.cmd.buf;
     r->io_header.cmd_len = r->req.cmd.len;
-    r->io_header.mx_sb_len = sizeof(s->sensebuf);
-    r->io_header.sbp = s->sensebuf;
+    r->io_header.mx_sb_len = sizeof(r->req.sense);
+    r->io_header.sbp = r->req.sense;
     r->io_header.timeout = MAX_UINT;
     r->io_header.usr_ptr = r;
     r->io_header.flags |= SG_FLAG_DIRECT_IO;
@@ -152,7 +156,7 @@ static int execute_command(BlockDriverState *bdrv,
     r->req.aiocb = bdrv_aio_ioctl(bdrv, SG_IO, &r->io_header, complete, r);
     if (r->req.aiocb == NULL) {
         BADF("execute_command: read failed !\n");
-        return -1;
+        return -ENOMEM;
     }
 
     return 0;
@@ -163,8 +167,9 @@ static void scsi_read_complete(void * opaque, int ret)
     SCSIGenericReq *r = (SCSIGenericReq *)opaque;
     int len;
 
+    r->req.aiocb = NULL;
     if (ret) {
-        DPRINTF("IO error\n");
+        DPRINTF("IO error ret %d\n", ret);
         scsi_command_complete(r, ret);
         return;
     }
@@ -172,51 +177,45 @@ static void scsi_read_complete(void * opaque, int ret)
     DPRINTF("Data ready tag=0x%x len=%d\n", r->req.tag, len);
 
     r->len = -1;
-    r->req.bus->complete(r->req.bus, SCSI_REASON_DATA, r->req.tag, len);
-    if (len == 0)
+    if (len == 0) {
         scsi_command_complete(r, 0);
+    } else {
+        scsi_req_data(&r->req, len);
+    }
 }
 
 /* Read more data from scsi device into buffer.  */
-static void scsi_read_data(SCSIDevice *d, uint32_t tag)
+static void scsi_read_data(SCSIRequest *req)
 {
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
+    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, r->req.dev);
     int ret;
 
-    DPRINTF("scsi_read_data 0x%x\n", tag);
-    r = scsi_find_request(s, tag);
-    if (!r) {
-        BADF("Bad read tag 0x%x\n", tag);
-        /* ??? This is the wrong error.  */
-        scsi_command_complete(r, -EINVAL);
-        return;
-    }
-
+    DPRINTF("scsi_read_data 0x%x\n", req->tag);
     if (r->len == -1) {
         scsi_command_complete(r, 0);
         return;
     }
 
-    if (r->req.cmd.buf[0] == REQUEST_SENSE && s->driver_status & SG_ERR_DRIVER_SENSE)
-    {
-        s->senselen = MIN(r->len, s->senselen);
-        memcpy(r->buf, s->sensebuf, s->senselen);
+    if (r->req.cmd.buf[0] == REQUEST_SENSE) {
         r->io_header.driver_status = 0;
         r->io_header.status = 0;
-        r->io_header.dxfer_len  = s->senselen;
+        r->io_header.dxfer_len =
+            scsi_device_get_sense(&s->qdev, r->buf, r->req.cmd.xfer,
+                                  (r->req.cmd.buf[1] & 1) == 0);
         r->len = -1;
-        DPRINTF("Data ready tag=0x%x len=%d\n", r->req.tag, s->senselen);
+        DPRINTF("Data ready tag=0x%x len=%d\n", r->req.tag, r->io_header.dxfer_len);
         DPRINTF("Sense: %d %d %d %d %d %d %d %d\n",
                 r->buf[0], r->buf[1], r->buf[2], r->buf[3],
                 r->buf[4], r->buf[5], r->buf[6], r->buf[7]);
-        r->req.bus->complete(r->req.bus, SCSI_REASON_DATA, r->req.tag, s->senselen);
+        scsi_req_data(&r->req, r->io_header.dxfer_len);
+        /* The sense buffer is cleared when we return GOOD */
         return;
     }
 
     ret = execute_command(s->bs, r, SG_DXFER_FROM_DEV, scsi_read_complete);
-    if (ret == -1) {
-        scsi_command_complete(r, -EINVAL);
+    if (ret < 0) {
+        scsi_command_complete(r, ret);
         return;
     }
 }
@@ -227,6 +226,7 @@ static void scsi_write_complete(void * opaque, int ret)
     SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, r->req.dev);
 
     DPRINTF("scsi_write_complete() ret = %d\n", ret);
+    r->req.aiocb = NULL;
     if (ret) {
         DPRINTF("IO error\n");
         scsi_command_complete(r, ret);
@@ -236,7 +236,7 @@ static void scsi_write_complete(void * opaque, int ret)
     if (r->req.cmd.buf[0] == MODE_SELECT && r->req.cmd.buf[4] == 12 &&
         s->qdev.type == TYPE_TAPE) {
         s->qdev.blocksize = (r->buf[9] << 16) | (r->buf[10] << 8) | r->buf[11];
-        DPRINTF("block size %d\n", s->blocksize);
+        DPRINTF("block size %d\n", s->qdev.blocksize);
     }
 
     scsi_command_complete(r, ret);
@@ -244,46 +244,30 @@ static void scsi_write_complete(void * opaque, int ret)
 
 /* Write data to a scsi device.  Returns nonzero on failure.
    The transfer may complete asynchronously.  */
-static int scsi_write_data(SCSIDevice *d, uint32_t tag)
+static void scsi_write_data(SCSIRequest *req)
 {
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
+    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, req->dev);
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
     int ret;
 
-    DPRINTF("scsi_write_data 0x%x\n", tag);
-    r = scsi_find_request(s, tag);
-    if (!r) {
-        BADF("Bad write tag 0x%x\n", tag);
-        /* ??? This is the wrong error.  */
-        scsi_command_complete(r, -EINVAL);
-        return 0;
-    }
-
+    DPRINTF("scsi_write_data 0x%x\n", req->tag);
     if (r->len == 0) {
         r->len = r->buflen;
-        r->req.bus->complete(r->req.bus, SCSI_REASON_DATA, r->req.tag, r->len);
-        return 0;
+        scsi_req_data(&r->req, r->len);
+        return;
     }
 
     ret = execute_command(s->bs, r, SG_DXFER_TO_DEV, scsi_write_complete);
-    if (ret == -1) {
-        scsi_command_complete(r, -EINVAL);
-        return 1;
+    if (ret < 0) {
+        scsi_command_complete(r, ret);
     }
-
-    return 0;
 }
 
 /* Return a pointer to the data buffer.  */
-static uint8_t *scsi_get_buf(SCSIDevice *d, uint32_t tag)
+static uint8_t *scsi_get_buf(SCSIRequest *req)
 {
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
-    r = scsi_find_request(s, tag);
-    if (!r) {
-        BADF("Bad buffer tag 0x%x\n", tag);
-        return NULL;
-    }
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
+
     return r->buf;
 }
 
@@ -311,48 +295,38 @@ static void scsi_req_fixup(SCSIRequest *req)
    (eg. disk reads), negative for transfers to the device (eg. disk writes),
    and zero if the command does not transfer any data.  */
 
-static int32_t scsi_send_command(SCSIDevice *d, uint32_t tag,
-                                 uint8_t *cmd, int lun)
+static int32_t scsi_send_command(SCSIRequest *req, uint8_t *cmd)
 {
-    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
-    SCSIBus *bus;
+    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, req->dev);
+    SCSIGenericReq *r = DO_UPCAST(SCSIGenericReq, req, req);
     int ret;
 
-    if (cmd[0] != REQUEST_SENSE &&
-        (lun != s->lun || (cmd[1] >> 5) != s->lun)) {
-        DPRINTF("Unimplemented LUN %d\n", lun ? lun : cmd[1] >> 5);
-
-        s->sensebuf[0] = 0x70;
-        s->sensebuf[1] = 0x00;
-        s->sensebuf[2] = ILLEGAL_REQUEST;
-        s->sensebuf[3] = 0x00;
-        s->sensebuf[4] = 0x00;
-        s->sensebuf[5] = 0x00;
-        s->sensebuf[6] = 0x00;
-        s->senselen = 7;
-        s->driver_status = SG_ERR_DRIVER_SENSE;
-        bus = scsi_bus_from_device(d);
-        bus->complete(bus, SCSI_REASON_DONE, tag, CHECK_CONDITION << 1);
+    if (cmd[0] != REQUEST_SENSE && req->lun != s->lun) {
+        DPRINTF("Unimplemented LUN %d\n", req->lun);
+        scsi_req_build_sense(&r->req, SENSE_CODE(LUN_NOT_SUPPORTED));
+        scsi_req_complete(&r->req, CHECK_CONDITION);
         return 0;
     }
 
-    r = scsi_find_request(s, tag);
-    if (r) {
-        BADF("Tag 0x%x already in use %p\n", tag, r);
-        scsi_cancel_io(d, tag);
-    }
-    r = scsi_new_request(d, tag, lun);
-
     if (-1 == scsi_req_parse(&r->req, cmd)) {
         BADF("Unsupported command length, command %x\n", cmd[0]);
-        scsi_remove_request(r);
+        scsi_command_complete(r, -EINVAL);
         return 0;
     }
     scsi_req_fixup(&r->req);
 
-    DPRINTF("Command: lun=%d tag=0x%x data=0x%02x len %d\n", lun, tag,
-            cmd[0], r->req.cmd.xfer);
+    DPRINTF("Command: lun=%d tag=0x%x len %zd data=0x%02x", lun, tag,
+            r->req.cmd.xfer, cmd[0]);
+
+#ifdef DEBUG_SCSI
+    {
+        int i;
+        for (i = 1; i < r->req.cmd.len; i++) {
+            printf(" 0x%02x", cmd[i]);
+        }
+        printf("\n");
+    }
+#endif
 
     if (r->req.cmd.xfer == 0) {
         if (r->buf != NULL)
@@ -360,8 +334,8 @@ static int32_t scsi_send_command(SCSIDevice *d, uint32_t tag,
         r->buflen = 0;
         r->buf = NULL;
         ret = execute_command(s->bs, r, SG_DXFER_NONE, scsi_command_complete);
-        if (ret == -1) {
-            scsi_command_complete(r, -EINVAL);
+        if (ret < 0) {
+            scsi_command_complete(r, ret);
             return 0;
         }
         return 0;
@@ -379,9 +353,9 @@ static int32_t scsi_send_command(SCSIDevice *d, uint32_t tag,
     if (r->req.cmd.mode == SCSI_XFER_TO_DEV) {
         r->len = 0;
         return -r->req.cmd.xfer;
+    } else {
+        return r->req.cmd.xfer;
     }
-
-    return r->req.cmd.xfer;
 }
 
 static int get_blocksize(BlockDriverState *bdrv)
@@ -394,7 +368,7 @@ static int get_blocksize(BlockDriverState *bdrv)
 
     memset(cmd, 0, sizeof(cmd));
     memset(buf, 0, sizeof(buf));
-    cmd[0] = READ_CAPACITY;
+    cmd[0] = READ_CAPACITY_10;
 
     memset(&io_header, 0, sizeof(io_header));
     io_header.interface_id = 'S';
@@ -445,15 +419,18 @@ static int get_stream_blocksize(BlockDriverState *bdrv)
     return (buf[9] << 16) | (buf[10] << 8) | buf[11];
 }
 
+static void scsi_generic_reset(DeviceState *dev)
+{
+    SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev.qdev, dev);
+
+    scsi_device_purge_requests(&s->qdev);
+}
+
 static void scsi_destroy(SCSIDevice *d)
 {
     SCSIGenericState *s = DO_UPCAST(SCSIGenericState, qdev, d);
-    SCSIGenericReq *r;
 
-    while (!QTAILQ_EMPTY(&s->qdev.requests)) {
-        r = DO_UPCAST(SCSIGenericReq, req, QTAILQ_FIRST(&s->qdev.requests));
-        scsi_remove_request(r);
-    }
+    scsi_device_purge_requests(&s->qdev);
     blockdev_mark_auto_del(s->qdev.conf.bs);
 }
 
@@ -472,6 +449,15 @@ static int scsi_generic_initfn(SCSIDevice *dev)
     /* check we are really using a /dev/sg* file */
     if (!bdrv_is_sg(s->bs)) {
         error_report("scsi-generic: not /dev/sg*");
+        return -1;
+    }
+
+    if (bdrv_get_on_error(s->bs, 0) != BLOCK_ERR_STOP_ENOSPC) {
+        error_report("Device doesn't support drive option werror");
+        return -1;
+    }
+    if (bdrv_get_on_error(s->bs, 1) != BLOCK_ERR_REPORT) {
+        error_report("Device doesn't support drive option rerror");
         return -1;
     }
 
@@ -508,9 +494,6 @@ static int scsi_generic_initfn(SCSIDevice *dev)
         }
     }
     DPRINTF("block size %d\n", s->qdev.blocksize);
-    s->driver_status = 0;
-    memset(s->sensebuf, 0, sizeof(s->sensebuf));
-    bdrv_set_removable(s->bs, 0);
     return 0;
 }
 
@@ -518,8 +501,11 @@ static SCSIDeviceInfo scsi_generic_info = {
     .qdev.name    = "scsi-generic",
     .qdev.desc    = "pass through generic scsi device (/dev/sg*)",
     .qdev.size    = sizeof(SCSIGenericState),
+    .qdev.reset   = scsi_generic_reset,
     .init         = scsi_generic_initfn,
     .destroy      = scsi_destroy,
+    .alloc_req    = scsi_new_request,
+    .free_req     = scsi_free_request,
     .send_command = scsi_send_command,
     .read_data    = scsi_read_data,
     .write_data   = scsi_write_data,

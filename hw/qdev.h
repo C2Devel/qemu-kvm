@@ -2,7 +2,7 @@
 #define QDEV_H
 
 #include "hw.h"
-#include "sysemu.h"
+#include "blockdev.h"
 #include "qemu-queue.h"
 #include "qemu-char.h"
 #include "qemu-option.h"
@@ -132,7 +132,11 @@ bool qdev_machine_modified(void);
 qemu_irq qdev_get_gpio_in(DeviceState *dev, int n);
 void qdev_connect_gpio_out(DeviceState *dev, int n, qemu_irq pin);
 
+BlockDriverState *qdev_init_bdrv(DeviceState *dev, BlockInterfaceType type);
+
 BusState *qdev_get_child_bus(DeviceState *dev, const char *name);
+
+DeviceState *qdev_find_by_id(const char *id);
 
 /*** Device API.  ***/
 
@@ -272,6 +276,7 @@ void *qdev_get_prop_ptr(DeviceState *dev, Property *prop);
 int qdev_prop_exists(DeviceState *dev, const char *name);
 int qdev_prop_parse(DeviceState *dev, const char *name, const char *value);
 void qdev_prop_set(DeviceState *dev, const char *name, void *src, enum PropertyType type);
+void qdev_prop_set_bit(DeviceState *dev, const char *name, bool value);
 void qdev_prop_set_uint8(DeviceState *dev, const char *name, uint8_t value);
 void qdev_prop_set_uint16(DeviceState *dev, const char *name, uint16_t value);
 void qdev_prop_set_uint32(DeviceState *dev, const char *name, uint32_t value);

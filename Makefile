@@ -109,13 +109,15 @@ qobject-obj-y += qerror.o
 # block-obj-y is code used by both qemu system emulation and qemu-img
 
 block-obj-y = cutils.o cache-utils.o qemu-malloc.o qemu-option.o module.o
-block-obj-y += nbd.o block.o aio.o aes.o osdep.o qemu-config.o
+block-obj-y += nbd.o block.o aio.o aes.o osdep.o qemu-config.o qemu-progress.o
 block-obj-$(CONFIG_POSIX) += posix-aio-compat.o
 block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
 block-obj-$(CONFIG_POSIX) += compatfd.o
 
 block-nested-y += raw.o cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
 block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow2-cache.o
+block-nested-y += qed.o qed-gencb.o qed-l2-cache.o qed-table.o qed-cluster.o
+block-nested-y += qed-check.o
 block-nested-y += parallels.o nbd.o blkdebug.o
 block-nested-$(CONFIG_WIN32) += raw-win32.o
 block-nested-$(CONFIG_POSIX) += raw-posix.o
@@ -155,6 +157,7 @@ shared-obj-y = qemu-error.o $(trace-obj-y) $(block-obj-y) $(qobject-obj-y)
 
 obj-y = $(shared-obj-y)
 obj-y += qemu-thread.o
+obj-y += blockdev.o
 obj-y += $(net-obj-y)
 obj-y += readline.o console.o cursor.o
 
@@ -176,13 +179,12 @@ obj-$(CONFIG_DS1338) += ds1338.o
 obj-y += i2c.o smbus.o smbus_eeprom.o
 obj-y += eeprom93xx.o
 obj-y += cdrom.o
-obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o usb-wacom.o
-obj-y += usb-serial.o usb-net.o usb-bus.o
+obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o
+obj-y += usb-bus.o usb-desc.o
+obj-y += usb-msd.o scsi-bus.o scsi-disk.o
 obj-$(CONFIG_SSI) += ssi.o
 obj-$(CONFIG_SSI_SD) += ssi-sd.o
 obj-$(CONFIG_SD) += sd.o
-obj-y += bt.o bt-host.o bt-vhci.o bt-l2cap.o bt-sdp.o bt-hci.o bt-hid.o usb-bt.o
-obj-y += bt-hci-csr.o
 obj-y += buffered_file.o migration.o migration-tcp.o qemu-sockets.o
 obj-y += qemu-char.o aio.o savevm.o
 obj-y += msmouse.o ps2.o

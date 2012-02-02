@@ -20,6 +20,7 @@ extern target_phys_addr_t pci_mem_base;
 #define PCI_DEVFN(slot, func)   ((((slot) & 0x1f) << 3) | ((func) & 0x07))
 #define PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
 #define PCI_FUNC(devfn)         ((devfn) & 0x07)
+#define PCI_FUNC_MAX            8
 
 /* Class, Vendor and Device IDs from Linux's pci_ids.h */
 #include "pci_ids.h"
@@ -128,6 +129,10 @@ typedef struct PCIIORegion {
 enum {
     QEMU_PCI_CAP_MSIX = 0x1,
     QEMU_PCI_CAP_EXPRESS = 0x2,
+
+    /* multifunction capable device */
+#define QEMU_PCI_CAP_MULTIFUNCTION_BITNR        2
+    QEMU_PCI_CAP_MULTIFUNCTION = (1 << QEMU_PCI_CAP_MULTIFUNCTION_BITNR),
 };
 
 typedef int (*msix_mask_notifier_func)(PCIDevice *, unsigned vector,
@@ -259,7 +264,8 @@ int pci_parse_host_devaddr(const char *addr, int *busp,
                            int *slotp, int *funcp);
 
 void pci_info(Monitor *mon);
-PCIBus *pci_bridge_init(PCIBus *bus, int devfn, uint16_t vid, uint16_t did,
+PCIBus *pci_bridge_init(PCIBus *bus, int devfn, bool multifunction,
+                        uint16_t vid, uint16_t did,
                         pci_map_irq_fn map_irq, const char *name);
 PCIDevice *pci_bridge_get_device(PCIBus *bus);
 
@@ -353,6 +359,11 @@ typedef struct {
 void pci_qdev_register(PCIDeviceInfo *info);
 void pci_qdev_register_many(PCIDeviceInfo *info);
 
+PCIDevice *pci_create_multifunction(PCIBus *bus, int devfn, bool multifunction,
+                                    const char *name);
+PCIDevice *pci_create_simple_multifunction(PCIBus *bus, int devfn,
+                                           bool multifunction,
+                                           const char *name);
 PCIDevice *pci_create(PCIBus *bus, int devfn, const char *name);
 PCIDevice *pci_create_simple(PCIBus *bus, int devfn, const char *name);
 

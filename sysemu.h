@@ -13,27 +13,51 @@
 #endif
 
 /* vl.c */
+
+typedef enum {
+    RUN_STATE_NO_STATE,
+    RUN_STATE_DEBUG,          /* qemu is running under gdb */
+    RUN_STATE_INMIGRATE,     /* paused waiting for an incoming migration */
+    RUN_STATE_INTERNAL_ERROR,       /* paused due to an internal error */
+    RUN_STATE_IO_ERROR,       /* paused due to an I/O error */
+    RUN_STATE_PAUSED,         /* paused by the user (ie. the 'stop' command) */
+    RUN_STATE_POSTMIGRATE,   /* paused following a successful migration */
+    RUN_STATE_PRELAUNCH,     /* qemu was started with -S and haven't started */
+    RUN_STATE_FINISH_MIGRATE,    /* paused preparing to finish migrate */
+    RUN_STATE_RESTORE_VM,        /* paused restoring the VM state */
+    RUN_STATE_RUNNING,        /* qemu is running */
+    RUN_STATE_SAVE_VM,         /* paused saving VM state */
+    RUN_STATE_SHUTDOWN,       /* guest shut down and -no-shutdown is in use */
+    RUN_STATE_WATCHDOG,       /* watchdog fired and qemu is configured to pause */
+    RUN_STATE_MAX
+} RunState;
+
 extern const char *bios_name;
 
 #define QEMU_FILE_TYPE_BIOS   0
 #define QEMU_FILE_TYPE_KEYMAP 1
 char *qemu_find_file(int type, const char *name);
 
-extern int vm_running;
 extern const char *qemu_name;
 extern uint8_t qemu_uuid[];
 int qemu_uuid_parse(const char *str, uint8_t *uuid);
 #define UUID_FMT "%02hhx%02hhx%02hhx%02hhx-%02hhx%02hhx-%02hhx%02hhx-%02hhx%02hhx-%02hhx%02hhx%02hhx%02hhx%02hhx%02hhx"
 
+void runstate_init(void);
+bool runstate_check(RunState state);
+void runstate_set(RunState new_state);
+int runstate_is_running(void);
+const char *runstate_as_string(void);
 typedef struct vm_change_state_entry VMChangeStateEntry;
-typedef void VMChangeStateHandler(void *opaque, int running, int reason);
+typedef void VMChangeStateHandler(void *opaque, int running, RunState state);
 
 VMChangeStateEntry *qemu_add_vm_change_state_handler(VMChangeStateHandler *cb,
                                                      void *opaque);
 void qemu_del_vm_change_state_handler(VMChangeStateEntry *e);
 
 void vm_start(void);
-void vm_stop(int reason);
+void vm_stop(RunState state);
+void vm_stop_force_state(RunState state);
 
 uint64_t ram_bytes_remaining(void);
 uint64_t ram_bytes_transferred(void);
@@ -50,10 +74,14 @@ int qemu_no_shutdown(void);
 int qemu_shutdown_requested(void);
 int qemu_reset_requested(void);
 int qemu_powerdown_requested(void);
+void qemu_system_killed(int signal, pid_t pid);
+void qemu_kill_report(void);
 extern qemu_irq qemu_system_powerdown;
 void qemu_system_reset(void);
 
 void qemu_add_machine_init_done_notifier(Notifier *notify);
+void qemu_add_exit_notifier(Notifier *notify);
+void qemu_remove_exit_notifier(Notifier *notify);
 
 void do_savevm(Monitor *mon, const QDict *qdict);
 int load_vmstate(const char *name);
@@ -158,74 +186,8 @@ extern unsigned int nb_prom_envs;
 #endif
 #endif
 
-typedef enum {
-    IF_NONE,
-    IF_IDE, IF_SCSI, IF_FLOPPY, IF_PFLASH, IF_MTD, IF_SD, IF_VIRTIO, IF_XEN,
-    IF_COUNT
-} BlockInterfaceType;
-
-typedef enum {
-    BLOCK_ERR_REPORT, BLOCK_ERR_IGNORE, BLOCK_ERR_STOP_ENOSPC,
-    BLOCK_ERR_STOP_ANY
-} BlockInterfaceErrorAction;
-
-void blockdev_mark_auto_del(BlockDriverState *bs);
-void blockdev_auto_del(BlockDriverState *bs);
-
-#define BLOCK_SERIAL_STRLEN 20
-
-typedef struct DriveInfo {
-    BlockDriverState *bdrv;
-    char *id;
-    const char *devaddr;
-    BlockInterfaceType type;
-    int bus;
-    int unit;
-    int auto_del;               /* see blockdev_mark_auto_del() */
-    QemuOpts *opts;
-    BlockInterfaceErrorAction on_read_error;
-    BlockInterfaceErrorAction on_write_error;
-    char serial[BLOCK_SERIAL_STRLEN + 1];
-    QTAILQ_ENTRY(DriveInfo) next;
-    int opened;
-    int bdrv_flags;
-    char *file;
-    BlockDriver *drv;
-} DriveInfo;
-
-#define MAX_IDE_DEVS	2
-#define MAX_SCSI_DEVS	7
-#define MAX_DRIVES 32
-
-extern QTAILQ_HEAD(drivelist, DriveInfo) drives;
-extern QTAILQ_HEAD(driveoptlist, DriveOpt) driveopts;
-extern DriveInfo *extboot_drive;
-
-extern DriveInfo *drive_get(BlockInterfaceType type, int bus, int unit);
-extern DriveInfo *drive_get_by_id(const char *id);
-extern int drive_get_max_bus(BlockInterfaceType type);
-extern void drive_uninit(DriveInfo *dinfo);
-extern DriveInfo *drive_get_by_blockdev(BlockDriverState *bs);
-extern const char *drive_get_serial(BlockDriverState *bdrv);
-
-extern BlockInterfaceErrorAction drive_get_on_error(
-    BlockDriverState *bdrv, int is_read);
-
-BlockDriverState *qdev_init_bdrv(DeviceState *dev, BlockInterfaceType type);
-
-extern QemuOpts *drive_add(const char *file, const char *fmt, ...);
-extern DriveInfo *drive_init(QemuOpts *arg, void *machine, int *fatal_error);
-
-extern int drives_reopen(void);
-
 /* acpi */
 void qemu_system_cpu_hot_add(int cpu, int state);
-
-/* device-hotplug */
-
-DriveInfo *add_init_drive(const char *opts);
-int simple_drive_add(Monitor *mon, const QDict *qdict, QObject **ret_data);
-int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data);
 
 /* pci-hotplug */
 void pci_device_hot_add(Monitor *mon, const QDict *qdict);

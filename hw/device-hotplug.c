@@ -26,20 +26,17 @@
 #include "boards.h"
 #include "qerror.h"
 #include "net.h"
-#include "block_int.h"
-#include "sysemu.h"
 
 DriveInfo *add_init_drive(const char *optstr)
 {
-    int fatal_error;
     DriveInfo *dinfo;
     QemuOpts *opts;
 
-    opts = drive_add(NULL, "%s", optstr);
+    opts = drive_def(optstr);
     if (!opts)
         return NULL;
 
-    dinfo = drive_init(opts, current_machine, &fatal_error);
+    dinfo = drive_init(opts, current_machine->use_scsi);
     if (!dinfo) {
         qemu_opts_del(opts);
         return NULL;
@@ -74,7 +71,7 @@ static void check_parm(const char *key, QObject *obj, void *opaque)
 
 int simple_drive_add(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
-    int stopped, fatal_error;
+    int stopped;
     QemuOpts *opts;
     DriveInfo *dinfo;
 
@@ -94,48 +91,12 @@ int simple_drive_add(Monitor *mon, const QDict *qdict, QObject **ret_data)
         return -1;
     }
     qemu_opt_set(opts, "if", "none");
-    dinfo = drive_init(opts, current_machine, &fatal_error);
-    if (!dinfo && fatal_error) {
+    dinfo = drive_init(opts, current_machine->use_scsi);
+    if (!dinfo) {
         qerror_report(QERR_DEVICE_INIT_FAILED, /* close enough */
                       qemu_opts_id(opts));
-        /* drive_init() can leave an empty drive behind, reap it */
-        dinfo = drive_get_by_id(qemu_opts_id(opts));
-        if (dinfo) {
-            drive_uninit(dinfo);
-        } else {
-            qemu_opts_del(opts);
-        }
+        qemu_opts_del(opts);
         return -1;
-    }
-
-    return 0;
-}
-
-int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data)
-{
-    const char *id = qdict_get_str(qdict, "id");
-    BlockDriverState *bs;
-
-    bs = bdrv_find(id);
-    if (!bs) {
-        qerror_report(QERR_DEVICE_NOT_FOUND, id);
-        return -1;
-    }
-
-    /* quiesce block driver; prevent further io */
-    qemu_aio_flush();
-    bdrv_flush(bs);
-    bdrv_close(bs);
-
-    /* if we have a device associated with this BlockDriverState (bs->peer)
-     * then we need to make the drive anonymous until the device
-     * can be removed.  If this is a drive with no device backing
-     * then we can just get rid of the block driver state right here.
-     */
-    if (bs->peer) {
-        bdrv_make_anon(bs);
-    } else {
-        drive_uninit(drive_get_by_blockdev(bs));
     }
 
     return 0;

@@ -3,6 +3,8 @@
 
 #include "qdev.h"
 
+#define MAX_IDE_DEVS	2
+
 /* ide-isa.c */
 int isa_ide_init(int iobase, int iobase2, int isairq,
                  DriveInfo *hd0, DriveInfo *hd1);

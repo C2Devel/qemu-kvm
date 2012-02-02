@@ -19,6 +19,9 @@
 #include <spice/enums.h>
 #include <spice/qxl_dev.h>
 
+#include "qemu-thread.h"
+#include "console.h"
+#include "sysemu.h"
 #include "pflib.h"
 
 #define NUM_MEMSLOTS 8
@@ -32,26 +35,23 @@
 #define NUM_SURFACES 1024
 
 /*
- * Commands/requests from server thread to iothread.
- * Note that CREATE_UPDATE is used both with qxl and without it (spice-display)
- * the others are only used with the qxl device.
- *
- * SET_IRQ - just the request is sent (1 byte)
- * CREATE_UPDATE - jus the request is sent (1 byte)
- * CURSOR_SET - send QXLServerRequestCursorSet
- * CURSOR_MOVE - send QXLServerRequestCursorMove
+ * Internal enum to differenciate between options for
+ * io calls that have a sync (old) version and an _async (new)
+ * version:
+ *  QXL_SYNC: use the old version
+ *  QXL_ASYNC: use the new version and make sure there are no two
+ *   happening at the same time. This is used for guest initiated
+ *   calls
  */
-#define QXL_EMPTY_UPDATE ((void *)-1)
-enum {
-    QXL_SERVER_SET_IRQ = 1,
-    QXL_SERVER_CREATE_UPDATE,
-    QXL_SERVER_CURSOR_SET,
-    QXL_SERVER_CURSOR_MOVE
-};
+typedef enum qxl_async_io {
+    QXL_SYNC,
+    QXL_ASYNC,
+} qxl_async_io;
 
-struct SimpleSpiceUpdate;
+typedef struct SimpleSpiceDisplay SimpleSpiceDisplay;
+typedef struct SimpleSpiceUpdate SimpleSpiceUpdate;
 
-typedef struct SimpleSpiceDisplay {
+struct SimpleSpiceDisplay {
     DisplayState *ds;
     void *buf;
     int bufsize;
@@ -64,40 +64,49 @@ typedef struct SimpleSpiceDisplay {
     int notify;
     int running;
 
-    /* thread signaling - used both in qxl (in vga mode
-     * and in native mode) and without qxl */
-    pthread_t          main;
-    int                pipe[2];     /* to iothread */
+    /*
+     * All struct members below this comment can be accessed from
+     * both spice server and qemu (iothread) context and any access
+     * to them must be protected by the lock.
+     */
+    QemuMutex lock;
+    SimpleSpiceUpdate *update;
+    QEMUCursor *cursor;
+    int mouse_x, mouse_y;
+};
 
-    /* ssd updates (one request/command at a time) */
-    struct SimpleSpiceUpdate *update;
-    int waiting_for_update;
-} SimpleSpiceDisplay;
-
-typedef struct SimpleSpiceUpdate {
+struct SimpleSpiceUpdate {
     QXLDrawable drawable;
     QXLImage image;
     QXLCommandExt ext;
     uint8_t *bitmap;
-} SimpleSpiceUpdate;
+};
 
 int qemu_spice_rect_is_empty(const QXLRect* r);
 void qemu_spice_rect_union(QXLRect *dest, const QXLRect *r);
 
-SimpleSpiceUpdate *qemu_spice_create_update(SimpleSpiceDisplay *sdpy);
 void qemu_spice_destroy_update(SimpleSpiceDisplay *sdpy, SimpleSpiceUpdate *update);
 void qemu_spice_create_host_memslot(SimpleSpiceDisplay *ssd);
 void qemu_spice_create_host_primary(SimpleSpiceDisplay *ssd);
 void qemu_spice_destroy_host_primary(SimpleSpiceDisplay *ssd);
-void qemu_spice_vm_change_state_handler(void *opaque, int running, int reason);
+void qemu_spice_vm_change_state_handler(void *opaque, int running,
+                                        RunState state);
+void qemu_spice_display_init_common(SimpleSpiceDisplay *ssd, DisplayState *ds);
 
 void qemu_spice_display_update(SimpleSpiceDisplay *ssd,
                                int x, int y, int w, int h);
 void qemu_spice_display_resize(SimpleSpiceDisplay *ssd);
 void qemu_spice_display_refresh(SimpleSpiceDisplay *ssd);
-/* shared with qxl.c in vga mode and ui/spice-display (no qxl mode) */
-int qxl_vga_mode_get_command(
-    SimpleSpiceDisplay *ssd, struct QXLCommandExt *ext);
-/* used by both qxl and spice-display */
-void qxl_create_server_to_iothread_pipe(SimpleSpiceDisplay *ssd,
-    IOHandler *pipe_read);
+
+void qemu_spice_add_memslot(SimpleSpiceDisplay *ssd, QXLDevMemSlot *memslot,
+                            qxl_async_io async);
+void qemu_spice_del_memslot(SimpleSpiceDisplay *ssd, uint32_t gid,
+                            uint32_t sid);
+void qemu_spice_create_primary_surface(SimpleSpiceDisplay *ssd, uint32_t id,
+                                       QXLDevSurfaceCreate *surface,
+                                       qxl_async_io async);
+void qemu_spice_destroy_primary_surface(SimpleSpiceDisplay *ssd,
+                                        uint32_t id, qxl_async_io async);
+void qemu_spice_wakeup(SimpleSpiceDisplay *ssd);
+void qemu_spice_start(SimpleSpiceDisplay *ssd);
+void qemu_spice_stop(SimpleSpiceDisplay *ssd);

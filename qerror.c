@@ -161,6 +161,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "No '%(bus)' bus found for device '%(device)'",
     },
     {
+        .error_fmt = QERR_NOT_SUPPORTED,
+        .desc      = "Operation is not supported",
+    },
+    {
         .error_fmt = QERR_OPEN_FILE_FAILED,
         .desc      = "Could not open '%(filename)'",
     },
@@ -189,6 +193,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "QMP input object member '%(member)' expects '%(expected)'",
     },
     {
+        .error_fmt = QERR_RESET_REQUIRED,
+        .desc      = "Resetting the Virtual Machine is required",
+    },
+    {
         .error_fmt = QERR_SET_PASSWD_FAILED,
         .desc      = "Could not set password",
     },
@@ -201,6 +209,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "An undefined error has ocurred",
     },
     {
+        .error_fmt = QERR_UNSUPPORTED,
+        .desc      = "this feature or command is not currently supported",
+    },
+    {
         .error_fmt = QERR_UNKNOWN_BLOCK_FORMAT_FEATURE,
         .desc      = "'%(device)' uses a %(format) feature which is not "
                      "supported by this qemu version: %(feature)",
@@ -208,6 +220,10 @@ static const QErrorStringTable qerror_table[] = {
     {
         .error_fmt = QERR_VNC_SERVER_FAILED,
         .desc      = "Could not start VNC server on %(target)",
+    },
+    {
+        .error_fmt = QERR_STREAMING_ERROR,
+        .desc      = "An error occurred during streaming: %(msg)",
     },
     {}
 };

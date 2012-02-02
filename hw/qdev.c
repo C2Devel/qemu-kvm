@@ -191,6 +191,12 @@ int qdev_device_help(QemuOpts *opts)
         }
         error_printf("%s.%s=%s\n", info->name, prop->name, prop->info->name);
     }
+    for (prop = info->bus_info->props; prop && prop->name; prop++) {
+        if (!prop->info->parse) {
+            continue;           /* no way to set it, don't show */
+        }
+        error_printf("%s.%s=%s\n", info->name, prop->name, prop->info->name);
+    }
     return 1;
 }
 
@@ -410,7 +416,7 @@ void qdev_connect_gpio_out(DeviceState * dev, int n, qemu_irq pin)
 
 void qdev_set_nic_properties(DeviceState *dev, NICInfo *nd)
 {
-    qdev_prop_set_macaddr(dev, "mac", nd->macaddr);
+    qdev_prop_set_macaddr(dev, "mac", nd->macaddr.a);
     if (nd->vlan)
         qdev_prop_set_vlan(dev, "vlan", nd->vlan);
     if (nd->netdev)
@@ -491,6 +497,11 @@ static DeviceState *qdev_find_recursive(BusState *bus, const char *id)
         }
     }
     return NULL;
+}
+
+DeviceState *qdev_find_by_id(const char *id)
+{
+    return qdev_find_recursive(main_system_bus, id);
 }
 
 static void qbus_list_bus(DeviceState *dev)

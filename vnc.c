@@ -1543,7 +1543,7 @@ static void do_key_event(VncState *vs, int down, int keycode, int sym)
         break;
     }
 
-    if (keycode_is_keypad(vs->vd->kbd_layout, keycode)) {
+    if (down && keycode_is_keypad(vs->vd->kbd_layout, keycode)) {
         /* If the numlock state needs to change then simulate an additional
            keypress before sending this one.  This will happen if the user
            toggles numlock away from the VNC window.
@@ -1561,7 +1561,7 @@ static void do_key_event(VncState *vs, int down, int keycode, int sym)
         }
     }
 
-    if ((sym >= 'A' && sym <= 'Z') || (sym >= 'a' && sym <= 'z')) {
+    if (down && ((sym >= 'A' && sym <= 'Z') || (sym >= 'a' && sym <= 'z'))) {
         /* If the capslock state needs to change then simulate an additional
            keypress before sending this one.  This will happen if the user
            toggles capslock away from the VNC window.

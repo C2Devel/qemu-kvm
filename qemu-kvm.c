@@ -66,6 +66,9 @@ pthread_cond_t qemu_pause_cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t qemu_work_cond = PTHREAD_COND_INITIALIZER;
 __thread CPUState *current_env;
 
+/* minovotn: Copied from hw/pc.h since file excluded because of conflicts */
+void apic_deliver_nmi(struct APICState *d);
+
 static int qemu_system_ready;
 
 #define SIG_IPI (SIGRTMIN+4)
@@ -702,6 +705,41 @@ int kvm_get_dirty_pages_range(kvm_context_t kvm, unsigned long phys_addr,
     return 0;
 }
 
+#if defined(KVM_CAP_MCE) && defined(TARGET_I386)
+typedef struct HWPoisonPage {
+    ram_addr_t ram_addr;
+    QLIST_ENTRY(HWPoisonPage) list;
+} HWPoisonPage;
+
+static QLIST_HEAD(, HWPoisonPage) hwpoison_page_list =
+    QLIST_HEAD_INITIALIZER(hwpoison_page_list);
+
+static void kvm_unpoison_all(void *param)
+{
+    HWPoisonPage *page, *next_page;
+
+    QLIST_FOREACH_SAFE(page, &hwpoison_page_list, list, next_page) {
+        QLIST_REMOVE(page, list);
+        qemu_ram_remap(page->ram_addr, TARGET_PAGE_SIZE);
+        qemu_free(page);
+    }
+}
+
+static void kvm_hwpoison_page_add(ram_addr_t ram_addr)
+{
+    HWPoisonPage *page;
+
+    QLIST_FOREACH(page, &hwpoison_page_list, list) {
+        if (page->ram_addr == ram_addr) {
+            return;
+        }
+    }
+    page = qemu_malloc(sizeof(HWPoisonPage));
+    page->ram_addr = ram_addr;
+    QLIST_INSERT_HEAD(&hwpoison_page_list, page, list);
+}
+#endif
+
 #ifdef KVM_CAP_IRQCHIP
 
 int kvm_set_irq_level(kvm_context_t kvm, int irq, int level, int *status)
@@ -820,6 +858,30 @@ int kvm_set_mpstate(CPUState *env, struct kvm_mp_state *mp_state)
 }
 #endif
 
+#ifdef KVM_CAP_XSAVE
+int kvm_get_xsave(CPUState *env, struct kvm_xsave *xsave)
+{
+    return kvm_vcpu_ioctl(env, KVM_GET_XSAVE, xsave);
+}
+
+int kvm_set_xsave(CPUState *env, struct kvm_xsave *xsave)
+{
+    return kvm_vcpu_ioctl(env, KVM_SET_XSAVE, xsave);
+}
+#endif
+
+#ifdef KVM_CAP_XCRS
+int kvm_get_xcrs(CPUState *env, struct kvm_xcrs *xcrs)
+{
+    return kvm_vcpu_ioctl(env, KVM_GET_XCRS, xcrs);
+}
+
+int kvm_set_xcrs(CPUState *env, struct kvm_xcrs *xcrs)
+{
+    return kvm_vcpu_ioctl(env, KVM_SET_XCRS, xcrs);
+}
+#endif
+
 static int handle_mmio(CPUState *env)
 {
     unsigned long addr = env->kvm_run->mmio.phys_addr;
@@ -899,7 +961,7 @@ static int kvm_handle_internal_error(kvm_context_t kvm,
     kvm_show_regs(env);
     if (run->internal.suberror == KVM_INTERNAL_ERROR_EMULATION)
         fprintf(stderr, "emulation failure, check dmesg for details\n");
-    vm_stop(0);
+    vm_stop(RUN_STATE_INTERNAL_ERROR);
     return 1;
 }
 
@@ -1506,6 +1568,7 @@ static void sigbus_handler(int n, struct qemu_signalfd_siginfo *siginfo,
         status = MCI_STATUS_VAL | MCI_STATUS_UC | MCI_STATUS_EN
             | MCI_STATUS_MISCV | MCI_STATUS_ADDRV | MCI_STATUS_S
             | 0xc0;
+        kvm_hwpoison_page_add(ram_addr);
         kvm_inject_x86_mce(first_cpu, 9, status,
                            MCG_STATUS_MCIP | MCG_STATUS_RIPV, paddr,
                            (MCM_ADDR_PHYS << 6) | 0xc, 1);
@@ -1570,7 +1633,11 @@ void kvm_cpu_synchronize_state(CPUState *env)
 
 static void inject_interrupt(void *data)
 {
-    cpu_interrupt(current_env, (long) data);
+    if (!current_env->apic_state || (long)data != CPU_INTERRUPT_NMI) {
+        cpu_interrupt(current_env, (long) data);
+    } else {
+        apic_deliver_nmi(current_env->apic_state);
+    }
 }
 
 void kvm_inject_interrupt(CPUState *env, int mask)
@@ -1663,7 +1730,7 @@ int kvm_cpu_exec(CPUState *env)
     r = kvm_run(env);
     if (r < 0) {
         printf("kvm_run returned %d\n", r);
-        vm_stop(0);
+        vm_stop(RUN_STATE_INTERNAL_ERROR);
     }
 
     return 0;
@@ -1671,7 +1738,7 @@ int kvm_cpu_exec(CPUState *env)
 
 static int is_cpu_stopped(CPUState *env)
 {
-    return !vm_running || env->stopped;
+    return !runstate_is_running() || env->stopped;
 }
 
 static void flush_queued_work(CPUState *env)
@@ -1753,6 +1820,7 @@ static void kvm_on_sigbus(CPUState *env, siginfo_t *siginfo)
                 hardware_memory_error();
         }
         mce.addr = paddr;
+        kvm_hwpoison_page_add(ram_addr);
         r = kvm_set_mce(env, &mce);
         if (r < 0) {
             fprintf(stderr, "kvm_set_mce: %s\n", strerror(errno));
@@ -1837,7 +1905,7 @@ static int all_threads_paused(void)
     return 1;
 }
 
-static void pause_all_threads(void)
+void kvm_pause_all_threads(void)
 {
     CPUState *penv = first_cpu;
 
@@ -1857,7 +1925,7 @@ static void pause_all_threads(void)
         qemu_cond_wait(&qemu_pause_cond);
 }
 
-static void resume_all_threads(void)
+void kvm_resume_all_threads(void)
 {
     CPUState *penv = first_cpu;
 
@@ -1869,14 +1937,6 @@ static void resume_all_threads(void)
         pthread_kill(penv->kvm_cpu_state.thread, SIG_IPI);
         penv = (CPUState *) penv->next_cpu;
     }
-}
-
-static void kvm_vm_state_change_handler(void *context, int running, int reason)
-{
-    if (running)
-        resume_all_threads();
-    else
-        pause_all_threads();
 }
 
 static void setup_kernel_sigmask(CPUState *env)
@@ -1900,7 +1960,7 @@ static void qemu_kvm_system_reset(void)
 {
     CPUState *penv = first_cpu;
 
-    pause_all_threads();
+    kvm_pause_all_threads();
 
     qemu_system_reset();
 
@@ -1909,7 +1969,7 @@ static void qemu_kvm_system_reset(void)
         penv = (CPUState *) penv->next_cpu;
     }
 
-    resume_all_threads();
+    kvm_resume_all_threads();
 }
 
 static void process_irqchip_events(CPUState *env)
@@ -2019,8 +2079,6 @@ int kvm_init_ap(void)
 {
     struct sigaction action;
 
-    qemu_add_vm_change_state_handler(kvm_vm_state_change_handler, NULL);
-
     signal(SIG_IPI, sig_ipi_handler);
 
     memset(&action, 0, sizeof(action));
@@ -2028,6 +2086,9 @@ int kvm_init_ap(void)
     action.sa_sigaction = (void (*)(int, siginfo_t*, void*))sigbus_handler;
     sigaction(SIGBUS, &action, NULL);
     prctl(PR_MCE_KILL, 1, 1, 0, 0);
+#if defined(KVM_CAP_MCE) && defined(TARGET_I386)
+    qemu_register_reset(kvm_unpoison_all, NULL);
+#endif
     return 0;
 }
 
@@ -2163,9 +2224,10 @@ int kvm_main_loop(void)
     while (1) {
         main_loop_wait(1000);
         if (qemu_shutdown_requested()) {
+            qemu_kill_report();
             monitor_protocol_event(QEVENT_SHUTDOWN, NULL);
             if (qemu_no_shutdown()) {
-                vm_stop(0);
+                vm_stop(RUN_STATE_SHUTDOWN);
             } else
                 break;
         } else if (qemu_powerdown_requested()) {
@@ -2173,15 +2235,19 @@ int kvm_main_loop(void)
             qemu_irq_raise(qemu_system_powerdown);
         } else if (qemu_reset_requested()) {
             qemu_kvm_system_reset();
+            if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
+                runstate_check(RUN_STATE_SHUTDOWN)) {
+                runstate_set(RUN_STATE_PAUSED);
+            }
         } else if (kvm_debug_cpu_requested) {
             gdb_set_stop_cpu(kvm_debug_cpu_requested);
-            vm_stop(EXCP_DEBUG);
+            vm_stop(RUN_STATE_DEBUG);
             kvm_debug_cpu_requested = NULL;
         }
     }
 
     bdrv_close_all();
-    pause_all_threads();
+    kvm_pause_all_threads();
     pthread_mutex_unlock(&qemu_mutex);
 
     return 0;

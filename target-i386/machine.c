@@ -48,6 +48,22 @@ static const VMStateDescription vmstate_xmm_reg = {
 #define VMSTATE_XMM_REGS(_field, _state, _n)                         \
     VMSTATE_STRUCT_ARRAY(_field, _state, _n, 0, vmstate_xmm_reg, XMMReg)
 
+/* YMMH format is the same as XMM */
+static const VMStateDescription vmstate_ymmh_reg = {
+    .name = "ymmh_reg",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(XMM_Q(0), XMMReg),
+        VMSTATE_UINT64(XMM_Q(1), XMMReg),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+#define VMSTATE_YMMH_REGS_VARS(_field, _state, _n, _v)                         \
+    VMSTATE_STRUCT_ARRAY(_field, _state, _n, _v, vmstate_ymmh_reg, XMMReg)
+
 static const VMStateDescription vmstate_mtrr_var = {
     .name = "mtrr_var",
     .version_id = 1,
@@ -383,6 +399,26 @@ static int cpu_post_load(void *opaque, int version_id)
     return 0;
 }
 
+static bool vmstate_xsave_needed(void *opaque)
+{
+    CPUState *cs = opaque;
+
+    return (cs->cpuid_ext_features & CPUID_EXT_XSAVE);
+}
+
+static const VMStateDescription vmstate_xsave ={
+    .name = "xsave",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+	VMSTATE_UINT64_V(xcr0, CPUState, 1),
+	VMSTATE_UINT64_V(xstate_bv, CPUState, 1),
+	VMSTATE_YMMH_REGS_VARS(ymmh_regs, CPUState, CPU_NB_REGS, 1),
+	VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_cpu = {
     .name = "cpu",
     .version_id = CPU_SAVE_VERSION,
@@ -482,6 +518,18 @@ static const VMStateDescription vmstate_cpu = {
         VMSTATE_UINT64_V(wall_clock_msr, CPUState, 11),
         VMSTATE_END_OF_LIST()
         /* The above list is not sorted /wrt version numbers, watch out! */
+    },
+    /*
+       Put the XSAVE state in a sub-section to allow compatibility with
+	older save files.
+     */
+    .subsections = (VMStateSubsection []) {
+	{
+	    .vmsd = &vmstate_xsave,
+	    .needed = vmstate_xsave_needed,
+	}, {
+	    /* empty */
+	}
     }
 };
 

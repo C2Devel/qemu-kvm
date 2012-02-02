@@ -65,20 +65,29 @@ static int raw_probe(const uint8_t *buf, int buf_size, const char *filename)
    return 1; /* everything can be opened as raw image */
 }
 
+static int raw_discard(BlockDriverState *bs, int64_t sector_num, int nb_sectors)
+{
+    return bdrv_discard(bs->file, sector_num, nb_sectors);
+}
+
 static int raw_is_inserted(BlockDriverState *bs)
 {
     return bdrv_is_inserted(bs->file);
 }
 
-static int raw_eject(BlockDriverState *bs, int eject_flag)
+static int raw_media_changed(BlockDriverState *bs)
 {
-    return bdrv_eject(bs->file, eject_flag);
+    return bdrv_media_changed(bs->file);
 }
 
-static int raw_set_locked(BlockDriverState *bs, int locked)
+static void raw_eject(BlockDriverState *bs, int eject_flag)
 {
-    bdrv_set_locked(bs->file, locked);
-    return 0;
+    bdrv_eject(bs->file, eject_flag);
+}
+
+static void raw_lock_medium(BlockDriverState *bs, bool locked)
+{
+    bdrv_lock_medium(bs->file, locked);
 }
 
 static int raw_ioctl(BlockDriverState *bs, unsigned long int req, void *buf)
@@ -130,10 +139,13 @@ static BlockDriver bdrv_raw = {
     .bdrv_aio_readv     = raw_aio_readv,
     .bdrv_aio_writev    = raw_aio_writev,
     .bdrv_aio_flush     = raw_aio_flush,
+    .bdrv_discard       = raw_discard,
 
     .bdrv_is_inserted   = raw_is_inserted,
+    .bdrv_media_changed = raw_media_changed,
     .bdrv_eject         = raw_eject,
-    .bdrv_set_locked    = raw_set_locked,
+    .bdrv_lock_medium   = raw_lock_medium,
+
     .bdrv_ioctl         = raw_ioctl,
     .bdrv_aio_ioctl     = raw_aio_ioctl,
 

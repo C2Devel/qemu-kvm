@@ -24,10 +24,10 @@
 //#define DEBUG_MIGRATION_FD
 
 #ifdef DEBUG_MIGRATION_FD
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { printf("migration-fd: " fmt, ## __VA_ARGS__); } while (0)
 #else
-#define dprintf(fmt, ...) \
+#define DPRINTF(fmt, ...) \
     do { } while (0)
 #endif
 
@@ -43,10 +43,31 @@ static int fd_write(FdMigrationState *s, const void * buf, size_t size)
 
 static int fd_close(FdMigrationState *s)
 {
-    dprintf("fd_close\n");
+    struct stat st;
+    int ret;
+
+    DPRINTF("fd_close\n");
     if (s->fd != -1) {
-        close(s->fd);
+        ret = fstat(s->fd, &st);
+        if (ret == 0 && S_ISREG(st.st_mode)) {
+            /*
+             * If the file handle is a regular file make sure the
+             * data is flushed to disk before signaling success.
+             */
+            ret = fsync(s->fd);
+            if (ret != 0) {
+                ret = -errno;
+                perror("migration-fd: fsync");
+                return ret;
+            }
+        }
+        ret = close(s->fd);
         s->fd = -1;
+        if (ret != 0) {
+            ret = -errno;
+            perror("migration-fd: close");
+            return ret;
+        }
     }
     return 0;
 }
@@ -64,12 +85,12 @@ MigrationState *fd_start_outgoing_migration(Monitor *mon,
 
     s->fd = monitor_get_fd(mon, fdname);
     if (s->fd == -1) {
-        dprintf("fd_migration: invalid file descriptor identifier\n");
+        DPRINTF("fd_migration: invalid file descriptor identifier\n");
         goto err_after_alloc;
     }
 
     if (fcntl(s->fd, F_SETFL, O_NONBLOCK) == -1) {
-        dprintf("Unable to set nonblocking mode on file descriptor\n");
+        DPRINTF("Unable to set nonblocking mode on file descriptor\n");
         goto err_after_open;
     }
 
@@ -115,12 +136,12 @@ int fd_start_incoming_migration(const char *infd)
     int fd;
     QEMUFile *f;
 
-    dprintf("Attempting to start an incoming migration via fd\n");
+    DPRINTF("Attempting to start an incoming migration via fd\n");
 
     fd = strtol(infd, NULL, 0);
     f = qemu_fdopen(fd, "rb");
     if(f == NULL) {
-        dprintf("Unable to apply qemu wrapper to file descriptor\n");
+        DPRINTF("Unable to apply qemu wrapper to file descriptor\n");
         return -errno;
     }
 

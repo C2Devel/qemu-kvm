@@ -55,9 +55,9 @@ void bmdma_cmd_writeb(void *opaque, uint32_t addr, uint32_t val)
 	if (bm->aiocb) {
 		qemu_aio_flush();
 		if (bm->aiocb)
-			printf("ide_dma_cancel: aiocb still pending");
+			printf("ide_dma_cancel: aiocb still pending\n");
 		if (bm->status & BM_STATUS_DMAING)
-			printf("ide_dma_cancel: BM_STATUS_DMAING still pending");
+			printf("ide_dma_cancel: BM_STATUS_DMAING still pending\n");
 	}
         bm->cmd = val & 0x09;
     } else {
@@ -145,6 +145,43 @@ static bool ide_bmdma_current_needed(void *opaque)
     return (bm->cur_prd_len != 0);
 }
 
+static bool ide_bmdma_status_needed(void *opaque)
+{
+    BMDMAState *bm = opaque;
+
+    /* Older versions abused some bits in the status register for internal
+     * error state. If any of these bits are set, we must add a subsection to
+     * transfer the real status register */
+    uint8_t abused_bits = BM_MIGRATION_COMPAT_STATUS_BITS;
+
+    return ((bm->status & abused_bits) != 0);
+}
+
+static void ide_bmdma_pre_save(void *opaque)
+{
+    BMDMAState *bm = opaque;
+    uint8_t abused_bits = BM_MIGRATION_COMPAT_STATUS_BITS;
+
+    bm->migration_compat_status =
+        (bm->status & ~abused_bits) | (bm->bus->error_status & abused_bits);
+}
+
+/* This function accesses bm->bus->error_status which is loaded only after
+ * BMDMA itself. This is why the function is called from ide_pci_post_load
+ * instead of being registered with VMState where it would run too early. */
+static int ide_bmdma_post_load(void *opaque, int version_id)
+{
+    BMDMAState *bm = opaque;
+    uint8_t abused_bits = BM_MIGRATION_COMPAT_STATUS_BITS;
+
+    if (bm->status == 0) {
+        bm->status = bm->migration_compat_status & ~abused_bits;
+        bm->bus->error_status |= bm->migration_compat_status & abused_bits;
+    }
+
+    return 0;
+}
+
 static const VMStateDescription vmstate_bmdma_current = {
     .name = "ide bmdma_current",
     .version_id = 1,
@@ -159,15 +196,26 @@ static const VMStateDescription vmstate_bmdma_current = {
     }
 };
 
+const VMStateDescription vmstate_bmdma_status = {
+    .name ="ide bmdma/status",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields = (VMStateField []) {
+        VMSTATE_UINT8(status, BMDMAState),
+        VMSTATE_END_OF_LIST()
+    }
+};
 
 static const VMStateDescription vmstate_bmdma = {
     .name = "ide bmdma",
     .version_id = 3,
     .minimum_version_id = 0,
     .minimum_version_id_old = 0,
+    .pre_save  = ide_bmdma_pre_save,
     .fields      = (VMStateField []) {
         VMSTATE_UINT8(cmd, BMDMAState),
-        VMSTATE_UINT8(status, BMDMAState),
+        VMSTATE_UINT8(migration_compat_status, BMDMAState),
         VMSTATE_UINT32(addr, BMDMAState),
         VMSTATE_INT64(sector_num, BMDMAState),
         VMSTATE_UINT32(nsector, BMDMAState),
@@ -178,6 +226,9 @@ static const VMStateDescription vmstate_bmdma = {
         {
             .vmsd = &vmstate_bmdma_current,
             .needed = ide_bmdma_current_needed,
+        }, {
+            .vmsd = &vmstate_bmdma_status,
+            .needed = ide_bmdma_status_needed,
         }, {
             /* empty */
         }
@@ -193,7 +244,9 @@ static int ide_pci_post_load(void *opaque, int version_id)
         /* current versions always store 0/1, but older version
            stored bigger values. We only need last bit */
         d->bmdma[i].unit &= 1;
+        ide_bmdma_post_load(&d->bmdma[i], -1);
     }
+
     return 0;
 }
 

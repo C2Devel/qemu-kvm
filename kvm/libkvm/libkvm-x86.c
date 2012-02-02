@@ -609,7 +609,8 @@ static struct kvm_cpuid2 *try_get_cpuid(kvm_context_t kvm, int max)
 #define R_ESI 6
 #define R_EDI 7
 
-uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg)
+uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function,
+                                 uint32_t index, int reg)
 {
 	struct kvm_cpuid2 *cpuid;
 	int i, max;
@@ -626,7 +627,8 @@ uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg)
 	}
 
 	for (i = 0; i < cpuid->nent; ++i) {
-		if (cpuid->entries[i].function == function) {
+		if (cpuid->entries[i].function == function &&
+		    cpuid->entries[i].index == index) {
 			switch (reg) {
 			case R_EAX:
 				ret = cpuid->entries[i].eax;
@@ -653,7 +655,7 @@ uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg)
 				 * according to the AMD spec:
 				 */
 				if (function == 0x80000001) {
-					cpuid_1_edx = kvm_get_supported_cpuid(kvm, 1, R_EDX);
+					cpuid_1_edx = kvm_get_supported_cpuid(kvm, 1, 0, R_EDX);
 					ret |= cpuid_1_edx & 0xdfeff7ff;
 				}
 				break;
@@ -668,7 +670,8 @@ uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg)
 
 #else
 
-uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg)
+uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function,
+                                 uint32_t index, int reg)
 {
 	return -1U;
 }

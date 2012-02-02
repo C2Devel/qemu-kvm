@@ -27,6 +27,7 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <grp.h>
 #include <zlib.h>
 
 /* Needed early for CONFIG_BSD etc. */
@@ -147,13 +148,12 @@ int main(int argc, char **argv)
 #include "qemu-char.h"
 #include "cache-utils.h"
 #include "block.h"
-#include "block_int.h"
+#include "blockdev.h"
 #include "block-migration.h"
 #include "dma.h"
 #include "audio/audio.h"
 #include "migration.h"
 #include "kvm.h"
-#include "balloon.h"
 #include "qemu-option.h"
 #include "qemu-config.h"
 #include "qemu-objects.h"
@@ -185,11 +185,6 @@ int main(int argc, char **argv)
 
 static const char *data_dir;
 const char *bios_name = NULL;
-/* Note: drives_table[MAX_DRIVES] is a dummy block driver if none available
-   to store the VM snapshots */
-struct drivelist drives = QTAILQ_HEAD_INITIALIZER(drives);
-struct driveoptlist driveopts = QTAILQ_HEAD_INITIALIZER(driveopts);
-DriveInfo *extboot_drive = NULL;
 enum vga_retrace_method vga_retrace_method = VGA_RETRACE_DUMB;
 static DisplayState *display_state;
 DisplayType display_type = DT_DEFAULT;
@@ -198,9 +193,7 @@ const char* keyboard_layout = NULL;
 ram_addr_t ram_size;
 int nb_nics;
 NICInfo nd_table[MAX_NICS];
-int vm_running;
 int autostart;
-int incoming_expected; /* Started with -incoming and waiting for incoming */
 static int rtc_utc = 1;
 static int rtc_date_offset = -1; /* -1 means no change */
 QEMUClock *rtc_clock;
@@ -308,6 +301,9 @@ uint8_t qemu_uuid[16];
 static QEMUBootSetHandler *boot_set_handler;
 static void *boot_set_opaque;
 
+static NotifierList exit_notifiers =
+    NOTIFIER_LIST_INITIALIZER(exit_notifiers);
+
 int kvm_allowed = -1;
 uint32_t xen_domid;
 enum xen_mode xen_mode = XEN_EMULATE;
@@ -361,6 +357,131 @@ static int default_driver_check(QemuOpts *opts, void *opaque)
 target_phys_addr_t isa_mem_base = 0;
 PicState2 *isa_pic;
 
+/* QEMU state */
+
+static RunState current_run_state = RUN_STATE_NO_STATE;
+
+typedef struct {
+    RunState from;
+    RunState to;
+} RunStateTransition;
+
+static const RunStateTransition runstate_transitions_def[] = {
+    /*     from      ->     to      */
+    { RUN_STATE_NO_STATE, RUN_STATE_RUNNING },
+    { RUN_STATE_NO_STATE, RUN_STATE_INMIGRATE },
+    { RUN_STATE_NO_STATE, RUN_STATE_PRELAUNCH },
+
+    { RUN_STATE_DEBUG, RUN_STATE_RUNNING },
+
+    { RUN_STATE_INMIGRATE, RUN_STATE_RUNNING },
+    { RUN_STATE_INMIGRATE, RUN_STATE_PRELAUNCH },
+
+    { RUN_STATE_INTERNAL_ERROR, RUN_STATE_PAUSED },
+    { RUN_STATE_INTERNAL_ERROR, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_IO_ERROR, RUN_STATE_RUNNING },
+    { RUN_STATE_IO_ERROR, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_PAUSED, RUN_STATE_RUNNING },
+    { RUN_STATE_PAUSED, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_POSTMIGRATE, RUN_STATE_RUNNING },
+    { RUN_STATE_POSTMIGRATE, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_PRELAUNCH, RUN_STATE_RUNNING },
+    { RUN_STATE_PRELAUNCH, RUN_STATE_FINISH_MIGRATE },
+    { RUN_STATE_PRELAUNCH, RUN_STATE_INMIGRATE },
+
+    { RUN_STATE_FINISH_MIGRATE, RUN_STATE_RUNNING },
+    { RUN_STATE_FINISH_MIGRATE, RUN_STATE_POSTMIGRATE },
+
+    { RUN_STATE_RESTORE_VM, RUN_STATE_RUNNING },
+
+    { RUN_STATE_RUNNING, RUN_STATE_DEBUG },
+    { RUN_STATE_RUNNING, RUN_STATE_INTERNAL_ERROR },
+    { RUN_STATE_RUNNING, RUN_STATE_IO_ERROR },
+    { RUN_STATE_RUNNING, RUN_STATE_PAUSED },
+    { RUN_STATE_RUNNING, RUN_STATE_FINISH_MIGRATE },
+    { RUN_STATE_RUNNING, RUN_STATE_RESTORE_VM },
+    { RUN_STATE_RUNNING, RUN_STATE_SAVE_VM },
+    { RUN_STATE_RUNNING, RUN_STATE_SHUTDOWN },
+    { RUN_STATE_RUNNING, RUN_STATE_WATCHDOG },
+
+    { RUN_STATE_SAVE_VM, RUN_STATE_RUNNING },
+
+    { RUN_STATE_SHUTDOWN, RUN_STATE_PAUSED },
+    { RUN_STATE_SHUTDOWN, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_WATCHDOG, RUN_STATE_RUNNING },
+    { RUN_STATE_WATCHDOG, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_MAX, RUN_STATE_MAX },
+};
+
+static bool runstate_valid_transitions[RUN_STATE_MAX][RUN_STATE_MAX];
+
+static const char *const runstate_name_tbl[RUN_STATE_MAX] = {
+    [RUN_STATE_DEBUG] = "debug",
+    [RUN_STATE_INMIGRATE] = "incoming-migration",
+    [RUN_STATE_INTERNAL_ERROR] = "internal-error",
+    [RUN_STATE_IO_ERROR] = "io-error",
+    [RUN_STATE_PAUSED] = "paused",
+    [RUN_STATE_POSTMIGRATE] = "post-migrate",
+    [RUN_STATE_PRELAUNCH] = "prelaunch",
+    [RUN_STATE_FINISH_MIGRATE] = "finish-migrate",
+    [RUN_STATE_RESTORE_VM] = "restore-vm",
+    [RUN_STATE_RUNNING] = "running",
+    [RUN_STATE_SAVE_VM] = "save-vm",
+    [RUN_STATE_SHUTDOWN] = "shutdown",
+    [RUN_STATE_WATCHDOG] = "watchdog",
+};
+
+bool runstate_check(RunState state)
+{
+    return current_run_state == state;
+}
+
+void runstate_init(void)
+{
+    const RunStateTransition *p;
+
+    memset(&runstate_valid_transitions, 0, sizeof(runstate_valid_transitions));
+
+    for (p = &runstate_transitions_def[0]; p->from != RUN_STATE_MAX; p++) {
+        runstate_valid_transitions[p->from][p->to] = true;
+    }
+}
+
+/* This function will abort() on invalid state transitions */
+void runstate_set(RunState new_state)
+{
+    assert(new_state < RUN_STATE_MAX);
+
+    if (!runstate_valid_transitions[current_run_state][new_state]) {
+        fprintf(stderr, "invalid runstate transition: %s -> %s\n",
+                runstate_name_tbl[current_run_state],
+                runstate_name_tbl[new_state]);
+        /* We've decided to disable this check in RHEL6 because we're not
+           confident enough that we've captured all valid transitions */
+        // abort();
+    }
+
+    current_run_state = new_state;
+}
+
+const char *runstate_as_string(void)
+{
+    assert(current_run_state > RUN_STATE_NO_STATE &&
+           current_run_state < RUN_STATE_MAX);
+    return runstate_name_tbl[current_run_state];
+}
+
+int runstate_is_running(void)
+{
+    return runstate_check(RUN_STATE_RUNNING);
+}
+
 /***********************************************************/
 void hw_error(const char *fmt, ...)
 {
@@ -397,39 +518,6 @@ static void set_proc_name(const char *s)
 #endif    	
 }
  
-/***************/
-/* ballooning */
-
-static QEMUBalloonEvent *qemu_balloon_event;
-void *qemu_balloon_event_opaque;
-
-void qemu_add_balloon_handler(QEMUBalloonEvent *func, void *opaque)
-{
-    qemu_balloon_event = func;
-    qemu_balloon_event_opaque = opaque;
-}
-
-int qemu_balloon(ram_addr_t target, MonitorCompletion cb, void *opaque)
-{
-    if (qemu_balloon_event) {
-        trace_balloon_event(qemu_balloon_event_opaque, target);
-        qemu_balloon_event(qemu_balloon_event_opaque, target, cb, opaque);
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-int qemu_balloon_status(MonitorCompletion cb, void *opaque)
-{
-    if (qemu_balloon_event) {
-        qemu_balloon_event(qemu_balloon_event_opaque, 0, cb, opaque);
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 /***********************************************************/
 /* keyboard/mouse */
 
@@ -745,7 +833,7 @@ static void init_get_clock(void)
     clock_freq = freq.QuadPart;
 }
 
-static int64_t get_clock(void)
+int64_t get_clock(void)
 {
     LARGE_INTEGER ti;
     QueryPerformanceCounter(&ti);
@@ -770,7 +858,7 @@ static void init_get_clock(void)
 #endif
 }
 
-static int64_t get_clock(void)
+int64_t get_clock(void)
 {
 #if defined(__linux__) || (defined(__FreeBSD__) && __FreeBSD_version >= 500000) \
 	|| defined(__DragonFly__) || defined(__FreeBSD_kernel__)
@@ -965,7 +1053,7 @@ static void icount_adjust(void)
     int64_t delta;
     static int64_t last_delta;
     /* If the VM is not running, then do nothing.  */
-    if (!vm_running)
+    if (!runstate_is_running())
         return;
 
     cur_time = cpu_get_clock();
@@ -1884,6 +1972,8 @@ static int socket_init(void)
 }
 #endif
 
+#if 0 /* Disabled for Red Hat Enterprise Linux */
+
 /***********************************************************/
 /* Bluetooth support */
 static int nb_hcis;
@@ -2075,589 +2165,23 @@ static int bt_parse(const char *opt)
     return 1;
 }
 
+#endif
+
 /***********************************************************/
 /* QEMU Block devices */
 
-#define HD_ALIAS "index=%d,media=disk"
-#define CDROM_ALIAS "index=2,media=cdrom"
-#define FD_ALIAS "index=%d,if=floppy"
-#define PFLASH_ALIAS "if=pflash"
-#define MTD_ALIAS "if=mtd"
-#define SD_ALIAS "index=0,if=sd"
-
-QemuOpts *drive_add(const char *file, const char *fmt, ...)
-{
-    va_list ap;
-    char optstr[1024];
-    QemuOpts *opts;
-
-    va_start(ap, fmt);
-    vsnprintf(optstr, sizeof(optstr), fmt, ap);
-    va_end(ap);
-
-    opts = qemu_opts_parse(&qemu_drive_opts, optstr, 0);
-    if (!opts) {
-        return NULL;
-    }
-    if (file)
-        qemu_opt_set(opts, "file", file);
-    return opts;
-}
-
-DriveInfo *drive_get(BlockInterfaceType type, int bus, int unit)
-{
-    DriveInfo *dinfo;
-
-    /* seek interface, bus and unit */
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (dinfo->type == type &&
-	    dinfo->bus == bus &&
-	    dinfo->unit == unit)
-            return dinfo;
-    }
-
-    return NULL;
-}
-
-DriveInfo *drive_get_by_id(const char *id)
-{
-    DriveInfo *dinfo;
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (strcmp(id, dinfo->id))
-            continue;
-        return dinfo;
-    }
-    return NULL;
-}
-
-DriveInfo *drive_get_by_blockdev(BlockDriverState *bs)
-{
-    DriveInfo *dinfo;
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (dinfo->bdrv == bs) {
-            return dinfo;
-        }
-    }
-    return NULL;
-}
-
-/*
- * We automatically delete the drive when a device using it gets
- * unplugged.  Questionable feature, but we can't just drop it.
- * Device models call blockdev_mark_auto_del() to schedule the
- * automatic deletion, and generic qdev code calls blockdev_auto_del()
- * when deletion is actually safe.
- */
-void blockdev_mark_auto_del(BlockDriverState *bs)
-{
-    DriveInfo *dinfo = drive_get_by_blockdev(bs);
-
-    if (dinfo) {
-        dinfo->auto_del = 1;
-    }
-}
-
-void blockdev_auto_del(BlockDriverState *bs)
-{
-    DriveInfo *dinfo = drive_get_by_blockdev(bs);
-
-    if (dinfo && dinfo->auto_del) {
-        drive_uninit(dinfo);
-    }
-}
-
-int drive_get_max_bus(BlockInterfaceType type)
-{
-    int max_bus;
-    DriveInfo *dinfo;
-
-    max_bus = -1;
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if(dinfo->type == type &&
-           dinfo->bus > max_bus)
-            max_bus = dinfo->bus;
-    }
-    return max_bus;
-}
-
-const char *drive_get_serial(BlockDriverState *bdrv)
-{
-    DriveInfo *dinfo;
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (dinfo->bdrv == bdrv)
-            return dinfo->serial;
-    }
-
-    return "\0";
-}
-
-BlockInterfaceErrorAction drive_get_on_error(
-    BlockDriverState *bdrv, int is_read)
-{
-    DriveInfo *dinfo;
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (dinfo->bdrv == bdrv)
-            return is_read ? dinfo->on_read_error : dinfo->on_write_error;
-    }
-
-    return is_read ? BLOCK_ERR_REPORT : BLOCK_ERR_STOP_ENOSPC;
-}
-
-static void bdrv_format_print(void *opaque, const char *name)
-{
-    fprintf(stderr, " %s", name);
-}
-
-void drive_uninit(DriveInfo *dinfo)
-{
-    qemu_opts_del(dinfo->opts);
-    bdrv_delete(dinfo->bdrv);
-    QTAILQ_REMOVE(&drives, dinfo, next);
-    qemu_free(dinfo->file);
-    qemu_free(dinfo);
-}
-
-static int parse_block_error_action(const char *buf, int is_read)
-{
-    if (!strcmp(buf, "ignore")) {
-        return BLOCK_ERR_IGNORE;
-    } else if (!is_read && !strcmp(buf, "enospc")) {
-        return BLOCK_ERR_STOP_ENOSPC;
-    } else if (!strcmp(buf, "stop")) {
-        return BLOCK_ERR_STOP_ANY;
-    } else if (!strcmp(buf, "report")) {
-        return BLOCK_ERR_REPORT;
-    } else {
-        fprintf(stderr, "qemu: '%s' invalid %s error action\n",
-            buf, is_read ? "read" : "write");
-        return -1;
-    }
-}
-
-static int drive_open(DriveInfo *dinfo)
-{
-    int res = bdrv_open(dinfo->bdrv, dinfo->file, dinfo->bdrv_flags, dinfo->drv);
-
-    if (res < 0) {
-        fprintf(stderr, "qemu: could not open disk image %s: %s\n",
-                        dinfo->file, strerror(-res));
-    }
-    return res;
-}
-
-int drives_reopen(void)
-{
-    DriveInfo *dinfo;
-
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        if (dinfo->opened && !bdrv_is_read_only(dinfo->bdrv)) {
-            int res;
-            int media_changed = dinfo->bdrv->media_changed;
-            bdrv_close(dinfo->bdrv);
-            res = drive_open(dinfo);
-            dinfo->bdrv->media_changed = media_changed;
-            if (res) {
-		    fprintf(stderr, "qemu: re-open of %s failed wth error %d\n",
-			    dinfo->file, res);
-		    return res;
-	    }
-        }
-    }
-    return 0;
-}
-
-DriveInfo *drive_init(QemuOpts *opts, void *opaque,
-                      int *fatal_error)
-{
-    const char *buf;
-    const char *file = NULL;
-    char devname[128];
-    const char *serial;
-    const char *mediastr = "";
-    BlockInterfaceType type;
-    enum { MEDIA_DISK, MEDIA_CDROM } media;
-    int bus_id, unit_id;
-    int cyls, heads, secs, translation;
-    BlockDriver *drv = NULL;
-    QEMUMachine *machine = opaque;
-    int max_devs;
-    int index;
-    int ro = 0;
-    int bdrv_flags = 0;
-    int on_read_error, on_write_error;
-    const char *devaddr;
-    DriveInfo *dinfo;
-    int is_extboot = 0;
-    int snapshot = 0;
-
-    *fatal_error = 1;
-
-    translation = BIOS_ATA_TRANSLATION_AUTO;
-
-    if (machine && machine->use_scsi) {
-        type = IF_SCSI;
-        max_devs = MAX_SCSI_DEVS;
-        pstrcpy(devname, sizeof(devname), "scsi");
-    } else {
-        type = IF_IDE;
-        max_devs = MAX_IDE_DEVS;
-        pstrcpy(devname, sizeof(devname), "ide");
-    }
-    media = MEDIA_DISK;
-
-    /* extract parameters */
-    bus_id  = qemu_opt_get_number(opts, "bus", 0);
-    unit_id = qemu_opt_get_number(opts, "unit", -1);
-    index   = qemu_opt_get_number(opts, "index", -1);
-
-    cyls  = qemu_opt_get_number(opts, "cyls", 0);
-    heads = qemu_opt_get_number(opts, "heads", 0);
-    secs  = qemu_opt_get_number(opts, "secs", 0);
-
-    snapshot = qemu_opt_get_bool(opts, "snapshot", 0);
-    ro = qemu_opt_get_bool(opts, "readonly", 0);
-
-    file = qemu_opt_get(opts, "file");
-    serial = qemu_opt_get(opts, "serial");
-
-    if ((buf = qemu_opt_get(opts, "if")) != NULL) {
-        pstrcpy(devname, sizeof(devname), buf);
-        if (!strcmp(buf, "ide")) {
-	    type = IF_IDE;
-            max_devs = MAX_IDE_DEVS;
-        } else if (!strcmp(buf, "scsi")) {
-	    type = IF_SCSI;
-            max_devs = MAX_SCSI_DEVS;
-        } else if (!strcmp(buf, "floppy")) {
-	    type = IF_FLOPPY;
-            max_devs = 0;
-        } else if (!strcmp(buf, "pflash")) {
-	    type = IF_PFLASH;
-            max_devs = 0;
-	} else if (!strcmp(buf, "mtd")) {
-	    type = IF_MTD;
-            max_devs = 0;
-	} else if (!strcmp(buf, "sd")) {
-	    type = IF_SD;
-            max_devs = 0;
-        } else if (!strcmp(buf, "virtio")) {
-            type = IF_VIRTIO;
-            max_devs = 0;
-	} else if (!strcmp(buf, "xen")) {
-	    type = IF_XEN;
-            max_devs = 0;
-	} else if (!strcmp(buf, "none")) {
-	    type = IF_NONE;
-            max_devs = 0;
-	} else {
-            fprintf(stderr, "qemu: unsupported bus type '%s'\n", buf);
-            return NULL;
-	}
-    }
-
-    if (cyls || heads || secs) {
-        if (cyls < 1 || (type == IF_IDE && cyls > 16383)) {
-            fprintf(stderr, "qemu: '%s' invalid physical cyls number\n", buf);
-	    return NULL;
-	}
-        if (heads < 1 || (type == IF_IDE && heads > 16)) {
-            fprintf(stderr, "qemu: '%s' invalid physical heads number\n", buf);
-	    return NULL;
-	}
-        if (secs < 1 || (type == IF_IDE && secs > 63)) {
-            fprintf(stderr, "qemu: '%s' invalid physical secs number\n", buf);
-	    return NULL;
-	}
-    }
-
-    if ((buf = qemu_opt_get(opts, "trans")) != NULL) {
-        if (!cyls) {
-            fprintf(stderr,
-                    "qemu: '%s' trans must be used with cyls,heads and secs\n",
-                    buf);
-            return NULL;
-        }
-        if (!strcmp(buf, "none"))
-            translation = BIOS_ATA_TRANSLATION_NONE;
-        else if (!strcmp(buf, "lba"))
-            translation = BIOS_ATA_TRANSLATION_LBA;
-        else if (!strcmp(buf, "auto"))
-            translation = BIOS_ATA_TRANSLATION_AUTO;
-	else {
-            fprintf(stderr, "qemu: '%s' invalid translation type\n", buf);
-	    return NULL;
-	}
-    }
-
-    if ((buf = qemu_opt_get(opts, "media")) != NULL) {
-        if (!strcmp(buf, "disk")) {
-	    media = MEDIA_DISK;
-	} else if (!strcmp(buf, "cdrom")) {
-            if (cyls || secs || heads) {
-                fprintf(stderr,
-                        "qemu: '%s' invalid physical CHS format\n", buf);
-	        return NULL;
-            }
-	    media = MEDIA_CDROM;
-	} else {
-	    fprintf(stderr, "qemu: '%s' invalid media\n", buf);
-	    return NULL;
-	}
-    }
-
-    if ((buf = qemu_opt_get(opts, "cache")) != NULL) {
-        if (!strcmp(buf, "off") || !strcmp(buf, "none")) {
-            bdrv_flags |= BDRV_O_NOCACHE;
-        } else if (!strcmp(buf, "writeback")) {
-            bdrv_flags |= BDRV_O_CACHE_WB;
-        } else if (!strcmp(buf, "unsafe")) {
-            bdrv_flags |= BDRV_O_CACHE_WB;
-            bdrv_flags |= BDRV_O_NO_FLUSH;
-        } else if (!strcmp(buf, "writethrough")) {
-            /* this is the default */
-        } else {
-           fprintf(stderr, "qemu: invalid cache option\n");
-           return NULL;
-        }
-    }
-
-#ifdef CONFIG_LINUX_AIO
-    if ((buf = qemu_opt_get(opts, "aio")) != NULL) {
-        if (!strcmp(buf, "native")) {
-            bdrv_flags |= BDRV_O_NATIVE_AIO;
-        } else if (!strcmp(buf, "threads")) {
-            /* this is the default */
-        } else {
-           fprintf(stderr, "qemu: invalid aio option\n");
-           return NULL;
-        }
-    }
-#endif
-
-    if ((buf = qemu_opt_get(opts, "format")) != NULL) {
-       if (strcmp(buf, "?") == 0) {
-            fprintf(stderr, "qemu: Supported formats:");
-            bdrv_iterate_format(bdrv_format_print, NULL);
-            fprintf(stderr, "\n");
-	    return NULL;
-        }
-        drv = bdrv_find_whitelisted_format(buf);
-        if (!drv) {
-            fprintf(stderr, "qemu: '%s' invalid format\n", buf);
-            return NULL;
-        }
-    }
-
-    is_extboot = qemu_opt_get_bool(opts, "boot", 0);
-    if (is_extboot && extboot_drive) {
-        fprintf(stderr, "qemu: two bootable drives specified\n");
-        return NULL;
-    }
-
-    on_write_error = BLOCK_ERR_STOP_ENOSPC;
-    if ((buf = qemu_opt_get(opts, "werror")) != NULL) {
-        if (type != IF_IDE && type != IF_SCSI && type != IF_VIRTIO && type != IF_NONE) {
-            fprintf(stderr, "werror is no supported by this format\n");
-            return NULL;
-        }
-
-        on_write_error = parse_block_error_action(buf, 0);
-        if (on_write_error < 0) {
-            return NULL;
-        }
-    }
-
-    on_read_error = BLOCK_ERR_REPORT;
-    if ((buf = qemu_opt_get(opts, "rerror")) != NULL) {
-        if (type != IF_IDE && type != IF_VIRTIO && type != IF_NONE) {
-            fprintf(stderr, "rerror is no supported by this format\n");
-            return NULL;
-        }
-
-        on_read_error = parse_block_error_action(buf, 1);
-        if (on_read_error < 0) {
-            return NULL;
-        }
-    }
-
-    if ((devaddr = qemu_opt_get(opts, "addr")) != NULL) {
-        if (type != IF_VIRTIO) {
-            fprintf(stderr, "addr is not supported\n");
-            return NULL;
-        }
-    }
-
-    /* compute bus and unit according index */
-
-    if (index != -1) {
-        if (bus_id != 0 || unit_id != -1) {
-            fprintf(stderr,
-                    "qemu: index cannot be used with bus and unit\n");
-            return NULL;
-        }
-        if (max_devs == 0)
-        {
-            unit_id = index;
-            bus_id = 0;
-        } else {
-            unit_id = index % max_devs;
-            bus_id = index / max_devs;
-        }
-    }
-
-    /* if user doesn't specify a unit_id,
-     * try to find the first free
-     */
-
-    if (unit_id == -1) {
-       unit_id = 0;
-       while (drive_get(type, bus_id, unit_id) != NULL) {
-           unit_id++;
-           if (max_devs && unit_id >= max_devs) {
-               unit_id -= max_devs;
-               bus_id++;
-           }
-       }
-    }
-
-    /* check unit id */
-
-    if (max_devs && unit_id >= max_devs) {
-        fprintf(stderr, "qemu: unit %d too big (max is %d)\n",
-                unit_id, max_devs - 1);
-        return NULL;
-    }
-
-    /*
-     * ignore multiple definitions
-     */
-
-    if (drive_get(type, bus_id, unit_id) != NULL) {
-        *fatal_error = 0;
-        return NULL;
-    }
-
-    /* init */
-
-    dinfo = qemu_mallocz(sizeof(*dinfo));
-    if ((buf = qemu_opts_id(opts)) != NULL) {
-        dinfo->id = qemu_strdup(buf);
-    } else {
-        /* no id supplied -> create one */
-        dinfo->id = qemu_mallocz(32);
-        if (type == IF_IDE || type == IF_SCSI)
-            mediastr = (media == MEDIA_CDROM) ? "-cd" : "-hd";
-        if (max_devs)
-            snprintf(dinfo->id, 32, "%s%i%s%i",
-                     devname, bus_id, mediastr, unit_id);
-        else
-            snprintf(dinfo->id, 32, "%s%s%i",
-                     devname, mediastr, unit_id);
-    }
-    dinfo->bdrv = bdrv_new(dinfo->id);
-    dinfo->devaddr = devaddr;
-    dinfo->type = type;
-    dinfo->bus = bus_id;
-    dinfo->unit = unit_id;
-    dinfo->on_read_error = on_read_error;
-    dinfo->on_write_error = on_write_error;
-    dinfo->opts = opts;
-    if (serial)
-        strncpy(dinfo->serial, serial, sizeof(dinfo->serial) - 1);
-    QTAILQ_INSERT_TAIL(&drives, dinfo, next);
-    if (is_extboot) {
-        extboot_drive = dinfo;
-    }
-
-    switch(type) {
-    case IF_IDE:
-    case IF_SCSI:
-    case IF_XEN:
-    case IF_NONE:
-        switch(media) {
-	case MEDIA_DISK:
-            if (cyls != 0) {
-                bdrv_set_geometry_hint(dinfo->bdrv, cyls, heads, secs);
-                bdrv_set_translation_hint(dinfo->bdrv, translation);
-            }
-	    break;
-	case MEDIA_CDROM:
-            bdrv_set_type_hint(dinfo->bdrv, BDRV_TYPE_CDROM);
-	    break;
-	}
-        break;
-    case IF_SD:
-        /* FIXME: This isn't really a floppy, but it's a reasonable
-           approximation.  */
-    case IF_FLOPPY:
-        bdrv_set_type_hint(dinfo->bdrv, BDRV_TYPE_FLOPPY);
-        break;
-    case IF_PFLASH:
-    case IF_MTD:
-        break;
-    case IF_VIRTIO:
-        /* add virtio block device */
-        opts = qemu_opts_create(&qemu_device_opts, NULL, 0);
-        qemu_opt_set(opts, "driver", "virtio-blk-pci");
-        qemu_opt_set(opts, "drive", dinfo->id);
-        if (devaddr)
-            qemu_opt_set(opts, "addr", devaddr);
-        break;
-    case IF_COUNT:
-        abort();
-    }
-    if (!file) {
-        *fatal_error = 0;
-        return NULL;
-    }
-    if (snapshot) {
-        /* always use write-back with snapshot */
-        bdrv_flags &= ~BDRV_O_CACHE_MASK;
-        bdrv_flags |= (BDRV_O_SNAPSHOT|BDRV_O_CACHE_WB);
-    }
-
-    if (media == MEDIA_CDROM) {
-        /* mark CDROM as read-only. CDROM is fine for any interface, don't check */
-        ro = 1;
-    } else if (ro == 1) {
-        if (type != IF_SCSI && type != IF_VIRTIO && type != IF_FLOPPY && type != IF_NONE) {
-            fprintf(stderr, "qemu: readonly flag not supported for drive with this interface\n");
-            return NULL;
-        }
-    }
-    bdrv_flags |= ro ? 0 : BDRV_O_RDWR;
-
-    dinfo->file = qemu_strdup(file);
-    dinfo->bdrv_flags = bdrv_flags;
-    dinfo->drv = drv;
-    dinfo->opened = 1;
-
-    if (drive_open(dinfo) < 0) {
-        *fatal_error = 1;
-        return NULL;
-    }
-
-    if (bdrv_key_required(dinfo->bdrv))
-        autostart = 0;
-    *fatal_error = 0;
-    return dinfo;
-}
+#define HD_OPTS "media=disk"
+#define CDROM_OPTS "media=cdrom"
+#define FD_OPTS ""
+#define PFLASH_OPTS ""
+#define MTD_OPTS ""
+#define SD_OPTS ""
 
 static int drive_init_func(QemuOpts *opts, void *opaque)
 {
-    QEMUMachine *machine = opaque;
-    int fatal_error = 0;
+    int *use_scsi = opaque;
 
-    if (drive_init(opts, machine, &fatal_error) == NULL) {
-        if (fatal_error)
-            return 1;
-    }
-    return 0;
+    return drive_init(opts, *use_scsi) == NULL;
 }
 
 static int drive_enable_snapshot(QemuOpts *opts, void *opaque)
@@ -2666,6 +2190,29 @@ static int drive_enable_snapshot(QemuOpts *opts, void *opaque)
         qemu_opt_set(opts, "snapshot", "on");
     }
     return 0;
+}
+
+static void default_drive(int enable, int snapshot, int use_scsi,
+                          BlockInterfaceType type, int index,
+                          const char *optstr)
+{
+    QemuOpts *opts;
+
+    if (type == IF_DEFAULT) {
+        type = use_scsi ? IF_SCSI : IF_IDE;
+    }
+
+    if (!enable || drive_get_by_index(type, index)) {
+        return;
+    }
+
+    opts = drive_add(type, index, NULL, optstr);
+    if (snapshot) {
+        drive_enable_snapshot(opts, NULL);
+    }
+    if (!drive_init(opts, use_scsi)) {
+        exit(1);
+    }
 }
 
 void qemu_register_boot_set(QEMUBootSetHandler *func, void *opaque)
@@ -2926,9 +2473,11 @@ static int usb_device_add(const char *devname, int is_hotplug)
     /* the other ones */
     if (strstart(devname, "host:", &p)) {
         dev = usb_host_device_open(p);
+#if 0 /* Disabled for Red Hat Enterprise Linux */
     } else if (!strcmp(devname, "bt") || strstart(devname, "bt:", &p)) {
         dev = usb_bt_init(devname[2] ? hci_init(p) :
                         bt_new_hci(qemu_find_bt_vlan(0)));
+#endif
     } else {
         return -1;
     }
@@ -3291,7 +2840,7 @@ static int ram_save_block(QEMUFile *f)
             r = kvm_update_dirty_pages_log();
             if (r) {
                 fprintf(stderr, "%s: update dirty pages log failed %d\n", __FUNCTION__, r);
-                qemu_file_set_error(f);
+                qemu_file_set_error(f, -EINVAL);
                 return 0;
             }
         }
@@ -3380,6 +2929,7 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     uint64_t t0;
     double bwidth = 0;
     int i;
+    int ret;
 
     if (stage < 0) {
         cpu_physical_memory_set_dirty_tracking(0);
@@ -3387,8 +2937,8 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     }
 
     if (cpu_physical_sync_dirty_bitmap(0, TARGET_PHYS_ADDR_MAX) != 0) {
-        qemu_file_set_error(f);
-        return 0;
+        qemu_file_set_error(f, -EINVAL);
+        return -EINVAL;
     }
 
     if (stage == 1) {
@@ -3423,9 +2973,7 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     t0 = get_clock();
 
     i = 0;
-    while (!qemu_file_rate_limit(f)) {
-        int ret;
-
+    while ((ret = qemu_file_rate_limit(f)) == 0) {
         ret = ram_save_block(f);
         bytes_transferred += ret * TARGET_PAGE_SIZE;
         if (ret == 0) /* no more blocks */
@@ -3442,6 +2990,10 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
             }
         }
         i++;
+    }
+
+    if (ret < 0) {
+        return ret;
     }
 
     t0 = get_clock() - t0;
@@ -3506,6 +3058,7 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 {
     ram_addr_t addr;
     int flags;
+    int error;
 
     if (version_id < 3 || version_id > 4)
         return -EINVAL;
@@ -3582,8 +3135,9 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
 
             qemu_get_buffer(f, host, TARGET_PAGE_SIZE);
         }
-        if (qemu_file_has_error(f)) {
-            return -EIO;
+        error = qemu_file_get_error(f);
+        if (error) {
+            return error;
         }
     } while (!(flags & RAM_SAVE_FLAG_EOS));
 
@@ -3691,14 +3245,14 @@ void qemu_del_vm_change_state_handler(VMChangeStateEntry *e)
     qemu_free (e);
 }
 
-static void vm_state_notify(int running, int reason)
+static void vm_state_notify(int running, RunState state)
 {
     VMChangeStateEntry *e;
 
-    trace_vm_state_notify(running, reason);
+    trace_vm_state_notify(running, state);
 
     for (e = vm_change_state_head.lh_first; e; e = e->entries.le_next) {
-        e->cb(e->opaque, running, reason);
+        e->cb(e->opaque, running, state);
     }
 }
 
@@ -3707,10 +3261,10 @@ static void pause_all_vcpus(void);
 
 void vm_start(void)
 {
-    if (!vm_running) {
+    if (!runstate_is_running()) {
         cpu_enable_ticks();
-        vm_running = 1;
-        vm_state_notify(1, 0);
+        runstate_set(RUN_STATE_RUNNING);
+        vm_state_notify(1, RUN_STATE_RUNNING);
         qemu_rearm_alarm_timer(alarm_timer);
         resume_all_vcpus();
         monitor_protocol_event(QEVENT_RESUME, NULL);
@@ -3728,15 +3282,15 @@ typedef struct QEMUResetEntry {
 static QTAILQ_HEAD(reset_handlers, QEMUResetEntry) reset_handlers =
     QTAILQ_HEAD_INITIALIZER(reset_handlers);
 static int reset_requested;
-static int shutdown_requested;
+static int shutdown_requested, shutdown_signal = -1;
+static pid_t shutdown_pid;
 static int powerdown_requested;
 static int debug_requested;
-static int vmstop_requested;
+static int vmstop_requested = RUN_STATE_NO_STATE;
 
 int qemu_no_shutdown(void)
 {
     int r = no_shutdown;
-    no_shutdown = 0;
     return r;
 }
 
@@ -3745,6 +3299,22 @@ int qemu_shutdown_requested(void)
     int r = shutdown_requested;
     shutdown_requested = 0;
     return r;
+}
+
+void qemu_kill_report(void)
+{
+    if (shutdown_signal != -1) {
+        fprintf(stderr, "qemu: terminating on signal %d", shutdown_signal);
+        if (shutdown_pid == 0) {
+            /* This happens for eg ^C at the terminal, so it's worth
+             * avoiding printing an odd message in that case.
+             */
+            fputc('\n', stderr);
+        } else {
+            fprintf(stderr, " from pid %d\n", shutdown_pid);
+        }
+        shutdown_signal = -1;
+    }
 }
 
 int qemu_reset_requested(void)
@@ -3768,20 +3338,20 @@ static int qemu_debug_requested(void)
     return r;
 }
 
-static int qemu_vmstop_requested(void)
+static RunState qemu_vmstop_requested(void)
 {
     int r = vmstop_requested;
-    vmstop_requested = 0;
+    vmstop_requested = RUN_STATE_NO_STATE;
     return r;
 }
 
-static void do_vm_stop(int reason)
+static void do_vm_stop(RunState state)
 {
-    if (vm_running) {
+    if (runstate_is_running()) {
         cpu_disable_ticks();
-        vm_running = 0;
         pause_all_vcpus();
-        vm_state_notify(0, reason);
+        runstate_set(state);
+        vm_state_notify(0, state);
         monitor_protocol_event(QEVENT_STOP, NULL);
     }
 }
@@ -3831,6 +3401,13 @@ void qemu_system_reset_request(void)
         cpu_exit(cpu_single_env);
     }
     qemu_notify_event();
+}
+
+void qemu_system_killed(int signal, pid_t pid)
+{
+    shutdown_signal = signal;
+    shutdown_pid = pid;
+    qemu_system_shutdown_request();
 }
 
 void qemu_system_shutdown_request(void)
@@ -3973,10 +3550,16 @@ int qemu_cpu_self(void *env)
 
 static void resume_all_vcpus(void)
 {
+    if (kvm_allowed) {
+        kvm_resume_all_threads();
+    }
 }
 
 static void pause_all_vcpus(void)
 {
+    if (kvm_allowed) {
+        kvm_pause_all_threads();
+    }
 }
 
 void qemu_cpu_kick(void *env)
@@ -4002,9 +3585,20 @@ void qemu_mutex_lock_iothread(void) {}
 void qemu_mutex_unlock_iothread(void) {}
 #endif
 
-void vm_stop(int reason)
+void vm_stop(RunState state)
 {
-    do_vm_stop(reason);
+    do_vm_stop(state);
+}
+
+/* does a state transition even if the VM is already stopped,
+   current state is forgotten forever */
+void vm_stop_force_state(RunState state)
+{
+    if (runstate_is_running()) {
+         vm_stop(state);
+    } else {
+        runstate_set(state);
+    }
 }
 
 #else /* CONFIG_IOTHREAD */
@@ -4307,7 +3901,7 @@ void qemu_notify_event(void)
     qemu_event_increment();
 }
 
-void vm_stop(int reason)
+void vm_stop(RunState reason)
 {
     QemuThread me;
     qemu_thread_self(&me);
@@ -4454,7 +4048,7 @@ void main_loop_wait(int timeout)
     }
 
     /* vm time timers */
-    if (vm_running) {
+    if (runstate_is_running()) {
         if (!cur_cpu || likely(!(cur_cpu->singlestep_enabled & SSTEP_NOTIMER)))
             qemu_run_timers(&active_timers[QEMU_CLOCK_VIRTUAL],
                             qemu_get_clock(vm_clock));
@@ -4522,7 +4116,7 @@ static void tcg_cpu_exec(void)
     for (; next_cpu != NULL; next_cpu = next_cpu->next_cpu) {
         CPUState *env = cur_cpu = next_cpu;
 
-        if (!vm_running)
+        if (!runstate_is_running())
             break;
         if (timer_alarm_pending) {
             timer_alarm_pending = 0;
@@ -4569,7 +4163,7 @@ static int qemu_calculate_timeout(void)
 #ifndef CONFIG_IOTHREAD
     int timeout;
 
-    if (!vm_running)
+    if (!runstate_is_running())
         timeout = 5000;
     else if (tcg_has_work())
         timeout = 0;
@@ -4634,7 +4228,7 @@ qemu_irq qemu_system_powerdown;
 
 static void main_loop(void)
 {
-    int r;
+    RunState r;
 
     if (kvm_enabled()) {
         kvm_main_loop();
@@ -4665,13 +4259,12 @@ static void main_loop(void)
         } while (vm_can_run());
 
         if (qemu_debug_requested()) {
-            vm_stop(EXCP_DEBUG);
+            vm_stop(RUN_STATE_DEBUG);
         }
         if (qemu_shutdown_requested()) {
             monitor_protocol_event(QEVENT_SHUTDOWN, NULL);
             if (no_shutdown) {
-                vm_stop(0);
-                no_shutdown = 0;
+                vm_stop(RUN_STATE_SHUTDOWN);
             } else
                 break;
         }
@@ -4679,6 +4272,10 @@ static void main_loop(void)
             pause_all_vcpus();
             qemu_system_reset();
             resume_all_vcpus();
+            if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
+                runstate_check(RUN_STATE_SHUTDOWN)) {
+                runstate_set(RUN_STATE_PAUSED);
+            }
         }
         if (qemu_powerdown_requested()) {
             monitor_protocol_event(QEVENT_POWERDOWN, NULL);
@@ -4699,9 +4296,9 @@ static void version(void)
 
 static void print_rh_warning(void)
 {
-    printf("\nWARNING: Direct use of qemu-kvm from the command line is unsupported."
-           "\nWARNING: Only use via libvirt."
-           "\nWARNING: Some options listed here may not be available in future releases.\n\n");
+    printf("\nWARNING: Direct use of qemu-kvm from the command line is not recommended by Red Hat.\n"
+             "WARNING: Some command line options listed here may not be available in future releases.\n"
+             "WARNING: Red Hat recommends the use of libvirt as the stable management interface.\n\n");
 }
 
 static void help(int exitcode)
@@ -5004,9 +4601,10 @@ int qemu_uuid_parse(const char *str, uint8_t *uuid)
 
 #ifndef _WIN32
 
-static void termsig_handler(int signal)
+static void termsig_handler(int signal, siginfo_t *info, void *c)
 {
-    qemu_system_shutdown_request();
+    no_shutdown = 0;
+    qemu_system_killed(info->si_signo, info->si_pid);
 }
 
 static void sighandler_setup(void)
@@ -5014,7 +4612,9 @@ static void sighandler_setup(void)
     struct sigaction act;
 
     memset(&act, 0, sizeof(act));
-    act.sa_handler = termsig_handler;
+    act.sa_sigaction = termsig_handler;
+    act.sa_flags = SA_SIGINFO;
+
     sigaction(SIGINT,  &act, NULL);
     sigaction(SIGHUP,  &act, NULL);
     sigaction(SIGTERM, &act, NULL);
@@ -5359,6 +4959,21 @@ static void qemu_run_machine_init_done_notifiers(void)
     notifier_list_notify(&machine_init_done_notifiers);
 }
 
+void qemu_add_exit_notifier(Notifier *notify)
+{
+    notifier_list_add(&exit_notifiers, notify);
+}
+
+void qemu_remove_exit_notifier(Notifier *notify)
+{
+    notifier_list_remove(&exit_notifiers, notify);
+}
+
+static void qemu_run_exit_notifiers(void)
+{
+    notifier_list_notify(&exit_notifiers);
+}
+
 static const QEMUOption *lookup_opt(int argc, char **argv,
                                     const char **poptarg, int *poptind)
 {
@@ -5434,7 +5049,10 @@ int main(int argc, char **argv, char **envp)
     int defconfig = 1;
     int defconfig_verbose = 0;
 
+    atexit(qemu_run_exit_notifiers);
     error_set_progname(argv[0]);
+
+    runstate_init();
 
     init_clocks();
 
@@ -5582,7 +5200,7 @@ int main(int argc, char **argv, char **envp)
         if (optind >= argc)
             break;
         if (argv[optind][0] != '-') {
-	    hda_opts = drive_add(argv[optind++], HD_ALIAS, 0);
+	    hda_opts = drive_add(IF_DEFAULT, 0, argv[optind++], HD_OPTS);
         } else {
             const QEMUOption *popt;
 
@@ -5622,24 +5240,29 @@ int main(int argc, char **argv, char **envp)
                 initrd_filename = optarg;
                 break;
             case QEMU_OPTION_hda:
-                if (cyls == 0)
-                    hda_opts = drive_add(optarg, HD_ALIAS, 0);
-                else
-                    hda_opts = drive_add(optarg, HD_ALIAS
-			     ",cyls=%d,heads=%d,secs=%d%s",
-                             0, cyls, heads, secs,
-                             translation == BIOS_ATA_TRANSLATION_LBA ?
+                {
+                    char buf[256];
+                    if (cyls == 0)
+                        snprintf(buf, sizeof(buf), "%s", HD_OPTS);
+                    else
+                        snprintf(buf, sizeof(buf),
+                                 "%s,cyls=%d,heads=%d,secs=%d%s",
+                                 HD_OPTS , cyls, heads, secs,
+                                 translation == BIOS_ATA_TRANSLATION_LBA ?
                                  ",trans=lba" :
-                             translation == BIOS_ATA_TRANSLATION_NONE ?
+                                 translation == BIOS_ATA_TRANSLATION_NONE ?
                                  ",trans=none" : "");
-                 break;
+                    drive_add(IF_DEFAULT, 0, optarg, buf);
+                    break;
+                }
             case QEMU_OPTION_hdb:
             case QEMU_OPTION_hdc:
             case QEMU_OPTION_hdd:
-                drive_add(optarg, HD_ALIAS, popt->index - QEMU_OPTION_hda);
+                drive_add(IF_DEFAULT, popt->index - QEMU_OPTION_hda, optarg,
+                          HD_OPTS);
                 break;
             case QEMU_OPTION_drive:
-                drive_add(NULL, "%s", optarg);
+                drive_def(optarg);
 	        break;
             case QEMU_OPTION_set:
                 if (qemu_set_option(optarg) != 0)
@@ -5650,13 +5273,13 @@ int main(int argc, char **argv, char **envp)
                     exit(1);
 	        break;
             case QEMU_OPTION_mtdblock:
-                drive_add(optarg, MTD_ALIAS);
+                drive_add(IF_MTD, -1, optarg, MTD_OPTS);
                 break;
             case QEMU_OPTION_sd:
-                drive_add(optarg, SD_ALIAS);
+                drive_add(IF_SD, 0, optarg, SD_OPTS);
                 break;
             case QEMU_OPTION_pflash:
-                drive_add(optarg, PFLASH_ALIAS);
+                drive_add(IF_PFLASH, -1, optarg, PFLASH_OPTS);
                 break;
             case QEMU_OPTION_snapshot:
                 snapshot = 1;
@@ -5735,7 +5358,7 @@ int main(int argc, char **argv, char **envp)
                 kernel_cmdline = optarg;
                 break;
             case QEMU_OPTION_cdrom:
-                drive_add(optarg, CDROM_ALIAS);
+                drive_add(IF_DEFAULT, 2, optarg, CDROM_OPTS);
                 break;
             case QEMU_OPTION_boot:
                 {
@@ -5788,7 +5411,8 @@ int main(int argc, char **argv, char **envp)
                 break;
             case QEMU_OPTION_fda:
             case QEMU_OPTION_fdb:
-                drive_add(optarg, FD_ALIAS, popt->index - QEMU_OPTION_fda);
+                drive_add(IF_FLOPPY, popt->index - QEMU_OPTION_fda,
+                          optarg, FD_OPTS);
                 break;
 #ifdef TARGET_I386
             case QEMU_OPTION_no_fd_bootchk:
@@ -6251,7 +5875,6 @@ int main(int argc, char **argv, char **envp)
                 break;
             case QEMU_OPTION_incoming:
                 incoming = optarg;
-                incoming_expected = true;
                 break;
             case QEMU_OPTION_nodefaults:
                 default_serial = 0;
@@ -6534,9 +6157,11 @@ int main(int argc, char **argv, char **envp)
         exit(1);
     }
 
+#if 0 /* Disabled for Red Hat Enterprise Linux */
     /* init the bluetooth world */
     if (foreach_device_config(DEV_BT, bt_parse))
         exit(1);
+#endif
 
     /* init the memory */
     if (ram_size == 0)
@@ -6549,26 +6174,18 @@ int main(int argc, char **argv, char **envp)
 
     blk_mig_init();
 
-    if (default_cdrom) {
-        /* we always create the cdrom drive, even if no disk is there */
-        drive_add(NULL, CDROM_ALIAS);
-    }
-
-    if (default_floppy) {
-        /* we always create at least one floppy */
-        drive_add(NULL, FD_ALIAS, 0);
-    }
-
-    if (default_sdcard) {
-        /* we always create one sd slot, even if no card is in it */
-        drive_add(NULL, SD_ALIAS);
-    }
-
     /* open the virtual block devices */
     if (snapshot)
         qemu_opts_foreach(&qemu_drive_opts, drive_enable_snapshot, NULL, 0);
-    if (qemu_opts_foreach(&qemu_drive_opts, drive_init_func, machine, 1) != 0)
+    if (qemu_opts_foreach(&qemu_drive_opts, drive_init_func, &machine->use_scsi, 1) != 0)
         exit(1);
+
+    default_drive(default_cdrom, snapshot, machine->use_scsi,
+                  IF_DEFAULT, 2, CDROM_OPTS);
+    default_drive(default_floppy, snapshot, machine->use_scsi,
+                  IF_FLOPPY, 0, FD_OPTS);
+    default_drive(default_sdcard, snapshot, machine->use_scsi,
+                  IF_SD, 0, SD_OPTS);
 
     vmstate_register(NULL, 0, &vmstate_timers ,&timers_state);
     register_savevm_live(NULL, "ram", 0, 4, NULL, ram_save_live, NULL,
@@ -6643,11 +6260,6 @@ int main(int argc, char **argv, char **envp)
                   kernel_filename, kernel_cmdline, initrd_filename, cpu_model);
 
 
-#ifndef _WIN32
-    /* must be after terminal init, SDL library changes signal handlers */
-    sighandler_setup();
-#endif
-
     for (env = first_cpu; env != NULL; env = env->next_cpu) {
         for (i = 0; i < nb_numa_nodes; i++) {
             if (node_cpumask[i] & (1 << env->cpu_index)) {
@@ -6709,6 +6321,11 @@ int main(int argc, char **argv, char **envp)
         break;
     }
 
+#ifndef _WIN32
+    /* must be after terminal init, SDL library changes signal handlers */
+    sighandler_setup();
+#endif
+
     /* init remote displays */
     if (vnc_display) {
         vnc_display_init(ds);
@@ -6767,6 +6384,7 @@ int main(int argc, char **argv, char **envp)
     }
 
     if (incoming) {
+        runstate_set(RUN_STATE_INMIGRATE);
         int ret = qemu_start_incoming_migration(incoming);
         if (ret < 0) {
             fprintf(stderr, "Migration failed. Exit code %s(%d), exiting.\n",
@@ -6775,6 +6393,8 @@ int main(int argc, char **argv, char **envp)
         }
     } else if (autostart) {
         vm_start();
+    } else {
+        runstate_set(RUN_STATE_PRELAUNCH);
     }
 
 #ifndef _WIN32
@@ -6821,6 +6441,11 @@ int main(int argc, char **argv, char **envp)
     if (run_as) {
         if (setgid(pwd->pw_gid) < 0) {
             fprintf(stderr, "Failed to setgid(%d)\n", pwd->pw_gid);
+            exit(1);
+        }
+        if (initgroups(pwd->pw_name, pwd->pw_gid) < 0) {
+            fprintf(stderr, "Failed to initgroups(\"%s\", %d)\n",
+                    pwd->pw_name, pwd->pw_gid);
             exit(1);
         }
         if (setuid(pwd->pw_uid) < 0) {

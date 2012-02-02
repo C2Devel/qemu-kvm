@@ -76,10 +76,6 @@ static void bmdma_map(PCIDevice *pci_dev, int region_num,
 
     for(i = 0;i < 2; i++) {
         BMDMAState *bm = &d->bmdma[i];
-        d->bus[i].bmdma = bm;
-        bm->bus = d->bus+i;
-        qemu_add_vm_change_state_handler(ide_dma_restart_cb, bm);
-
         register_ioport_write(addr, 1, 1, bmdma_cmd_writeb, bm);
 
         register_ioport_write(addr + 1, 3, 1, bmdma_writeb, bm);
@@ -92,6 +88,28 @@ static void bmdma_map(PCIDevice *pci_dev, int region_num,
         register_ioport_write(addr + 4, 4, 4, bmdma_addr_writel, bm);
         register_ioport_read(addr + 4, 4, 4, bmdma_addr_readl, bm);
         addr += 8;
+    }
+}
+
+static void pci_piix_init_ports(PCIIDEState *d) {
+    int i;
+    struct {
+        int iobase;
+        int iobase2;
+        int isairq;
+    } port_info[] = {
+        {0x1f0, 0x3f6, 14},
+        {0x170, 0x376, 15},
+    };
+
+    for (i = 0; i < 2; i++) {
+        ide_bus_new(&d->bus[i], &d->dev.qdev, i);
+        ide_init_ioport(&d->bus[i], port_info[i].iobase, port_info[i].iobase2);
+        ide_init2(&d->bus[i], isa_reserve_irq(port_info[i].isairq));
+
+        d->bus[i].bmdma = &d->bmdma[i];
+        d->bmdma[i].bus = &d->bus[i];
+        qemu_add_vm_change_state_handler(ide_dma_restart_cb, &d->bmdma[i]);
     }
 }
 
@@ -119,7 +137,6 @@ static int pci_piix_ide_initfn(PCIIDEState *d)
 
     pci_conf[0x09] = 0x80; // legacy ATA mode
     pci_config_set_class(pci_conf, PCI_CLASS_STORAGE_IDE);
-    pci_conf[PCI_HEADER_TYPE] = PCI_HEADER_TYPE_NORMAL; // header_type
 
     qemu_register_reset(piix3_reset, d);
 
@@ -127,13 +144,8 @@ static int pci_piix_ide_initfn(PCIIDEState *d)
 
     vmstate_register(&d->dev.qdev, 0, &vmstate_ide_pci, d);
 
-    ide_bus_new(&d->bus[0], &d->dev.qdev, 0);
-    ide_bus_new(&d->bus[1], &d->dev.qdev, 1);
-    ide_init_ioport(&d->bus[0], 0x1f0, 0x3f6);
-    ide_init_ioport(&d->bus[1], 0x170, 0x376);
+    pci_piix_init_ports(d);
 
-    ide_init2(&d->bus[0], isa_reserve_irq(14));
-    ide_init2(&d->bus[1], isa_reserve_irq(15));
     return 0;
 }
 

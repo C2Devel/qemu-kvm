@@ -863,6 +863,7 @@ int kvm_assign_set_msix_entry(kvm_context_t kvm,
                               struct kvm_assigned_msix_entry *entry);
 #endif
 
-uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function, int reg);
+uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function,
+                                 uint32_t index, int reg);
 
 #endif
