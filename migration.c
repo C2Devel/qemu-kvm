@@ -87,6 +87,8 @@ void process_incoming_migration(QEMUFile *f)
     } else {
         runstate_set(RUN_STATE_PRELAUNCH);
     }
+
+    monitor_protocol_event(QEVENT_INCOMING_FINISHED, NULL);
 }
 
 int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
