@@ -377,4 +377,4 @@ static void kvm_tpr_opt_setup(void)
     register_ioport_write(0x7e, 2, 2, vtpr_ioport_write16, NULL);
 }
 
-device_init(kvm_tpr_opt_setup);
+type_init(kvm_tpr_opt_setup);
