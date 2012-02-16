@@ -105,7 +105,7 @@ int kvm_create_irqchip(KVMState *s)
         s->irqchip_inject_ioctl = KVM_IRQ_LINE_STATUS;
     }
 #endif
-    s->irqchip_in_kernel = 1;
+    kvm_kernel_irqchip = true;
 
     r = kvm_init_irq_routing(s);
     if (r < 0) {
@@ -123,7 +123,7 @@ int kvm_set_irq(int irq, int level, int *status)
     struct kvm_irq_level event;
     int r;
 
-    if (!kvm_state->irqchip_in_kernel) {
+    if (!kvm_irqchip_in_kernel()) {
         return 0;
     }
     event.level = level;
@@ -150,7 +150,7 @@ int kvm_get_irqchip(KVMState *s, struct kvm_irqchip *chip)
 {
     int r;
 
-    if (!s->irqchip_in_kernel) {
+    if (!kvm_irqchip_in_kernel()) {
         return 0;
     }
     r = kvm_vm_ioctl(s, KVM_GET_IRQCHIP, chip);
@@ -164,7 +164,7 @@ int kvm_set_irqchip(KVMState *s, struct kvm_irqchip *chip)
 {
     int r;
 
-    if (!s->irqchip_in_kernel) {
+    if (!kvm_irqchip_in_kernel()) {
         return 0;
     }
     r = kvm_vm_ioctl(s, KVM_SET_IRQCHIP, chip);

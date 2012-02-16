@@ -892,7 +892,7 @@ static DeviceState *apic_init(void *env, uint8_t apic_id)
     static int apic_mapped;
 
 #ifdef UNUSED_UPSTREAM_KVM
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+    if (kvm_irqchip_in_kernel()) {
         dev = qdev_create(NULL, "kvm-apic");
     } else
 #endif
@@ -914,7 +914,7 @@ static DeviceState *apic_init(void *env, uint8_t apic_id)
 
 #ifdef UNUSED_UPSTREAM_KVM
     /* KVM does not support MSI yet. */
-    if (!kvm_enabled() || !kvm_irqchip_in_kernel()) {
+    if (!kvm_irqchip_in_kernel()) {
         msi_supported = true;
     }
 #else
