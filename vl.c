@@ -221,7 +221,6 @@ const char *watchdog;
 QEMUOptionRom option_rom[MAX_OPTION_ROMS];
 int nb_option_roms;
 int semihosting_enabled = 0;
-unsigned int kvm_shadow_memory = 0;
 int old_param = 0;
 const char *qemu_name;
 int alt_grab = 0;
@@ -2540,6 +2539,14 @@ int main(int argc, char **argv, char **envp)
                     exit(1);
                 }
                 break;
+#ifdef CONFIG_LIBISCSI
+            case QEMU_OPTION_iscsi:
+                opts = qemu_opts_parse(qemu_find_opts("iscsi"), optarg, 0);
+                if (!opts) {
+                    exit(1);
+                }
+                break;
+#endif
 #ifdef CONFIG_SLIRP
             case QEMU_OPTION_tftp:
                 legacy_tftp_prefix = optarg;
@@ -3008,9 +3015,6 @@ int main(int argc, char **argv, char **envp)
                 fprintf(stderr, "Warning: user space PIT time drift fix "
                                 "is no longer supported.\n");
 		break;
-            case QEMU_OPTION_kvm_shadow_memory:
-                kvm_shadow_memory = (int64_t)atoi(optarg) * 1024 * 1024 / 4096;
-                break;
             case QEMU_OPTION_name:
                 qemu_name = g_strdup(optarg);
 		 {
@@ -3399,7 +3403,7 @@ int main(int argc, char **argv, char **envp)
     if (foreach_device_config(DEV_DEBUGCON, debugcon_parse) < 0)
         exit(1);
 
-    module_call_init(MODULE_INIT_DEVICE);
+    module_call_init(MODULE_INIT_QOM);
 
     /* must be after qdev registration but before machine init */
     if (vga_model) {

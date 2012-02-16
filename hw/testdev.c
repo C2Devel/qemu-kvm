@@ -146,9 +146,9 @@ static TypeInfo testdev_info = {
     .class_init     = testdev_class_init,
 };
 
-static void testdev_register_devices(void)
+static void testdev_register_types(void)
 {
     type_register_static(&testdev_info);
 }
 
-device_init(testdev_register_devices)
+type_init(testdev_register_types)

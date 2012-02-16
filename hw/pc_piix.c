@@ -111,7 +111,7 @@ static void ioapic_init(GSIState *gsi_state)
     unsigned int i;
 
 #ifdef UNUSED_UPSTREAM_KVM
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+    if (kvm_irqchip_in_kernel()) {
         dev = qdev_create(NULL, "kvm-ioapic");
     } else
 #endif
@@ -194,7 +194,7 @@ static void pc_init1(MemoryRegion *system_memory,
     }
 
     gsi_state = g_malloc0(sizeof(*gsi_state));
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+    if (kvm_irqchip_in_kernel()) {
 #ifdef UNUSED_UPSTREAM_KVM
         kvm_piix3_setup_irq_routing(pci_enabled);
 #endif
@@ -223,7 +223,7 @@ static void pc_init1(MemoryRegion *system_memory,
     isa_bus_irqs(isa_bus, gsi);
 
 #ifdef UNUSED_UPSTREAM_KVM
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+    if (kvm_irqchip_in_kernel()) {
         i8259 = kvm_i8259_init(isa_bus);
     } else
 #endif

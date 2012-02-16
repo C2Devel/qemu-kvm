@@ -1774,12 +1774,12 @@ static TypeInfo assign_info = {
     .class_init         = assign_class_init,
 };
 
-static void assign_register_devices(void)
+static void assign_register_types(void)
 {
     type_register_static(&assign_info);
 }
 
-device_init(assign_register_devices)
+type_init(assign_register_types)
 
 /*
  * Scan the assigned devices for the devices that have an option ROM, and then

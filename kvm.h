@@ -23,11 +23,14 @@
 #endif
 
 extern int kvm_allowed;
+extern bool kvm_kernel_irqchip;
 
 #if defined CONFIG_KVM || !defined NEED_CPU_H
-#define kvm_enabled() (kvm_allowed)
+#define kvm_enabled()           (kvm_allowed)
+#define kvm_irqchip_in_kernel() (kvm_kernel_irqchip)
 #else
-#define kvm_enabled() (0)
+#define kvm_enabled()           (0)
+#define kvm_irqchip_in_kernel() (false)
 #endif
 
 struct kvm_run;
@@ -230,8 +233,6 @@ int kvm_msi_message_del(KVMMsiMessage *msg);
 int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new);
 
 int kvm_commit_irq_routes(void);
-
-int kvm_irqchip_in_kernel(void);
 
 int kvm_set_irq(int irq, int level, int *status);
 
