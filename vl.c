@@ -221,7 +221,6 @@ const char *watchdog;
 QEMUOptionRom option_rom[MAX_OPTION_ROMS];
 int nb_option_roms;
 int semihosting_enabled = 0;
-unsigned int kvm_shadow_memory = 0;
 int old_param = 0;
 const char *qemu_name;
 int alt_grab = 0;
@@ -3016,9 +3015,6 @@ int main(int argc, char **argv, char **envp)
                 fprintf(stderr, "Warning: user space PIT time drift fix "
                                 "is no longer supported.\n");
 		break;
-            case QEMU_OPTION_kvm_shadow_memory:
-                kvm_shadow_memory = (int64_t)atoi(optarg) * 1024 * 1024 / 4096;
-                break;
             case QEMU_OPTION_name:
                 qemu_name = g_strdup(optarg);
 		 {

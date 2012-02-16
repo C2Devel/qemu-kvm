@@ -32,7 +32,8 @@ DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
     "                selects emulated machine (-machine ? for list)\n"
     "                property accel=accel1[:accel2[:...]] selects accelerator\n"
     "                supported accelerators are kvm, xen, tcg (default: tcg)\n"
-    "                kernel_irqchip=on|off controls accelerated irqchip support\n",
+    "                kernel_irqchip=on|off controls accelerated irqchip support\n"
+    "                kvm_shadow_mem=size of KVM shadow MMU\n",
     QEMU_ARCH_ALL)
 STEXI
 @item -machine [type=]@var{name}[,prop=@var{value}[,...]]
@@ -47,6 +48,8 @@ than one accelerator specified, the next one is used if the previous one fails
 to initialize.
 @item kernel_irqchip=on|off
 Enables in-kernel irqchip support for the chosen accelerator when available.
+@item kvm_shadow_mem=size
+Defines the size of the KVM shadow MMU.
 @end table
 ETEXI
 
@@ -2697,10 +2700,6 @@ DEF("no-kvm-pit-reinjection", 0, QEMU_OPTION_no_kvm_pit_reinjection,
     QEMU_ARCH_I386)
 HXCOMM -tdf is deprecated and ignored today
 DEF("tdf", 0, QEMU_OPTION_tdf, "", QEMU_ARCH_ALL)
-DEF("kvm-shadow-memory", HAS_ARG, QEMU_OPTION_kvm_shadow_memory,
-    "-kvm-shadow-memory MEGABYTES\n"
-    "                allocate MEGABYTES for kvm mmu shadowing\n",
-    QEMU_ARCH_I386)
 
 HXCOMM This is the last statement. Insert new options before this line!
 STEXI

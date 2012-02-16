@@ -665,7 +665,9 @@ static int kvm_create_pit(KVMState *s);
 
 int kvm_arch_init(KVMState *s)
 {
+    QemuOptsList *list = qemu_find_opts("machine");
     uint64_t identity_base = 0xfffbc000;
+    uint64_t shadow_mem;
     int ret;
     struct utsname utsname;
 
@@ -717,13 +719,17 @@ int kvm_arch_init(KVMState *s)
         return ret;
     }
 
-    if (kvm_shadow_memory) {
-        ret = kvm_vm_ioctl(s, KVM_SET_NR_MMU_PAGES, kvm_shadow_memory);
-        if (ret < 0) {
-            return ret;
+    if (!QTAILQ_EMPTY(&list->head)) {
+        shadow_mem = qemu_opt_get_size(QTAILQ_FIRST(&list->head),
+                                       "kvm_shadow_mem", -1);
+        if (shadow_mem != -1) {
+            shadow_mem /= 4096;
+            ret = kvm_vm_ioctl(s, KVM_SET_NR_MMU_PAGES, shadow_mem);
+            if (ret < 0) {
+                return ret;
+            }
         }
     }
-
     return 0;
 }
 
