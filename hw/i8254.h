@@ -22,8 +22,8 @@
  * THE SOFTWARE.
  */
 
-#ifndef QEMU_I8254_H
-#define QEMU_I8254_H
+#ifndef HW_I8254_H
+#define HW_I8254_H
 
 #define PIT_SAVEVM_NAME "i8254"
 #define PIT_SAVEVM_VERSION 2
@@ -73,4 +73,27 @@ typedef struct PITState PITState;
 /* i8254-kvm.c */
 void kvm_pit_init(PITState *pit);
 
-#endif
+#define PIT_FREQ 1193182
+
+static inline ISADevice *pit_init(ISABus *bus, int base, int irq)
+{
+    ISADevice *dev;
+
+    dev = isa_create(bus, "isa-pit");
+    qdev_prop_set_uint32(&dev->qdev, "iobase", base);
+    qdev_prop_set_uint32(&dev->qdev, "irq", irq);
+    qdev_init_nofail(&dev->qdev);
+
+    return dev;
+}
+
+void pit_set_gate(ISADevice *dev, int channel, int val);
+int pit_get_gate(ISADevice *dev, int channel);
+int pit_get_initial_count(ISADevice *dev, int channel);
+int pit_get_mode(ISADevice *dev, int channel);
+int pit_get_out(ISADevice *dev, int channel, int64_t current_time);
+
+void hpet_pit_disable(void);
+void hpet_pit_enable(void);
+
+#endif /* !HW_I8254_H */
