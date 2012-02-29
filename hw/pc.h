@@ -149,10 +149,6 @@ void piix4_smbus_register_device(SMBusDevice *dev, uint8_t addr);
 /* hpet.c */
 extern int no_hpet;
 
-/* pcspk.c */
-void pcspk_init(ISADevice *pit);
-int pcspk_audio_init(ISABus *bus);
-
 /* piix_pci.c */
 /* config space register for IRQ routing */
 #define PIIX_CONFIG_IRQ_ROUTE 0x60
