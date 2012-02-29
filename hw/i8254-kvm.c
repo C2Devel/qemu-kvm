@@ -40,7 +40,7 @@ static void kvm_pit_pre_save(void *opaque)
 
     if (kvm_has_pit_state2()) {
         kvm_get_pit2(kvm_state, &pit2);
-        s->flags = pit2.flags;
+        s->channels[0].irq_disabled = pit2.flags;
     } else {
         /* pit2 is superset of pit struct so just cast it and use it */
         kvm_get_pit(kvm_state, (struct kvm_pit_state *)&pit2);
@@ -72,7 +72,7 @@ static int kvm_pit_post_load(void *opaque, int version_id)
     struct PITChannelState *sc;
     int i;
 
-    pit2.flags = s->flags;
+    pit2.flags = s->channels[0].irq_disabled;
     for (i = 0; i < 3; i++) {
 	c = &pit2.channels[i];
 	sc = &s->channels[i];

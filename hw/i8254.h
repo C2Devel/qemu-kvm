@@ -25,6 +25,8 @@
 #ifndef HW_I8254_H
 #define HW_I8254_H
 
+#include "kvm.h"
+
 #define PIT_SAVEVM_NAME "i8254"
 #define PIT_SAVEVM_VERSION 2
 
@@ -53,6 +55,7 @@ typedef struct PITChannelState {
     int64_t next_transition_time;
     QEMUTimer *irq_timer;
     qemu_irq irq;
+    uint32_t irq_disabled;
 } PITChannelState;
 
 struct PITState {
@@ -60,7 +63,6 @@ struct PITState {
     MemoryRegion ioports;
     uint32_t iobase;
     PITChannelState channels[3];
-    uint32_t flags;
 };
 
 void pit_save(QEMUFile *f, void *opaque);
@@ -82,6 +84,11 @@ static inline ISADevice *pit_init(ISABus *bus, int base, int isa_irq,
     dev = isa_create(bus, "isa-pit");
     qdev_prop_set_uint32(&dev->qdev, "iobase", base);
     qdev_init_nofail(&dev->qdev);
+
+    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+        return dev;
+    }
+
     qdev_connect_gpio_out(&dev->qdev, 0,
                           isa_irq >= 0 ? isa_get_irq(dev, isa_irq) : alt_irq);
 
@@ -93,8 +100,5 @@ int pit_get_gate(ISADevice *dev, int channel);
 int pit_get_initial_count(ISADevice *dev, int channel);
 int pit_get_mode(ISADevice *dev, int channel);
 int pit_get_out(ISADevice *dev, int channel, int64_t current_time);
-
-void hpet_pit_disable(void);
-void hpet_pit_enable(void);
 
 #endif /* !HW_I8254_H */
