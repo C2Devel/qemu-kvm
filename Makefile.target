@@ -312,7 +312,6 @@ obj-mips-y = mips_r4k.o mips_jazz.o mips_malta.o mips_mipssim.o
 obj-mips-y += pcspk.o i8254.o
 obj-mips-y += acpi.o acpi_piix4.o
 obj-mips-y += mips_addr.o mips_timer.o mips_int.o
-obj-mips-y += jazz_led.o
 obj-mips-y += gt64xxx.o mc146818rtc.o i8259_common.o i8259.o
 obj-mips-$(CONFIG_FULONG) += bonito.o vt82c686.o mips_fulong2e.o
 
