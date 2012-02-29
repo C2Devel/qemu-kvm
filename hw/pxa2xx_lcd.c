@@ -308,9 +308,12 @@ static void pxa2xx_descriptor_load(PXA2xxLCDState *s)
         } else
             descptr = s->dma_ch[i].descriptor;
 
-        if (!(descptr >= PXA2XX_SDRAM_BASE && descptr +
-                    sizeof(desc) <= PXA2XX_SDRAM_BASE + ram_size))
+        if (!((descptr >= PXA2XX_SDRAM_BASE && descptr +
+                 sizeof(desc) <= PXA2XX_SDRAM_BASE + ram_size) ||
+                (descptr >= PXA2XX_INTERNAL_BASE && descptr + sizeof(desc) <=
+                 PXA2XX_INTERNAL_BASE + PXA2XX_INTERNAL_SIZE))) {
             continue;
+        }
 
         cpu_physical_memory_read(descptr, (void *)&desc, sizeof(desc));
         s->dma_ch[i].descriptor = tswap32(desc.fdaddr);
@@ -830,8 +833,10 @@ static void pxa2xx_update_display(void *opaque)
                 continue;
             }
             fbptr = s->dma_ch[ch].source;
-            if (!(fbptr >= PXA2XX_SDRAM_BASE &&
-                    fbptr <= PXA2XX_SDRAM_BASE + ram_size)) {
+            if (!((fbptr >= PXA2XX_SDRAM_BASE &&
+                     fbptr <= PXA2XX_SDRAM_BASE + ram_size) ||
+                    (fbptr >= PXA2XX_INTERNAL_BASE &&
+                     fbptr <= PXA2XX_INTERNAL_BASE + PXA2XX_INTERNAL_SIZE))) {
                 pxa2xx_dma_ber_set(s, ch);
                 continue;
             }
@@ -892,11 +897,6 @@ static void pxa2xx_invalidate_display(void *opaque)
 {
     PXA2xxLCDState *s = (PXA2xxLCDState *) opaque;
     s->invalidated = 1;
-}
-
-static void pxa2xx_screen_dump(void *opaque, const char *filename)
-{
-    /* TODO */
 }
 
 static void pxa2xx_lcdc_orientation(void *opaque, int angle)
@@ -1004,7 +1004,7 @@ PXA2xxLCDState *pxa2xx_lcdc_init(MemoryRegion *sysmem,
 
     s->ds = graphic_console_init(pxa2xx_update_display,
                                  pxa2xx_invalidate_display,
-                                 pxa2xx_screen_dump, NULL, s);
+                                 NULL, NULL, s);
 
     switch (ds_get_bits_per_pixel(s->ds)) {
     case 0:

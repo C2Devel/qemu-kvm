@@ -183,6 +183,20 @@ F: *win32*
 
 ARM Machines
 ------------
+Exynos
+M: Evgeny Voevodin <e.voevodin@samsung.com>
+M: Maksim Kozlov <m.kozlov@samsung.com>
+M: Igor Mitsyanko <i.mitsyanko@samsung.com>
+M: Dmitry Solodkiy <d.solodkiy@samsung.com>
+S: Maintained
+F: hw/exynos*
+
+Calxeda Highbank
+M: Mark Langsdorf <mark.langsdorf@calxeda.com>
+S: Supported
+F: hw/highbank.c
+F: hw/xgmac.c
+
 Gumstix
 M: qemu-devel@nongnu.org
 S: Orphan
@@ -406,11 +420,16 @@ F: hw/pci*
 F: hw/piix*
 
 SCSI
+M: Paolo Bonzini <pbonzini@redhat.com>
+S: Supported
+F: hw/virtio-scsi.*
+F: hw/scsi*
+T: git://github.com/bonzini/qemu.git scsi-next
+
+LSI53C895A
 M: Paul Brook <paul@codesourcery.com>
-M: Kevin Wolf <kwolf@redhat.com>
 S: Odd Fixes
 F: hw/lsi53c895a.c
-F: hw/scsi*
 
 USB
 M: Gerd Hoffmann <kraxel@redhat.com>
@@ -510,6 +529,7 @@ S: Odd Fixes
 F: block/nbd.c
 F: nbd.*
 F: qemu-nbd.c
+T: git://github.com/bonzini/qemu.git nbd-next
 
 SLIRP
 M: Jan Kiszka <jan.kiszka@siemens.com>

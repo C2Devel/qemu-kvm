@@ -22,8 +22,10 @@
  * THE SOFTWARE.
  */
 
-#ifndef QEMU_I8254_H
-#define QEMU_I8254_H
+#ifndef HW_I8254_H
+#define HW_I8254_H
+
+#include "kvm.h"
 
 #define PIT_SAVEVM_NAME "i8254"
 #define PIT_SAVEVM_VERSION 2
@@ -53,15 +55,14 @@ typedef struct PITChannelState {
     int64_t next_transition_time;
     QEMUTimer *irq_timer;
     qemu_irq irq;
+    uint32_t irq_disabled;
 } PITChannelState;
 
 struct PITState {
     ISADevice dev;
     MemoryRegion ioports;
-    uint32_t irq;
     uint32_t iobase;
     PITChannelState channels[3];
-    uint32_t flags;
 };
 
 void pit_save(QEMUFile *f, void *opaque);
@@ -73,4 +74,35 @@ typedef struct PITState PITState;
 /* i8254-kvm.c */
 void kvm_pit_init(PITState *pit);
 
-#endif
+#define PIT_FREQ 1193182
+
+typedef struct PITChannelInfo {
+    int gate;
+    int mode;
+    int initial_count;
+    int out;
+} PITChannelInfo;
+
+static inline ISADevice *pit_init(ISABus *bus, int base, int isa_irq,
+                                  qemu_irq alt_irq)
+{
+    ISADevice *dev;
+
+    dev = isa_create(bus, "isa-pit");
+    qdev_prop_set_uint32(&dev->qdev, "iobase", base);
+    qdev_init_nofail(&dev->qdev);
+
+    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
+        return dev;
+    }
+
+    qdev_connect_gpio_out(&dev->qdev, 0,
+                          isa_irq >= 0 ? isa_get_irq(dev, isa_irq) : alt_irq);
+
+    return dev;
+}
+
+void pit_set_gate(ISADevice *dev, int channel, int val);
+void pit_get_channel_info(ISADevice *dev, int channel, PITChannelInfo *info);
+
+#endif /* !HW_I8254_H */
