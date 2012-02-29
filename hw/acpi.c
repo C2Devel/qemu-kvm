@@ -248,11 +248,35 @@ int acpi_table_add(const char *t)
 
 }
 
+static void acpi_notify_wakeup(Notifier *notifier, void *data)
+{
+    ACPIREGS *ar = container_of(notifier, ACPIREGS, wakeup);
+    WakeupReason *reason = data;
+
+    switch (*reason) {
+    case QEMU_WAKEUP_REASON_RTC:
+        ar->pm1.evt.sts |=
+            (ACPI_BITMASK_WAKE_STATUS | ACPI_BITMASK_RT_CLOCK_STATUS);
+        break;
+    case QEMU_WAKEUP_REASON_PMTIMER:
+        ar->pm1.evt.sts |=
+            (ACPI_BITMASK_WAKE_STATUS | ACPI_BITMASK_TIMER_STATUS);
+        break;
+    case QEMU_WAKEUP_REASON_OTHER:
+    default:
+        /* ACPI_BITMASK_WAKE_STATUS should be set on resume.
+           Pretend that resume was caused by power button */
+        ar->pm1.evt.sts |=
+            (ACPI_BITMASK_WAKE_STATUS | ACPI_BITMASK_POWER_BUTTON_STATUS);
+        break;
+    }
+}
+
 /* ACPI PM1a EVT */
-uint16_t acpi_pm1_evt_get_sts(ACPIREGS *ar, int64_t overflow_time)
+uint16_t acpi_pm1_evt_get_sts(ACPIREGS *ar)
 {
     int64_t d = acpi_pm_tmr_get_clock();
-    if (d >= overflow_time) {
+    if (d >= ar->tmr.overflow_time) {
         ar->pm1.evt.sts |= ACPI_BITMASK_TIMER_STATUS;
     }
     return ar->pm1.evt.sts;
@@ -260,12 +284,21 @@ uint16_t acpi_pm1_evt_get_sts(ACPIREGS *ar, int64_t overflow_time)
 
 void acpi_pm1_evt_write_sts(ACPIREGS *ar, uint16_t val)
 {
-    uint16_t pm1_sts = acpi_pm1_evt_get_sts(ar, ar->tmr.overflow_time);
+    uint16_t pm1_sts = acpi_pm1_evt_get_sts(ar);
     if (pm1_sts & val & ACPI_BITMASK_TIMER_STATUS) {
         /* if TMRSTS is reset, then compute the new overflow time */
         acpi_pm_tmr_calc_overflow_time(ar);
     }
     ar->pm1.evt.sts &= ~val;
+}
+
+void acpi_pm1_evt_write_en(ACPIREGS *ar, uint16_t val)
+{
+    ar->pm1.evt.en = val;
+    qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_RTC,
+                              val & ACPI_BITMASK_RT_CLOCK_ENABLE);
+    qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_PMTIMER,
+                              val & ACPI_BITMASK_TIMER_ENABLE);
 }
 
 void acpi_pm1_evt_power_down(ACPIREGS *ar)
@@ -280,6 +313,8 @@ void acpi_pm1_evt_reset(ACPIREGS *ar)
 {
     ar->pm1.evt.sts = 0;
     ar->pm1.evt.en = 0;
+    qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_RTC, 0);
+    qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_PMTIMER, 0);
 }
 
 /* ACPI PM_TMR */
@@ -312,6 +347,7 @@ uint32_t acpi_pm_tmr_get(ACPIREGS *ar)
 static void acpi_pm_tmr_timer(void *opaque)
 {
     ACPIREGS *ar = opaque;
+    qemu_system_wakeup_request(QEMU_WAKEUP_REASON_PMTIMER);
     ar->tmr.update_sci(ar);
 }
 
@@ -328,9 +364,10 @@ void acpi_pm_tmr_reset(ACPIREGS *ar)
 }
 
 /* ACPI PM1aCNT */
-void acpi_pm1_cnt_init(ACPIREGS *ar, qemu_irq cmos_s3)
+void acpi_pm1_cnt_init(ACPIREGS *ar)
 {
-    ar->pm1.cnt.cmos_s3 = cmos_s3;
+    ar->wakeup.notify = acpi_notify_wakeup;
+    qemu_register_wakeup_notifier(&ar->wakeup);
 }
 
 void acpi_pm1_cnt_write(ACPIREGS *ar, uint16_t val)
@@ -345,12 +382,8 @@ void acpi_pm1_cnt_write(ACPIREGS *ar, uint16_t val)
             qemu_system_shutdown_request();
             break;
         case 1:
-            /* ACPI_BITMASK_WAKE_STATUS should be set on resume.
-               Pretend that resume was caused by power button */
-            ar->pm1.evt.sts |=
-                (ACPI_BITMASK_WAKE_STATUS | ACPI_BITMASK_POWER_BUTTON_STATUS);
-            qemu_system_reset_request();
-            qemu_irq_raise(ar->pm1.cnt.cmos_s3);
+            qemu_system_suspend_request();
+            break;
         default:
             break;
         }
@@ -371,9 +404,6 @@ void acpi_pm1_cnt_update(ACPIREGS *ar,
 void acpi_pm1_cnt_reset(ACPIREGS *ar)
 {
     ar->pm1.cnt.cnt = 0;
-    if (ar->pm1.cnt.cmos_s3) {
-        qemu_irq_lower(ar->pm1.cnt.cmos_s3);
-    }
 }
 
 /* ACPI GPE */

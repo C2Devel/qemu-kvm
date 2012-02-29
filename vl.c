@@ -1283,6 +1283,13 @@ static int shutdown_requested, shutdown_signal = -1;
 static pid_t shutdown_pid;
 static int powerdown_requested;
 static int debug_requested;
+static int suspend_requested;
+static bool is_suspended;
+static NotifierList suspend_notifiers =
+    NOTIFIER_LIST_INITIALIZER(suspend_notifiers);
+static NotifierList wakeup_notifiers =
+    NOTIFIER_LIST_INITIALIZER(wakeup_notifiers);
+static uint32_t wakeup_reason_mask = ~0;
 static RunState vmstop_requested = RUN_STATE_MAX;
 
 int qemu_shutdown_requested_get(void)
@@ -1322,6 +1329,13 @@ int qemu_reset_requested(void)
 {
     int r = reset_requested;
     reset_requested = 0;
+    return r;
+}
+
+static int qemu_suspend_requested(void)
+{
+    int r = suspend_requested;
+    suspend_requested = 0;
     return r;
 }
 
@@ -1398,6 +1412,58 @@ void qemu_system_reset_request(void)
     qemu_notify_event();
 }
 
+static void qemu_system_suspend(void)
+{
+    pause_all_vcpus();
+    notifier_list_notify(&suspend_notifiers, NULL);
+    monitor_protocol_event(QEVENT_SUSPEND, NULL);
+    is_suspended = true;
+}
+
+void qemu_system_suspend_request(void)
+{
+    if (is_suspended) {
+        return;
+    }
+    suspend_requested = 1;
+    cpu_stop_current();
+    qemu_notify_event();
+}
+
+void qemu_register_suspend_notifier(Notifier *notifier)
+{
+    notifier_list_add(&suspend_notifiers, notifier);
+}
+
+void qemu_system_wakeup_request(WakeupReason reason)
+{
+    if (!is_suspended) {
+        return;
+    }
+    if (!(wakeup_reason_mask & (1 << reason))) {
+        return;
+    }
+    monitor_protocol_event(QEVENT_WAKEUP, NULL);
+    notifier_list_notify(&wakeup_notifiers, &reason);
+    reset_requested = 1;
+    qemu_notify_event();
+    is_suspended = false;
+}
+
+void qemu_system_wakeup_enable(WakeupReason reason, bool enabled)
+{
+    if (enabled) {
+        wakeup_reason_mask |= (1 << reason);
+    } else {
+        wakeup_reason_mask &= ~(1 << reason);
+    }
+}
+
+void qemu_register_wakeup_notifier(Notifier *notifier)
+{
+    notifier_list_add(&wakeup_notifiers, notifier);
+}
+
 void qemu_system_killed(int signal, pid_t pid)
 {
     shutdown_signal = signal;
@@ -1437,6 +1503,9 @@ static bool main_loop_should_exit(void)
     RunState r;
     if (qemu_debug_requested()) {
         vm_stop(RUN_STATE_DEBUG);
+    }
+    if (qemu_suspend_requested()) {
+        qemu_system_suspend();
     }
     if (qemu_shutdown_requested()) {
         qemu_kill_report();
@@ -2202,7 +2271,7 @@ int main(int argc, char **argv, char **envp)
     DisplayState *ds;
     DisplayChangeListener *dcl;
     int cyls, heads, secs, translation;
-    QemuOpts *hda_opts = NULL, *opts;
+    QemuOpts *hda_opts = NULL, *opts, *machine_opts;
     QemuOptsList *olist;
     int optind;
     const char *optarg;
@@ -3285,12 +3354,15 @@ int main(int argc, char **argv, char **envp)
         exit(1);
     }
 
-    kernel_filename = qemu_opt_get(qemu_opts_find(qemu_find_opts("machine"),
-                                                  0), "kernel");
-    initrd_filename = qemu_opt_get(qemu_opts_find(qemu_find_opts("machine"),
-                                                  0), "initrd");
-    kernel_cmdline = qemu_opt_get(qemu_opts_find(qemu_find_opts("machine"),
-                                                 0), "append");
+    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
+    if (machine_opts) {
+        kernel_filename = qemu_opt_get(machine_opts, "kernel");
+        initrd_filename = qemu_opt_get(machine_opts, "initrd");
+        kernel_cmdline = qemu_opt_get(machine_opts, "append");
+    } else {
+        kernel_filename = initrd_filename = kernel_cmdline = NULL;
+    }
+
     if (!kernel_cmdline) {
         kernel_cmdline = "";
     }
