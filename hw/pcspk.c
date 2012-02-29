@@ -54,46 +54,6 @@ typedef struct {
 static const char *s_spk = "pcspk";
 static PCSpkState *pcspk_state;
 
-#ifdef CONFIG_KVM_PIT
-static void kvm_get_pit_ch2(ISADevice *dev,
-                            struct kvm_pit_state *inkernel_state)
-{
-    struct PITState *pit = DO_UPCAST(struct PITState, dev, dev);
-    struct kvm_pit_state pit_state;
-
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_get_pit(kvm_state, &pit_state);
-        pit->channels[2].mode = pit_state.channels[2].mode;
-        pit->channels[2].count = pit_state.channels[2].count;
-        pit->channels[2].count_load_time = pit_state.channels[2].count_load_time;
-        pit->channels[2].gate = pit_state.channels[2].gate;
-        if (inkernel_state) {
-            memcpy(inkernel_state, &pit_state, sizeof(*inkernel_state));
-        }
-    }
-}
-
-static void kvm_set_pit_ch2(ISADevice *dev,
-                            struct kvm_pit_state *inkernel_state)
-{
-    struct PITState *pit = DO_UPCAST(struct PITState, dev, dev);
-
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        inkernel_state->channels[2].mode = pit->channels[2].mode;
-        inkernel_state->channels[2].count = pit->channels[2].count;
-        inkernel_state->channels[2].count_load_time =
-            pit->channels[2].count_load_time;
-        inkernel_state->channels[2].gate = pit->channels[2].gate;
-        kvm_set_pit(kvm_state, inkernel_state);
-    }
-}
-#else
-static inline void kvm_get_pit_ch2(ISADevice *dev,
-                                   struct kvm_pit_state *inkernel_state) { }
-static inline void kvm_set_pit_ch2(ISADevice *dev,
-                                   struct kvm_pit_state *inkernel_state) { }
-#endif
-
 static inline void generate_samples(PCSpkState *s)
 {
     unsigned int i;
@@ -116,14 +76,16 @@ static inline void generate_samples(PCSpkState *s)
 static void pcspk_callback(void *opaque, int free)
 {
     PCSpkState *s = opaque;
+    PITChannelInfo ch;
     unsigned int n;
 
-    kvm_get_pit_ch2(s->pit, NULL);
+    pit_get_channel_info(s->pit, 2, &ch);
 
-    if (pit_get_mode(s->pit, 2) != 3)
+    if (ch.mode != 3) {
         return;
+    }
 
-    n = pit_get_initial_count(s->pit, 2);
+    n = ch.initial_count;
     /* avoid frequencies that are not reproducible with sample rate */
     if (n < PCSPK_MIN_COUNT)
         n = 0;
@@ -164,24 +126,24 @@ static uint64_t pcspk_io_read(void *opaque, target_phys_addr_t addr,
                               unsigned size)
 {
     PCSpkState *s = opaque;
-    int out;
+    PITChannelInfo ch;
 
-    kvm_get_pit_ch2(s->pit, NULL);
+    pit_get_channel_info(s->pit, 2, &ch);
 
     s->dummy_refresh_clock ^= (1 << 4);
-    out = pit_get_out(s->pit, 2, qemu_get_clock_ns(vm_clock)) << 5;
 
-    return pit_get_gate(s->pit, 2) | (s->data_on << 1) | s->dummy_refresh_clock | out;
+    return ch.gate | (s->data_on << 1) | s->dummy_refresh_clock |
+       (ch.out << 5);
 }
 
 static void pcspk_io_write(void *opaque, target_phys_addr_t addr, uint64_t val,
                            unsigned size)
 {
-    struct kvm_pit_state inkernel_state;
     PCSpkState *s = opaque;
     const int gate = val & 1;
+    PITChannelInfo ch;
 
-    kvm_get_pit_ch2(s->pit, &inkernel_state);
+    pit_get_channel_info(s->pit, 2, &ch);
 
     s->data_on = (val >> 1) & 1;
     pit_set_gate(s->pit, 2, gate);
@@ -191,7 +153,7 @@ static void pcspk_io_write(void *opaque, target_phys_addr_t addr, uint64_t val,
         AUD_set_active_out(s->voice, gate & s->data_on);
     }
 
-    kvm_set_pit_ch2(s->pit, &inkernel_state);
+    /*  kvm_set_pit_ch2(s->pit, &inkernel_state); ?? */
 }
 
 static const MemoryRegionOps pcspk_io_ops = {
