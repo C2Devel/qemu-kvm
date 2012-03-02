@@ -41,38 +41,6 @@ static inline void clear_gsi(KVMState *s, unsigned int gsi)
     }
 }
 
-#ifdef KVM_CAP_IRQCHIP
-
-int kvm_set_irq(int irq, int level, int *status)
-{
-    struct kvm_irq_level event;
-    int r;
-
-    if (!kvm_irqchip_in_kernel()) {
-        return 0;
-    }
-    event.level = level;
-    event.irq = irq;
-    r = kvm_vm_ioctl(kvm_state, kvm_state->irqchip_inject_ioctl,
-                     &event);
-    if (r < 0) {
-        perror("kvm_set_irq");
-    }
-
-    if (status) {
-#ifdef KVM_CAP_IRQ_INJECT_STATUS
-        *status = (kvm_state->irqchip_inject_ioctl == KVM_IRQ_LINE) ?
-            1 : event.status;
-#else
-        *status = 1;
-#endif
-    }
-
-    return 1;
-}
-
-#endif
-
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT
 int kvm_assign_pci_device(KVMState *s,
                           struct kvm_assigned_pci_dev *assigned_dev)

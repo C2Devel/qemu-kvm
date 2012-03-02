@@ -157,7 +157,7 @@ int kvm_irqchip_commit_routes(KVMState *s)
     return -ENOSYS;
 }
 
-int kvm_set_irq(int irq, int level, int *status)
+int kvm_irqchip_set_irq(KVMState *s, int irq, int level)
 {
     assert(0);
     return -ENOSYS;

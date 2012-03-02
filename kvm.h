@@ -231,10 +231,9 @@ int kvm_msi_message_del(KVMMsiMessage *msg);
 int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new);
 
 #ifndef NEED_CPU_H
+int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
 int kvm_irqchip_commit_routes(KVMState *s);
 #endif
-
-int kvm_set_irq(int irq, int level, int *status);
 
 #ifdef NEED_CPU_H
 #include "qemu-kvm.h"

@@ -350,7 +350,7 @@ void msi_notify(PCIDevice *dev, unsigned int vector)
     }
 
     if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_set_irq(dev->msi_irq_entries[vector].gsi, 1, NULL);
+        kvm_irqchip_set_irq(kvm_state, dev->msi_irq_entries[vector].gsi, 1);
         return;
     }
 
