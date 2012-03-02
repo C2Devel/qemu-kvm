@@ -1108,7 +1108,7 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
 
     register_ioport_write(0xf0, 1, 1, ioportF0_write, NULL);
 
-    if (!no_hpet) {
+    if (!no_hpet && (!kvm_irqchip_in_kernel() || kvm_has_pit_state2())) {
         hpet = sysbus_try_create_simple("hpet", HPET_BASE, NULL);
 
         if (hpet) {

@@ -183,14 +183,6 @@ int kvm_deassign_pci_device(KVMState *s,
 int kvm_clear_gsi_routes(void);
 
 /*!
- * \brief Adds an irq route to the temporary irq routing table
- *
- * Adds an irq route to the temporary irq routing table.  Nothing is
- * committed to the running VM.
- */
-int kvm_add_irq_route(int gsi, int irqchip, int pin);
-
-/*!
  * \brief Removes an irq route from the temporary irq routing table
  *
  * Adds an irq route to the temporary irq routing table.  Nothing is
@@ -199,13 +191,8 @@ int kvm_add_irq_route(int gsi, int irqchip, int pin);
 int kvm_del_irq_route(int gsi, int irqchip, int pin);
 
 struct kvm_irq_routing_entry;
-/*!
- * \brief Adds a routing entry to the temporary irq routing table
- *
- * Adds a filled routing entry to the temporary irq routing table. Nothing is
- * committed to the running VM.
- */
-int kvm_add_routing_entry(struct kvm_irq_routing_entry *entry);
+
+void kvm_add_routing_entry(KVMState *s, struct kvm_irq_routing_entry *entry);
 
 /*!
  * \brief Removes a routing from the temporary irq routing table
@@ -244,8 +231,6 @@ void kvm_hpet_enable_kpit(void);
 void kvm_hpet_disable_kpit(void);
 
 void kvm_tpr_access_report(CPUState *env, uint64_t rip, int is_write);
-
-int kvm_arch_init_irq_routing(void);
 
 int kvm_add_ioport_region(unsigned long start, unsigned long size,
                           bool is_hot_plug);

@@ -178,7 +178,7 @@ static void kvm_msi_update(PCIDevice *dev)
     }
     dev->msi_entries_nr = nr_vectors;
     if (changed) {
-        r = kvm_commit_irq_routes();
+        r = kvm_irqchip_commit_routes(kvm_state);
         if (r) {
             fprintf(stderr, "%s: kvm_commit_irq_routes failed: %s\n", __func__,
                     strerror(-r));
@@ -196,7 +196,7 @@ static void kvm_msi_free(PCIDevice *dev)
         kvm_msi_message_del(&dev->msi_irq_entries[vector]);
     }
     if (dev->msi_entries_nr > 0) {
-        kvm_commit_irq_routes();
+        kvm_irqchip_commit_routes(kvm_state);
     }
     dev->msi_entries_nr = 0;
 }

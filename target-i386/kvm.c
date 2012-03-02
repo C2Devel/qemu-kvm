@@ -2023,7 +2023,6 @@ bool kvm_arch_stop_on_emulation_error(CPUState *env)
            ((env->segs[R_CS].selector  & 3) != 3);
 }
 
-#ifdef UNUSED_UPSTREAM_KVM
 void kvm_arch_init_irq_routing(KVMState *s)
 {
     if (!kvm_check_extension(s, KVM_CAP_IRQ_ROUTING)) {
@@ -2034,6 +2033,5 @@ void kvm_arch_init_irq_routing(KVMState *s)
         no_hpet = 1;
     }
 }
-#endif
 
 #include "qemu-kvm-x86.c"

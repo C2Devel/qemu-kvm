@@ -30,17 +30,6 @@
 
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
-static inline void set_gsi(KVMState *s, unsigned int gsi)
-{
-    uint32_t *bitmap = s->used_gsi_bitmap;
-
-    if (gsi < s->max_gsi) {
-        bitmap[gsi / 32] |= 1U << (gsi % 32);
-    } else {
-        DPRINTF("Invalid GSI %u\n", gsi);
-    }
-}
-
 static inline void clear_gsi(KVMState *s, unsigned int gsi)
 {
     uint32_t *bitmap = s->used_gsi_bitmap;
@@ -50,38 +39,6 @@ static inline void clear_gsi(KVMState *s, unsigned int gsi)
     } else {
         DPRINTF("Invalid GSI %u\n", gsi);
     }
-}
-
-static int kvm_init_irq_routing(KVMState *s)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    int r, gsi_count;
-
-    gsi_count = kvm_check_extension(s, KVM_CAP_IRQ_ROUTING);
-    if (gsi_count > 0) {
-        int gsi_bits, i;
-
-        /* Round up so we can search ints using ffs */
-        gsi_bits = ALIGN(gsi_count, 32);
-        s->used_gsi_bitmap = g_malloc0(gsi_bits / 8);
-        s->max_gsi = gsi_bits;
-
-        /* Mark any over-allocated bits as already in use */
-        for (i = gsi_count; i < gsi_bits; i++) {
-            set_gsi(s, i);
-        }
-    }
-
-    s->irq_routes = g_malloc0(sizeof(*s->irq_routes));
-    s->nr_allocated_irq_routes = 0;
-
-    r = kvm_arch_init_irq_routing();
-    if (r < 0) {
-        return r;
-    }
-#endif
-
-    return 0;
 }
 
 int kvm_create_irqchip(KVMState *s)
@@ -107,10 +64,7 @@ int kvm_create_irqchip(KVMState *s)
 #endif
     kvm_kernel_irqchip = true;
 
-    r = kvm_init_irq_routing(s);
-    if (r < 0) {
-        return r;
-    }
+    kvm_init_irq_routing(s);
 #endif
 
     return 0;
@@ -248,60 +202,6 @@ int kvm_clear_gsi_routes(void)
 #endif
 }
 
-int kvm_add_routing_entry(struct kvm_irq_routing_entry *entry)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    KVMState *s = kvm_state;
-    struct kvm_irq_routing *z;
-    struct kvm_irq_routing_entry *new;
-    int n, size;
-
-    if (s->irq_routes->nr == s->nr_allocated_irq_routes) {
-        n = s->nr_allocated_irq_routes * 2;
-        if (n < 64) {
-            n = 64;
-        }
-        size = sizeof(struct kvm_irq_routing);
-        size += n * sizeof(*new);
-        z = realloc(s->irq_routes, size);
-        if (!z) {
-            return -ENOMEM;
-        }
-        s->nr_allocated_irq_routes = n;
-        s->irq_routes = z;
-    }
-    n = s->irq_routes->nr++;
-    new = &s->irq_routes->entries[n];
-    memset(new, 0, sizeof(*new));
-    new->gsi = entry->gsi;
-    new->type = entry->type;
-    new->flags = entry->flags;
-    new->u = entry->u;
-
-    set_gsi(s, entry->gsi);
-
-    return 0;
-#else
-    return -ENOSYS;
-#endif
-}
-
-int kvm_add_irq_route(int gsi, int irqchip, int pin)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    struct kvm_irq_routing_entry e;
-
-    e.gsi = gsi;
-    e.type = KVM_IRQ_ROUTING_IRQCHIP;
-    e.flags = 0;
-    e.u.irqchip.irqchip = irqchip;
-    e.u.irqchip.pin = pin;
-    return kvm_add_routing_entry(&e);
-#else
-    return -ENOSYS;
-#endif
-}
-
 int kvm_del_routing_entry(struct kvm_irq_routing_entry *entry)
 {
 #ifdef KVM_CAP_IRQ_ROUTING
@@ -422,18 +322,6 @@ int kvm_del_irq_route(int gsi, int irqchip, int pin)
 #endif
 }
 
-int kvm_commit_irq_routes(void)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    KVMState *s = kvm_state;
-
-    s->irq_routes->flags = 0;
-    return kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
-#else
-    return -ENOSYS;
-#endif
-}
-
 int kvm_get_irq_route_gsi(void)
 {
     KVMState *s = kvm_state;
@@ -477,7 +365,8 @@ int kvm_msi_message_add(KVMMsiMessage *msg)
     msg->gsi = ret;
 
     kvm_msi_routing_entry(&e, msg);
-    return kvm_add_routing_entry(&e);
+    kvm_add_routing_entry(kvm_state, &e);
+    return 0;
 }
 
 int kvm_msi_message_del(KVMMsiMessage *msg)

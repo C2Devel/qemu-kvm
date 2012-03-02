@@ -16,6 +16,8 @@
 #include "gdbstub.h"
 #include "kvm.h"
 
+KVMState *kvm_state;
+
 int kvm_pit_in_kernel(void)
 {
     return 0;
@@ -150,7 +152,7 @@ int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
     return -ENOSYS;
 }
 
-int kvm_commit_irq_routes(void)
+int kvm_irqchip_commit_routes(KVMState *s)
 {
     return -ENOSYS;
 }

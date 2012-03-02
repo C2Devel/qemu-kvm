@@ -49,7 +49,7 @@ static void kvm_msix_free(PCIDevice *dev)
         }
     }
     if (changed) {
-        kvm_commit_irq_routes();
+        kvm_irqchip_commit_routes(kvm_state);
     }
 }
 
@@ -89,7 +89,7 @@ static void kvm_msix_update(PCIDevice *dev, int vector,
     }
     if (r > 0) {
         *entry = new_entry;
-        r = kvm_commit_irq_routes();
+        r = kvm_irqchip_commit_routes(kvm_state);
         if (r) {
             fprintf(stderr, "%s: kvm_commit_irq_routes failed: %s\n", __func__,
 		    strerror(-r));
@@ -110,7 +110,7 @@ static int kvm_msix_vector_add(PCIDevice *dev, unsigned vector)
         return r;
     }
 
-    r = kvm_commit_irq_routes();
+    r = kvm_irqchip_commit_routes(kvm_state);
     if (r < 0) {
         fprintf(stderr, "%s: kvm_commit_irq_routes failed: %s\n", __func__, strerror(-r));
         return r;
@@ -121,7 +121,7 @@ static int kvm_msix_vector_add(PCIDevice *dev, unsigned vector)
 static void kvm_msix_vector_del(PCIDevice *dev, unsigned vector)
 {
     kvm_msi_message_del(&dev->msix_irq_entries[vector]);
-    kvm_commit_irq_routes();
+    kvm_irqchip_commit_routes(kvm_state);
 }
 
 /* Add MSI-X capability to the config space for the device. */

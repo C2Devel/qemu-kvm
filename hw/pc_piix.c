@@ -57,7 +57,6 @@ static const int ide_irq[MAX_IDE_BUS] = { 14, 15 };
 
 const char *global_cpu_model; /* cpu hotadd */
 
-#ifdef UNUSED_UPSTREAM_KVM
 static void kvm_piix3_setup_irq_routing(bool pci_enabled)
 {
 #ifdef CONFIG_KVM
@@ -90,7 +89,6 @@ static void kvm_piix3_setup_irq_routing(bool pci_enabled)
     }
 #endif /* CONFIG_KVM */
 }
-#endif
 
 static void kvm_piix3_gsi_handler(void *opaque, int n, int level)
 {
@@ -194,9 +192,7 @@ static void pc_init1(MemoryRegion *system_memory,
 
     gsi_state = g_malloc0(sizeof(*gsi_state));
     if (kvm_irqchip_in_kernel()) {
-#ifdef UNUSED_UPSTREAM_KVM
         kvm_piix3_setup_irq_routing(pci_enabled);
-#endif
         gsi = qemu_allocate_irqs(kvm_piix3_gsi_handler, gsi_state,
                                  GSI_NUM_PINS);
     } else {

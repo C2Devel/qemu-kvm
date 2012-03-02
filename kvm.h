@@ -133,9 +133,7 @@ void kvm_arch_reset_vcpu(CPUState *env);
 int kvm_arch_on_sigbus_vcpu(CPUState *env, int code, void *addr);
 int kvm_arch_on_sigbus(int code, void *addr);
 
-#ifdef UNUSED_UPSTREAM_KVM
 void kvm_arch_init_irq_routing(KVMState *s);
-#endif
 
 int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
 
@@ -232,7 +230,9 @@ int kvm_msi_message_add(KVMMsiMessage *msg);
 int kvm_msi_message_del(KVMMsiMessage *msg);
 int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new);
 
-int kvm_commit_irq_routes(void);
+#ifndef NEED_CPU_H
+int kvm_irqchip_commit_routes(KVMState *s);
+#endif
 
 int kvm_set_irq(int irq, int level, int *status);
 

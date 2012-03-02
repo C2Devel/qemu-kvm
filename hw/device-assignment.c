@@ -943,8 +943,8 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
         }
         assigned_dev->entry->gsi = r;
 
-        kvm_add_routing_entry(assigned_dev->entry);
-        if (kvm_commit_irq_routes() < 0) {
+        kvm_add_routing_entry(kvm_state, assigned_dev->entry);
+        if (kvm_irqchip_commit_routes(kvm_state) < 0) {
             perror("assigned_dev_update_msi: kvm_commit_irq_routes");
             assigned_dev->cap.state &= ~ASSIGNED_DEVICE_MSI_ENABLED;
             return;
@@ -1028,7 +1028,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
         DEBUG("MSI-X vector %d, gsi %d, addr %08x_%08x, data %08x\n", i,
               r, entry->addr_hi, entry->addr_lo, entry->data);
 
-        kvm_add_routing_entry(&adev->entry[i]);
+        kvm_add_routing_entry(kvm_state, &adev->entry[i]);
 
         msix_entry.gsi = adev->entry[i].gsi;
         msix_entry.entry = i;
@@ -1039,7 +1039,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
         }
     }
 
-    if (r == 0 && kvm_commit_irq_routes() < 0) {
+    if (r == 0 && kvm_irqchip_commit_routes(kvm_state) < 0) {
 	    perror("assigned_dev_update_msix_mmio: kvm_commit_irq_routes");
 	    return -EINVAL;
     }
@@ -1504,7 +1504,7 @@ static void msix_mmio_write(void *opaque, target_phys_addr_t addr,
                     return;
                 }
 
-                ret = kvm_commit_irq_routes();
+                ret = kvm_irqchip_commit_routes(kvm_state);
                 if (ret) {
                     fprintf(stderr,
                             "Error committing irq routes (%d)\n", ret);

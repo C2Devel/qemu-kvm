@@ -82,13 +82,9 @@ struct KVMState
 #ifdef KVM_CAP_IRQ_ROUTING
     struct kvm_irq_routing *irq_routes;
     int nr_allocated_irq_routes;
-#ifdef UNUSED_UPSTREAM_KVM
     uint32_t *used_gsi_bitmap;
     unsigned int max_gsi;
 #endif
-#endif
-    void *used_gsi_bitmap;
-    int max_gsi;
 };
 
 KVMState *kvm_state;
@@ -755,7 +751,6 @@ int kvm_irqchip_set_irq(KVMState *s, int irq, int level)
     return (s->irqchip_inject_ioctl == KVM_IRQ_LINE) ? 1 : event.status;
 }
 
-#ifdef UNUSED_UPSTREAM_KVM
 #ifdef KVM_CAP_IRQ_ROUTING
 static void set_gsi(KVMState *s, unsigned int gsi)
 {
@@ -789,8 +784,8 @@ static void kvm_init_irq_routing(KVMState *s)
     kvm_arch_init_irq_routing(s);
 }
 
-static void kvm_add_routing_entry(KVMState *s,
-                                  struct kvm_irq_routing_entry *entry)
+void kvm_add_routing_entry(KVMState *s,
+                           struct kvm_irq_routing_entry *entry)
 {
     struct kvm_irq_routing_entry *new;
     int n, size;
@@ -840,7 +835,6 @@ static void kvm_init_irq_routing(KVMState *s)
 {
 }
 #endif /* !KVM_CAP_IRQ_ROUTING */
-#endif
 
 static int kvm_irqchip_create(KVMState *s)
 {
