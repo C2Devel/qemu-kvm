@@ -469,7 +469,7 @@ VMStateDescription vmstate_pit = {
     .minimum_version_id_old = 1,
     .load_state_old = pit_load_old,
     .fields      = (VMStateField []) {
-        VMSTATE_UINT32_V(channels[0].irq_disabled, PITState, 3),
+        VMSTATE_UINT32(channels[0].irq_disabled, PITState), /* qemu-kvm's v2 had 'flags' here */
         VMSTATE_STRUCT_ARRAY(channels, PITState, 3, 2, vmstate_pit_channel, PITChannelState),
         VMSTATE_TIMER(channels[0].irq_timer, PITState),
         VMSTATE_END_OF_LIST()
