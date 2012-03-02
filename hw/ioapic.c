@@ -26,8 +26,6 @@
 #include "ioapic.h"
 #include "ioapic_internal.h"
 
-#include "kvm.h"
-
 //#define DEBUG_IOAPIC
 
 #ifdef DEBUG_IOAPIC
@@ -222,75 +220,6 @@ ioapic_mem_write(void *opaque, target_phys_addr_t addr, uint64_t val,
     }
 }
 
-static void kvm_kernel_ioapic_save_to_user(IOAPICCommonState *s)
-{
-#if defined(KVM_CAP_IRQCHIP) && defined(TARGET_I386)
-    struct kvm_irqchip chip;
-    struct kvm_ioapic_state *kioapic;
-    int i;
-
-    chip.chip_id = KVM_IRQCHIP_IOAPIC;
-    kvm_get_irqchip(kvm_state, &chip);
-    kioapic = &chip.chip.ioapic;
-
-    s->id = kioapic->id;
-    s->ioregsel = kioapic->ioregsel;
-    s->irr = kioapic->irr;
-    for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-        s->ioredtbl[i] = kioapic->redirtbl[i].bits;
-    }
-#endif
-}
-
-static void kvm_kernel_ioapic_load_from_user(IOAPICCommonState *s)
-{
-#if defined(KVM_CAP_IRQCHIP) && defined(TARGET_I386)
-    struct kvm_irqchip chip;
-    struct kvm_ioapic_state *kioapic;
-    int i;
-
-    chip.chip_id = KVM_IRQCHIP_IOAPIC;
-    kioapic = &chip.chip.ioapic;
-
-    kioapic->id = s->id;
-    kioapic->ioregsel = s->ioregsel;
-    kioapic->base_address = s->busdev.mmio[0].addr;
-    kioapic->irr = s->irr;
-    for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-        kioapic->redirtbl[i].bits = s->ioredtbl[i];
-    }
-
-    kvm_set_irqchip(kvm_state, &chip);
-#endif
-}
-
-static void kvm_ioapic_pre_save(IOAPICCommonState *s)
-{
-
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_ioapic_save_to_user(s);
-    }
-}
-
-static void kvm_ioapic_post_load(IOAPICCommonState *s)
-{
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_ioapic_load_from_user(s);
-    }
-}
-
-static void ioapic_reset(DeviceState *d)
-{
-    IOAPICCommonState *s = DO_UPCAST(IOAPICCommonState, busdev.qdev, d);
-
-    ioapic_reset_common(d);
-#ifdef KVM_CAP_IRQCHIP
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_ioapic_load_from_user(s);
-    }
-#endif
-}
-
 static const MemoryRegionOps ioapic_io_ops = {
     .read = ioapic_mem_read,
     .write = ioapic_mem_write,
@@ -312,9 +241,7 @@ static void ioapic_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     k->init = ioapic_init;
-    k->pre_save = kvm_ioapic_pre_save;
-    k->post_load = kvm_ioapic_post_load;
-    dc->reset = ioapic_reset;
+    dc->reset = ioapic_reset_common;
 }
 
 static TypeInfo ioapic_info = {

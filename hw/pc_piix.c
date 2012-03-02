@@ -47,8 +47,6 @@
 #  include <xen/hvm/hvm_info_table.h>
 #endif
 
-qemu_irq *ioapic_irq_hack;
-
 #define MAX_IDE_BUS 2
 
 static const int ide_iobase[MAX_IDE_BUS] = { 0x1f0, 0x170 };
@@ -108,12 +106,9 @@ static void ioapic_init(GSIState *gsi_state)
     SysBusDevice *d;
     unsigned int i;
 
-#ifdef UNUSED_UPSTREAM_KVM
     if (kvm_irqchip_in_kernel()) {
         dev = qdev_create(NULL, "kvm-ioapic");
-    } else
-#endif
-    {
+    } else {
         dev = qdev_create(NULL, "ioapic");
     }
     qdev_init_nofail(dev);
