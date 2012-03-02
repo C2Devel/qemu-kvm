@@ -838,7 +838,6 @@ static void kvm_init_irq_routing(KVMState *s)
 
 static int kvm_irqchip_create(KVMState *s)
 {
-#ifdef UNUSED_UPSTREAM_KVM
     QemuOptsList *list = qemu_find_opts("machine");
     int ret;
 
@@ -862,7 +861,6 @@ static int kvm_irqchip_create(KVMState *s)
     kvm_kernel_irqchip = true;
 
     kvm_init_irq_routing(s);
-#endif
 
     return 0;
 }
@@ -876,7 +874,6 @@ int kvm_init(void)
     const KVMCapabilityInfo *missing_cap;
     int ret;
     int i;
-    QemuOptsList *list;
 
     s = g_malloc0(sizeof(KVMState));
 
@@ -963,13 +960,6 @@ int kvm_init(void)
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
 
-    list = qemu_find_opts("machine");
-    if (!QTAILQ_EMPTY(&list->head) &&
-        !qemu_opt_get_bool(QTAILQ_FIRST(&list->head),
-                           "kernel_irqchip", false)) {
-        kvm_irqchip = 0;
-    }
-
     ret = kvm_arch_init(s);
     if (ret < 0) {
         goto err;
@@ -984,11 +974,6 @@ int kvm_init(void)
     memory_listener_register(&kvm_memory_listener);
 
     s->many_ioeventfds = kvm_check_many_ioeventfds();
-
-    ret = kvm_create_irqchip(s);
-    if (ret < 0) {
-        return ret;
-    }
 
     cpu_interrupt_handler = kvm_handle_interrupt;
 

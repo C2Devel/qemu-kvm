@@ -32,8 +32,6 @@
 
 #include "kvm.h"
 
-int kvm_create_irqchip(KVMState *s);
-
 /*!
  * \brief Dump in kernel IRQCHIP contents
  *
@@ -243,7 +241,6 @@ int kvm_arch_set_ioport_access(unsigned long start, unsigned long size,
 
 int kvm_create_pit(KVMState *s);
 
-extern int kvm_irqchip;
 extern int kvm_pit_reinject;
 extern unsigned int kvm_shadow_memory;
 

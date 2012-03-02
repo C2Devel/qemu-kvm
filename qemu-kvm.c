@@ -41,35 +41,6 @@ static inline void clear_gsi(KVMState *s, unsigned int gsi)
     }
 }
 
-int kvm_create_irqchip(KVMState *s)
-{
-#ifdef KVM_CAP_IRQCHIP
-    int r;
-
-    if (!kvm_irqchip || !kvm_check_extension(s, KVM_CAP_IRQCHIP)) {
-        return 0;
-    }
-
-    r = kvm_vm_ioctl(s, KVM_CREATE_IRQCHIP);
-    if (r < 0) {
-        fprintf(stderr, "Create kernel PIC irqchip failed\n");
-        return r;
-    }
-
-    s->irqchip_inject_ioctl = KVM_IRQ_LINE;
-#if defined(KVM_CAP_IRQ_INJECT_STATUS) && defined(KVM_IRQ_LINE_STATUS)
-    if (kvm_check_extension(s, KVM_CAP_IRQ_INJECT_STATUS)) {
-        s->irqchip_inject_ioctl = KVM_IRQ_LINE_STATUS;
-    }
-#endif
-    kvm_kernel_irqchip = true;
-
-    kvm_init_irq_routing(s);
-#endif
-
-    return 0;
-}
-
 #ifdef KVM_CAP_IRQCHIP
 
 int kvm_set_irq(int irq, int level, int *status)

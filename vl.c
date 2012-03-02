@@ -2246,7 +2246,6 @@ static void free_and_trace(gpointer mem)
 }
 
 #ifdef CONFIG_KVM_OPTIONS
-int kvm_irqchip = 1;
 int kvm_pit_reinject = 1;
 #endif
 
