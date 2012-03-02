@@ -28,11 +28,6 @@
 #include "qemu-timer.h"
 #include "i8259_internal.h"
 
-#include "kvm.h"
-#include "apic_internal.h"
-
-static void kvm_i8259_set_irq(void *opaque, int irq, int level);
-
 /* debug PIC */
 //#define DEBUG_PIC
 
@@ -226,17 +221,9 @@ int pic_read_irq(DeviceState *d)
     return intno;
 }
 
-static int kvm_kernel_pic_load_from_user(PICCommonState *s);
-
 static void pic_init_reset(PICCommonState *s)
 {
     pic_reset_common(s);
-
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_pic_load_from_user(s);
-        return;
-    }
-
     pic_update_irq(s);
 }
 
@@ -393,22 +380,6 @@ static uint64_t elcr_ioport_read(void *opaque, target_phys_addr_t addr,
     return s->elcr;
 }
 
-static void kvm_kernel_pic_save_to_user(PICCommonState *s);
-
-static void kvm_pic_pre_save(PICCommonState *s)
-{
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_pic_save_to_user(s);
-    }
-}
-
-static void kvm_pic_post_load(PICCommonState *s)
-{
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_kernel_pic_load_from_user(s);
-    }
-}
-
 static const MemoryRegionOps pic_base_ioport_ops = {
     .read = pic_ioport_read,
     .write = pic_ioport_write,
@@ -498,10 +469,6 @@ qemu_irq *i8259_init(ISABus *bus, qemu_irq parent_irq)
 
     slave_pic = DO_UPCAST(PICCommonState, dev, dev);
 
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        irq_set = qemu_allocate_irqs(kvm_i8259_set_irq, NULL, 24);
-    }
-
     return irq_set;
 }
 
@@ -511,8 +478,6 @@ static void i8259_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     k->init = pic_init;
-    k->pre_save  = kvm_pic_pre_save;
-    k->post_load = kvm_pic_post_load;
     dc->reset = pic_reset;
 }
 
@@ -526,79 +491,6 @@ static TypeInfo i8259_info = {
 static void pic_register_types(void)
 {
     type_register_static(&i8259_info);
-}
-
-static void kvm_kernel_pic_save_to_user(PICCommonState *s)
-{
-#ifdef KVM_CAP_IRQCHIP
-    struct kvm_irqchip chip;
-    struct kvm_pic_state *kpic;
-
-    chip.chip_id = s->master ?
-                   KVM_IRQCHIP_PIC_MASTER :
-                   KVM_IRQCHIP_PIC_SLAVE;
-    kvm_get_irqchip(kvm_state, &chip);
-    kpic = &chip.chip.pic;
-
-    s->last_irr = kpic->last_irr;
-    s->irr = kpic->irr;
-    s->imr = kpic->imr;
-    s->isr = kpic->isr;
-    s->priority_add = kpic->priority_add;
-    s->irq_base = kpic->irq_base;
-    s->read_reg_select = kpic->read_reg_select;
-    s->poll = kpic->poll;
-    s->special_mask = kpic->special_mask;
-    s->init_state = kpic->init_state;
-    s->auto_eoi = kpic->auto_eoi;
-    s->rotate_on_auto_eoi = kpic->rotate_on_auto_eoi;
-    s->special_fully_nested_mode = kpic->special_fully_nested_mode;
-    s->init4 = kpic->init4;
-    s->elcr = kpic->elcr;
-    s->elcr_mask = kpic->elcr_mask;
-#endif
-}
-
-static int kvm_kernel_pic_load_from_user(PICCommonState *s)
-{
-#ifdef KVM_CAP_IRQCHIP
-    struct kvm_irqchip chip;
-    struct kvm_pic_state *kpic;
-
-    chip.chip_id = s->master ?
-                   KVM_IRQCHIP_PIC_MASTER :
-                   KVM_IRQCHIP_PIC_SLAVE;
-    kpic = &chip.chip.pic;
-
-    kpic->last_irr = s->last_irr;
-    kpic->irr = s->irr;
-    kpic->imr = s->imr;
-    kpic->isr = s->isr;
-    kpic->priority_add = s->priority_add;
-    kpic->irq_base = s->irq_base;
-    kpic->read_reg_select = s->read_reg_select;
-    kpic->poll = s->poll;
-    kpic->special_mask = s->special_mask;
-    kpic->init_state = s->init_state;
-    kpic->auto_eoi = s->auto_eoi;
-    kpic->rotate_on_auto_eoi = s->rotate_on_auto_eoi;
-    kpic->special_fully_nested_mode = s->special_fully_nested_mode;
-    kpic->init4 = s->init4;
-    kpic->elcr = s->elcr;
-    kpic->elcr_mask = s->elcr_mask;
-
-    kvm_set_irqchip(kvm_state, &chip);
-#endif
-    return 0;
-}
-
-static void kvm_i8259_set_irq(void *opaque, int irq, int level)
-{
-    int pic_ret;
-    if (kvm_set_irq(irq, level, &pic_ret)) {
-        apic_report_irq_delivered(pic_ret);
-        return;
-    }
 }
 
 type_init(pic_register_types)

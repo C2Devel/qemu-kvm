@@ -212,12 +212,9 @@ static void pc_init1(MemoryRegion *system_memory,
     }
     isa_bus_irqs(isa_bus, gsi);
 
-#ifdef UNUSED_UPSTREAM_KVM
     if (kvm_irqchip_in_kernel()) {
         i8259 = kvm_i8259_init(isa_bus);
-    } else
-#endif
-    if (xen_enabled()) {
+    } else if (xen_enabled()) {
         i8259 = xen_interrupt_controller_init();
     } else {
         cpu_irq = pc_allocate_cpu_irq();

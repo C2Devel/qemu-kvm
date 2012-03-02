@@ -68,7 +68,7 @@ void isa_bus_irqs(ISABus *bus, qemu_irq *irqs)
 qemu_irq isa_get_irq(ISADevice *dev, int isairq)
 {
     assert(!dev || DO_UPCAST(ISABus, qbus, dev->qdev.parent_bus) == isabus);
-    if (isairq < 0 || isairq > 23) {
+    if (isairq < 0 || isairq > 15) {
         hw_error("isa irq %d invalid", isairq);
     }
     return isabus->irqs[isairq];
