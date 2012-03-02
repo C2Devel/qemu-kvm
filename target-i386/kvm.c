@@ -1370,7 +1370,6 @@ static int kvm_get_mp_state(CPUState *env)
 
 static int kvm_get_apic(CPUState *env)
 {
-#ifdef UNUSED_UPSTREAM_KVM
     DeviceState *apic = env->apic_state;
     struct kvm_lapic_state kapic;
     int ret;
@@ -1383,15 +1382,11 @@ static int kvm_get_apic(CPUState *env)
 
         kvm_get_apic_state(apic, &kapic);
     }
-#else
-    kvm_save_lapic(env);
-#endif
     return 0;
 }
 
 static int kvm_put_apic(CPUState *env)
 {
-#ifdef UNUSED_UPSTREAM_KVM
     DeviceState *apic = env->apic_state;
     struct kvm_lapic_state kapic;
 
@@ -1400,9 +1395,6 @@ static int kvm_put_apic(CPUState *env)
 
         return kvm_vcpu_ioctl(env, KVM_SET_LAPIC, &kapic);
     }
-#else
-    kvm_load_lapic(env);
-#endif
     return 0;
 }
 

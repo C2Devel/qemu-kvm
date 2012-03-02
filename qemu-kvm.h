@@ -34,28 +34,6 @@
 
 #if defined(__i386__) || defined(__x86_64__)
 /*!
- * \brief Get in kernel local APIC for vcpu
- *
- * Save the local apic state including the timer of a virtual CPU
- *
- * \param kvm Pointer to the current kvm_context
- * \param vcpu Which virtual CPU should be accessed
- * \param s Local apic state of the specific virtual CPU
- */
-int kvm_get_lapic(CPUState *env, struct kvm_lapic_state *s);
-
-/*!
- * \brief Set in kernel local APIC for vcpu
- *
- * Restore the local apic state including the timer of a virtual CPU
- *
- * \param kvm Pointer to the current kvm_context
- * \param vcpu Which virtual CPU should be accessed
- * \param s Local apic state of the specific virtual CPU
- */
-int kvm_set_lapic(CPUState *env, struct kvm_lapic_state *s);
-
-/*!
  * \brief Get in kernel PIT of the virtual domain
  *
  * Save the PIT state.
@@ -198,9 +176,6 @@ struct kvm_pit_state {
 };
 
 #endif                          /* !CONFIG_KVM */
-
-void kvm_save_lapic(CPUState *env);
-void kvm_load_lapic(CPUState *env);
 
 void kvm_hpet_enable_kpit(void);
 void kvm_hpet_disable_kpit(void);

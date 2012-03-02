@@ -64,37 +64,6 @@ int kvm_enable_vapic(CPUState *env, uint64_t vapic)
     return kvm_vcpu_ioctl(env, KVM_SET_VAPIC_ADDR, &va);
 }
 
-int kvm_get_lapic(CPUState *env, struct kvm_lapic_state *s)
-{
-    int r = 0;
-
-    if (!kvm_irqchip_in_kernel()) {
-        return r;
-    }
-
-    r = kvm_vcpu_ioctl(env, KVM_GET_LAPIC, s);
-    if (r < 0) {
-        fprintf(stderr, "KVM_GET_LAPIC failed\n");
-    }
-    return r;
-}
-
-int kvm_set_lapic(CPUState *env, struct kvm_lapic_state *s)
-{
-    int r = 0;
-
-    if (!kvm_irqchip_in_kernel()) {
-        return 0;
-    }
-
-    r = kvm_vcpu_ioctl(env, KVM_SET_LAPIC, s);
-
-    if (r < 0) {
-        fprintf(stderr, "KVM_SET_LAPIC failed\n");
-    }
-    return r;
-}
-
 int kvm_get_pit(KVMState *s, struct kvm_pit_state *pit_state)
 {
     if (!kvm_irqchip_in_kernel()) {

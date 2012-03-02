@@ -890,12 +890,9 @@ static DeviceState *apic_init(void *env, uint8_t apic_id)
     DeviceState *dev;
     static int apic_mapped;
 
-#ifdef UNUSED_UPSTREAM_KVM
     if (kvm_irqchip_in_kernel()) {
         dev = qdev_create(NULL, "kvm-apic");
-    } else
-#endif
-    {
+    } else {
         dev = qdev_create(NULL, "apic");
     }
     qdev_prop_set_uint8(dev, "id", apic_id);
