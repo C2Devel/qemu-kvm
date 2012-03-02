@@ -71,34 +71,6 @@ int kvm_set_irq(int irq, int level, int *status)
     return 1;
 }
 
-int kvm_get_irqchip(KVMState *s, struct kvm_irqchip *chip)
-{
-    int r;
-
-    if (!kvm_irqchip_in_kernel()) {
-        return 0;
-    }
-    r = kvm_vm_ioctl(s, KVM_GET_IRQCHIP, chip);
-    if (r < 0) {
-        perror("kvm_get_irqchip\n");
-    }
-    return r;
-}
-
-int kvm_set_irqchip(KVMState *s, struct kvm_irqchip *chip)
-{
-    int r;
-
-    if (!kvm_irqchip_in_kernel()) {
-        return 0;
-    }
-    r = kvm_vm_ioctl(s, KVM_SET_IRQCHIP, chip);
-    if (r < 0) {
-        perror("kvm_set_irqchip\n");
-    }
-    return r;
-}
-
 #endif
 
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT

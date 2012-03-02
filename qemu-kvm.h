@@ -32,29 +32,6 @@
 
 #include "kvm.h"
 
-/*!
- * \brief Dump in kernel IRQCHIP contents
- *
- * Dump one of the in kernel irq chip devices, including PIC (master/slave)
- * and IOAPIC into a kvm_irqchip structure
- *
- * \param kvm Pointer to the current kvm_context
- * \param chip The irq chip device to be dumped
- */
-int kvm_get_irqchip(KVMState *s, struct kvm_irqchip *chip);
-
-/*!
- * \brief Set in kernel IRQCHIP contents
- *
- * Write one of the in kernel irq chip devices, including PIC (master/slave)
- * and IOAPIC
- *
- *
- * \param kvm Pointer to the current kvm_context
- * \param chip THe irq chip device to be written
- */
-int kvm_set_irqchip(KVMState *s, struct kvm_irqchip *chip);
-
 #if defined(__i386__) || defined(__x86_64__)
 /*!
  * \brief Get in kernel local APIC for vcpu
