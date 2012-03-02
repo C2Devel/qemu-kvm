@@ -661,8 +661,6 @@ static int kvm_get_supported_msrs(KVMState *s)
     return ret;
 }
 
-static int kvm_create_pit(KVMState *s);
-
 int kvm_arch_init(KVMState *s)
 {
     QemuOptsList *list = qemu_find_opts("machine");
@@ -713,11 +711,6 @@ int kvm_arch_init(KVMState *s)
         return ret;
     }
     qemu_register_reset(kvm_unpoison_all, NULL);
-
-    ret = kvm_create_pit(s);
-    if (ret < 0) {
-        return ret;
-    }
 
     if (!QTAILQ_EMPTY(&list->head)) {
         shadow_mem = qemu_opt_get_size(QTAILQ_FIRST(&list->head),

@@ -23,11 +23,11 @@
 #include "kvm.h"
 #include "hw/apic.h"
 
-static int kvm_create_pit(KVMState *s)
+int kvm_create_pit(KVMState *s)
 {
     int r;
 
-    if (kvm_irqchip) {
+    if (kvm_irqchip_in_kernel()) {
         r = kvm_vm_ioctl(s, KVM_CREATE_PIT);
         if (r < 0) {
             fprintf(stderr, "Create kernel PIC irqchip failed\n");

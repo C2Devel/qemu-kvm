@@ -107,6 +107,9 @@ void kvm_pit_init(PITState *pit)
 {
     PITChannelState *s;
 
+    if (kvm_create_pit(kvm_state) < 0) {
+        hw_error("KVM PIT creation failed\n");
+    }
     s = &pit->channels[0];
     s->irq_timer = qemu_new_timer_ns(vm_clock, dummy_timer, s);
     vmstate_pit.pre_save = kvm_pit_pre_save;
