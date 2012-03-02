@@ -774,7 +774,6 @@ static void get_seg(SegmentCache *lhs, const struct kvm_segment *rhs)
                  (rhs->avl * DESC_AVL_MASK);
 }
 
-
 static void kvm_getput_reg(__u64 *kvm_reg, target_ulong *qemu_reg, int set)
 {
     if (set) {

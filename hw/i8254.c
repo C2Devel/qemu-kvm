@@ -459,7 +459,6 @@ static int pit_load_old(QEMUFile *f, void *opaque, int version_id)
             qemu_get_timer(f, s->irq_timer);
         }
     }
-
     return 0;
 }
 
