@@ -2113,13 +2113,8 @@ static int configure_accelerator(void)
     }
 
     if (p == NULL) {
-#ifdef CONFIG_KVM_OPTIONS
-        /* Use the default "accelerator", kvm */
-        p = "kvm";
-#else
         /* Use the default "accelerator", tcg */
         p = "tcg";
-#endif
     }
 
     while (!accel_initialised && *p != '\0') {
@@ -2978,12 +2973,12 @@ int main(int argc, char **argv, char **envp)
                 break;
 	    case QEMU_OPTION_no_kvm:
                 olist = qemu_find_opts("machine");
-                qemu_opts_reset(olist);
                 qemu_opts_parse(olist, "accel=tcg", 0);
                 break;
 #ifdef CONFIG_KVM_OPTIONS
 	    case QEMU_OPTION_no_kvm_irqchip: {
-		kvm_irqchip = 0;
+                olist = qemu_find_opts("machine");
+                qemu_opts_parse(olist, "kernel_irqchip=off", 0);
 		break;
 	    }
 	    case QEMU_OPTION_no_kvm_pit: {

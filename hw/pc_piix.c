@@ -388,6 +388,7 @@ static QEMUMachine pc_machine_v1_1 = {
     .init = pc_init_pci,
     .max_cpus = 255,
     .is_default = 1,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
 };
 
 static QEMUMachine pc_machine_v1_0 = {
@@ -425,6 +426,7 @@ static QEMUMachine pc_machine_v0_14 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "qxl",
@@ -465,6 +467,7 @@ static QEMUMachine pc_machine_v0_13 = {
     .desc = "Standard PC",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "virtio-9p-pci",
@@ -517,6 +520,7 @@ static QEMUMachine pc_machine_v0_12 = {
     .desc = "Standard PC",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "virtio-serial-pci",
@@ -573,6 +577,7 @@ static QEMUMachine pc_machine_v0_11 = {
     .desc = "Standard PC, qemu 0.11",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "virtio-blk-pci",
@@ -637,6 +642,7 @@ static QEMUMachine pc_machine_v0_10 = {
     .desc = "Standard PC, qemu 0.10",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "virtio-blk-pci",
@@ -713,6 +719,7 @@ static QEMUMachine isapc_machine = {
     .desc = "ISA-only PC",
     .init = pc_init_isa,
     .max_cpus = 1,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "pc-sysfw",

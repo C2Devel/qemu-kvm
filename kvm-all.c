@@ -882,6 +882,7 @@ int kvm_init(void)
     const KVMCapabilityInfo *missing_cap;
     int ret;
     int i;
+    QemuOptsList *list;
 
     s = g_malloc0(sizeof(KVMState));
 
@@ -967,6 +968,13 @@ int kvm_init(void)
 #ifdef KVM_CAP_PIT_STATE2
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
+
+    list = qemu_find_opts("machine");
+    if (!QTAILQ_EMPTY(&list->head) &&
+        !qemu_opt_get_bool(QTAILQ_FIRST(&list->head),
+                           "kernel_irqchip", false)) {
+        kvm_irqchip = 0;
+    }
 
     ret = kvm_arch_init(s);
     if (ret < 0) {
