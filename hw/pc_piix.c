@@ -389,6 +389,10 @@ static QEMUMachine pc_machine_v1_0 = {
             .driver   = "pc-sysfw",
             .property = "rom_only",
             .value    = stringify(1),
+        }, {
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         { /* end of list */ }
     },
@@ -404,6 +408,10 @@ static QEMUMachine pc_machine_v0_15 = {
             .driver   = "pc-sysfw",
             .property = "rom_only",
             .value    = stringify(1),
+        }, {
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         { /* end of list */ }
     },
@@ -439,6 +447,10 @@ static QEMUMachine pc_machine_v0_14 = {
         },{
             .driver   = "virtio-balloon-pci",
             .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
             .value    = "off",
         },
         {
@@ -493,6 +505,10 @@ static QEMUMachine pc_machine_v0_13 = {
             .driver   = "AC97",
             .property = "use_broken_id",
             .value    = stringify(1),
+        },{
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         {
             .driver   = "pc-sysfw",
@@ -550,6 +566,10 @@ static QEMUMachine pc_machine_v0_12 = {
             .driver   = "AC97",
             .property = "use_broken_id",
             .value    = stringify(1),
+        },{
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         {
             .driver   = "pc-sysfw",
@@ -615,6 +635,10 @@ static QEMUMachine pc_machine_v0_11 = {
             .driver   = "AC97",
             .property = "use_broken_id",
             .value    = stringify(1),
+        },{
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         {
             .driver   = "pc-sysfw",
@@ -692,6 +716,10 @@ static QEMUMachine pc_machine_v0_10 = {
             .driver   = "AC97",
             .property = "use_broken_id",
             .value    = stringify(1),
+        },{
+            .driver   = "isa-fdc",
+            .property = "check_media_rate",
+            .value    = "off",
         },
         {
             .driver   = "pc-sysfw",
