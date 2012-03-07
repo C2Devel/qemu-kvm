@@ -9,12 +9,10 @@
 # option) any later version.  See the COPYING file in the top-level directory.
 #
 
-	.text 0
-	.code16
-.global _start
-_start:
-	.short 0xaa55
-	.byte (_end - _start) / 512
+#include "optionrom.h"
+
+OPTION_ROM_START
+
 	# clear vapic area: firmware load using rep insb may cause
 	# stale tpr/isr/irr data to corrupt the vapic area.
 	push %es
@@ -26,8 +24,11 @@ _start:
 	cld
 	rep stosw
 	pop %es
+
+	# announce presence to the hypervisor
 	mov $vapic_base, %ax
 	out %ax, $0x7e
+
 	lret
 
 	.code32
@@ -202,7 +203,6 @@ mp_isr_is_bigger:
 	mov %bh, %bl
 mp_tpr_is_bigger:
 	/* %bl = ppr */
-	mov %bl, %ch   /* ch = ppr */
 	rol $8, %ebx
 	/* now: %bl = irr, %bh = ppr */
 	cmp %bh, %bl
@@ -276,7 +276,6 @@ up_set_tpr_eax:
 up_set_tpr:
 	pushf
 	push %eax
-	push %ecx
 	push %ebx
 	reenable_vtpr
 
@@ -284,7 +283,7 @@ up_set_tpr_failed:
 	mov vapic, %eax	; fixup
 
 	mov %eax, %ebx
-	mov 20(%esp), %bl
+	mov 16(%esp), %bl
 
 	/* %ebx = new vapic (%bl = tpr, %bh = isr, %b3 = irr) */
 
@@ -298,7 +297,6 @@ up_isr_is_bigger:
 	mov %bh, %bl
 up_tpr_is_bigger:
 	/* %bl = ppr */
-	mov %bl, %ch   /* ch = ppr */
 	rol $8, %ebx
 	/* now: %bl = irr, %bh = ppr */
 	cmp %bh, %bl
@@ -306,7 +304,6 @@ up_tpr_is_bigger:
 
 up_set_tpr_out:
 	pop %ebx
-	pop %ecx
 	pop %eax
 	popf
 	ret $4
@@ -335,7 +332,4 @@ up_set_tpr_poll_irq:
 vapic:
 . = . + vapic_size
 
-.byte 0  # reserve space for signature
-.align 512, 0
-
-_end:
+OPTION_ROM_END
