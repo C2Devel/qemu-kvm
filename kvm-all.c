@@ -1124,8 +1124,6 @@ int kvm_cpu_exec(CPUState *env)
         return EXCP_HLT;
     }
 
-    cpu_single_env = env;
-
     do {
         if (env->kvm_vcpu_dirty) {
             kvm_arch_put_registers(env, KVM_PUT_RUNTIME_STATE);
@@ -1142,13 +1140,11 @@ int kvm_cpu_exec(CPUState *env)
              */
             qemu_cpu_kick_self();
         }
-        cpu_single_env = NULL;
         qemu_mutex_unlock_iothread();
 
         run_ret = kvm_vcpu_ioctl(env, KVM_RUN, 0);
 
         qemu_mutex_lock_iothread();
-        cpu_single_env = env;
         kvm_arch_post_run(env, run);
 
         kvm_flush_coalesced_mmio_buffer();
@@ -1212,7 +1208,6 @@ int kvm_cpu_exec(CPUState *env)
     }
 
     env->exit_request = 0;
-    cpu_single_env = NULL;
     return ret;
 }
 
