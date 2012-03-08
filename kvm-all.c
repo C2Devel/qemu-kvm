@@ -79,6 +79,7 @@ struct KVMState
     int xsave, xcrs;
     int many_ioeventfds;
     int pit_state2;
+    int intx_set_mask;
     int irqchip_inject_ioctl;
 #ifdef KVM_CAP_IRQ_ROUTING
     struct kvm_irq_routing *irq_routes;
@@ -1064,6 +1065,8 @@ int kvm_init(void)
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
 
+    s->intx_set_mask = kvm_check_extension(s, KVM_CAP_PCI_2_3);
+
     ret = kvm_arch_init(s);
     if (ret < 0) {
         goto err;
@@ -1416,6 +1419,11 @@ int kvm_has_gsi_routing(void)
 #else
     return false;
 #endif
+}
+
+int kvm_has_intx_set_mask(void)
+{
+    return kvm_state->intx_set_mask;
 }
 
 int kvm_allows_irq0_override(void)
