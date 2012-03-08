@@ -782,6 +782,14 @@ static int assign_device(AssignedDevice *dev)
                 "cause host memory corruption if the device issues DMA write "
                 "requests!\n");
     }
+    if (dev->features & ASSIGNED_DEVICE_SHARE_INTX_MASK &&
+        kvm_has_intx_set_mask()) {
+        assigned_dev_data.flags |= KVM_DEV_ASSIGN_PCI_2_3;
+
+        /* hide host-side INTx masking from the guest */
+        dev->emulate_config_read[PCI_COMMAND + 1] |=
+            PCI_COMMAND_INTX_DISABLE >> 8;
+    }
 
     r = kvm_assign_pci_device(kvm_state, &assigned_dev_data);
     if (r < 0) {
@@ -1121,10 +1129,26 @@ static void assigned_dev_pci_write_config(PCIDevice *pci_dev, uint32_t address,
                                           uint32_t val, int len)
 {
     AssignedDevice *assigned_dev = DO_UPCAST(AssignedDevice, dev, pci_dev);
+    uint16_t old_cmd = pci_get_word(pci_dev->config + PCI_COMMAND);
     uint32_t emulate_mask, full_emulation_mask;
+    int ret;
 
     pci_default_write_config(pci_dev, address, val, len);
 
+    if (kvm_has_intx_set_mask() &&
+        range_covers_byte(address, len, PCI_COMMAND + 1)) {
+        bool intx_masked = (pci_get_word(pci_dev->config + PCI_COMMAND) &
+                            PCI_COMMAND_INTX_DISABLE);
+
+        if (intx_masked != !!(old_cmd & PCI_COMMAND_INTX_DISABLE)) {
+            ret = kvm_device_intx_set_mask(kvm_state,
+                                           calc_assigned_dev_id(assigned_dev),
+                                           intx_masked);
+            if (ret) {
+                perror("assigned_dev_pci_write_config: set intx mask");
+            }
+        }
+    }
     if (assigned_dev->cap.available & ASSIGNED_DEVICE_CAP_MSI) {
         if (range_covers_byte(address, len,
                               pci_dev->msi_cap + PCI_MSI_FLAGS)) {
@@ -1748,6 +1772,8 @@ static Property da_properties[] =
                    ASSIGNED_DEVICE_USE_IOMMU_BIT, true),
     DEFINE_PROP_BIT("prefer_msi", AssignedDevice, features,
                    ASSIGNED_DEVICE_PREFER_MSI_BIT, true),
+    DEFINE_PROP_BIT("share_intx", AssignedDevice, features,
+                    ASSIGNED_DEVICE_SHARE_INTX_BIT, false),
     DEFINE_PROP_INT32("bootindex", AssignedDevice, bootindex, -1),
     DEFINE_PROP_STRING("configfd", AssignedDevice, configfd_name),
     DEFINE_PROP_END_OF_LIST(),
