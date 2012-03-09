@@ -45,25 +45,6 @@ int kvm_create_pit(KVMState *s)
     return 0;
 }
 
-int kvm_handle_tpr_access(CPUState *env)
-{
-    struct kvm_run *run = env->kvm_run;
-    kvm_tpr_access_report(env,
-                          run->tpr_access.rip,
-                          run->tpr_access.is_write);
-    return 1;
-}
-
-
-int kvm_enable_vapic(CPUState *env, uint64_t vapic)
-{
-    struct kvm_vapic_addr va = {
-        .vapic_addr = vapic,
-    };
-
-    return kvm_vcpu_ioctl(env, KVM_SET_VAPIC_ADDR, &va);
-}
-
 int kvm_get_pit(KVMState *s, struct kvm_pit_state *pit_state)
 {
     if (!kvm_irqchip_in_kernel()) {
@@ -96,23 +77,9 @@ int kvm_set_pit2(KVMState *s, struct kvm_pit_state2 *ps2)
     return kvm_vm_ioctl(s, KVM_SET_PIT2, ps2);
 }
 
-static int kvm_enable_tpr_access_reporting(CPUState *env)
-{
-    int r;
-    struct kvm_tpr_access_ctl tac = { .enabled = 1 };
-
-    r = kvm_ioctl(env->kvm_state, KVM_CHECK_EXTENSION, KVM_CAP_VAPIC);
-    if (r <= 0) {
-        return -ENOSYS;
-    }
-    return kvm_vcpu_ioctl(env, KVM_TPR_ACCESS_REPORTING, &tac);
-}
-
 static int _kvm_arch_init_vcpu(CPUState *env)
 {
     kvm_arch_reset_vcpu(env);
-
-    kvm_enable_tpr_access_reporting(env);
 
     return kvm_update_ioport_access(env);
 }

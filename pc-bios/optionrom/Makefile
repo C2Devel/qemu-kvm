@@ -16,8 +16,6 @@ QEMU_CFLAGS = $(CFLAGS)
 
 build-all: multiboot.bin linuxboot.bin kvmvapic.bin
 
-build-all: vapic.bin
-
 # suppress auto-removal of intermediate files
 .SECONDARY:
 

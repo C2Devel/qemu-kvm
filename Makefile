@@ -260,7 +260,6 @@ multiboot.bin linuxboot.bin kvmvapic.bin \
 s390-zipl.rom \
 spapr-rtas.bin slof.bin \
 palcode-clipper
-BLOBS += vapic.bin
 else
 BLOBS=
 endif

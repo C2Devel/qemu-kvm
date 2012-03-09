@@ -182,8 +182,6 @@ struct kvm_pit_state {
 void kvm_hpet_enable_kpit(void);
 void kvm_hpet_disable_kpit(void);
 
-void kvm_tpr_access_report(CPUState *env, uint64_t rip, int is_write);
-
 int kvm_add_ioport_region(unsigned long start, unsigned long size,
                           bool is_hot_plug);
 int kvm_remove_ioport_region(unsigned long start, unsigned long size,
@@ -197,8 +195,5 @@ int kvm_create_pit(KVMState *s);
 
 extern int kvm_pit_reinject;
 extern unsigned int kvm_shadow_memory;
-
-int kvm_handle_tpr_access(CPUState *env);
-void kvm_tpr_enable_vapic(CPUState *env);
 
 #endif

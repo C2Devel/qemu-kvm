@@ -60,8 +60,6 @@
 #define DPRINTF(fmt, ...)
 #endif
 
-#define VAPIC_FILENAME "vapic.bin"
-
 /* Leave a chunk of memory at the top of RAM for the BIOS ACPI tables.  */
 #define ACPI_DATA_SIZE       0x10000
 #define BIOS_CFG_IOPORT 0x510
@@ -1021,10 +1019,6 @@ void pc_memory_init(MemoryRegion *system_memory,
                                         PC_ROM_MIN_VGA,
                                         option_rom_mr,
                                         1);
-
-    option_rom[nb_option_roms].name = g_strdup(VAPIC_FILENAME);
-    option_rom[nb_option_roms].bootindex = -1;
-    nb_option_roms++;
 
     fw_cfg = bochs_bios_init();
     rom_set_fw(fw_cfg);

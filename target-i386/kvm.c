@@ -583,18 +583,8 @@ int kvm_arch_init_vcpu(CPUState *env)
     return 0;
 }
 
-static void kvm_clear_vapic(CPUState *env)
-{
-    struct kvm_vapic_addr va = {
-        .vapic_addr = 0,
-    };
-
-    kvm_vcpu_ioctl(env, KVM_SET_VAPIC_ADDR, &va);
-}
-
 void kvm_arch_reset_vcpu(CPUState *env)
 {
-    kvm_clear_vapic(env);
     env->exception_injected = -1;
     env->interrupt_injected = -1;
     env->xcr0 = 1;
@@ -1583,9 +1573,6 @@ int kvm_arch_put_registers(CPUState *env, int level)
     if (ret < 0) {
         return ret;
     }
-    if (level == KVM_PUT_FULL_STATE) {
-        kvm_tpr_enable_vapic(env);
-    }
     /* must be last */
     ret = kvm_guest_debug_workarounds(env);
     if (ret < 0) {
@@ -1774,7 +1761,6 @@ static int kvm_handle_halt(CPUState *env)
     return 0;
 }
 
-#ifdef KVM_UPSTREAM
 static int kvm_handle_tpr_access(CPUState *env)
 {
     struct kvm_run *run = env->kvm_run;
@@ -1784,7 +1770,6 @@ static int kvm_handle_tpr_access(CPUState *env)
                                                            : TPR_ACCESS_READ);
     return 1;
 }
-#endif
 
 int kvm_arch_insert_sw_breakpoint(CPUState *env, struct kvm_sw_breakpoint *bp)
 {
