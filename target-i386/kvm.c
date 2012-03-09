@@ -345,8 +345,6 @@ static void cpu_update_state(void *opaque, int running, RunState state)
     }
 }
 
-static int _kvm_arch_init_vcpu(CPUState *env);
-
 int kvm_arch_init_vcpu(CPUState *env)
 {
     struct {
@@ -360,7 +358,7 @@ int kvm_arch_init_vcpu(CPUState *env)
     uint32_t signature[3];
     int r;
 
-    r = _kvm_arch_init_vcpu(env);
+    r = kvm_update_ioport_access(env);
     if (r < 0) {
         return r;
     }

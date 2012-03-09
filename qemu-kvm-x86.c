@@ -77,13 +77,6 @@ int kvm_set_pit2(KVMState *s, struct kvm_pit_state2 *ps2)
     return kvm_vm_ioctl(s, KVM_SET_PIT2, ps2);
 }
 
-static int _kvm_arch_init_vcpu(CPUState *env)
-{
-    kvm_arch_reset_vcpu(env);
-
-    return kvm_update_ioport_access(env);
-}
-
 #ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
 int kvm_arch_set_ioport_access(unsigned long start, unsigned long size,
                                bool enable)
