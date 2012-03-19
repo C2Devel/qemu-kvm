@@ -432,9 +432,6 @@ static void pit_reset(DeviceState *dev)
     PITChannelState *s;
     int i;
 
-#ifdef TARGET_I386
-    pit->channels[0].irq_disabled = 0;
-#endif
     for(i = 0;i < 3; i++) {
         s = &pit->channels[i];
         s->mode = 3;
