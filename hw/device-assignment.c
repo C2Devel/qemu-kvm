@@ -835,6 +835,7 @@ static int assign_irq(AssignedDevice *dev)
         dev->irq_requested_type = 0;
     }
 
+retry:
     assigned_irq_data.flags = KVM_DEV_IRQ_GUEST_INTX;
     if (dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK &&
         dev->cap.available & ASSIGNED_DEVICE_CAP_MSI)
@@ -844,6 +845,17 @@ static int assign_irq(AssignedDevice *dev)
 
     r = kvm_assign_irq(kvm_state, &assigned_irq_data);
     if (r < 0) {
+        if (r == -EIO && !(dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK) &&
+            dev->cap.available & ASSIGNED_DEVICE_CAP_MSI) {
+            /* Retry with host-side MSI. There might be an IRQ conflict and
+             * either the kernel or the device doesn't support sharing. */
+            fprintf(stderr,
+                    "Host-side INTx sharing not supported, "
+                    "using MSI instead.\n"
+                    "Some devices do not to work properly in this mode.\n");
+            dev->features |= ASSIGNED_DEVICE_PREFER_MSI_MASK;
+            goto retry;
+        }
         fprintf(stderr, "Failed to assign irq for \"%s\": %s\n",
                 dev->dev.qdev.id, strerror(-r));
         fprintf(stderr, "Perhaps you are assigning a device "
