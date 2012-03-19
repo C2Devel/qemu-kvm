@@ -187,18 +187,13 @@ void pit_get_channel_info(ISADevice *dev, int channel, PITChannelInfo *info)
     info->out = pit_get_out(s, qemu_get_clock_ns(vm_clock));
 }
 
-static inline void pit_load_count(PITState *s, int val, int chan)
+static inline void pit_load_count(PITChannelState *s, int val)
 {
     if (val == 0)
         val = 0x10000;
-    s->channels[chan].count_load_time = qemu_get_clock_ns(vm_clock);
-    s->channels[chan].count = val;
-#ifdef TARGET_I386
-    if (chan == 0 && s->channels[0].irq_disabled) {
-        return;
-    }
-#endif
-    pit_irq_timer_update(&s->channels[chan], s->channels[chan].count_load_time);
+    s->count_load_time = qemu_get_clock_ns(vm_clock);
+    s->count = val;
+    pit_irq_timer_update(s, s->count_load_time);
 }
 
 /* if already latched, do not latch again */
@@ -260,17 +255,17 @@ static void pit_ioport_write(void *opaque, uint32_t addr, uint32_t val)
         switch(s->write_state) {
         default:
         case RW_STATE_LSB:
-            pit_load_count(pit, val, addr);
+            pit_load_count(s, val);
             break;
         case RW_STATE_MSB:
-            pit_load_count(pit, val << 8, addr);
+            pit_load_count(s, val << 8);
             break;
         case RW_STATE_WORD0:
             s->write_latch = val;
             s->write_state = RW_STATE_WORD1;
             break;
         case RW_STATE_WORD1:
-            pit_load_count(pit, s->write_latch | (val << 8), addr);
+            pit_load_count(s, s->write_latch | (val << 8));
             s->write_state = RW_STATE_WORD0;
             break;
         }
