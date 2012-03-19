@@ -25,54 +25,9 @@
 #ifndef HW_I8254_H
 #define HW_I8254_H
 
+#include "hw.h"
+#include "isa.h"
 #include "kvm.h"
-
-#define PIT_SAVEVM_NAME "i8254"
-#define PIT_SAVEVM_VERSION 2
-
-#define RW_STATE_LSB 1
-#define RW_STATE_MSB 2
-#define RW_STATE_WORD0 3
-#define RW_STATE_WORD1 4
-
-#define PIT_FLAGS_HPET_LEGACY  1
-
-typedef struct PITChannelState {
-    int count; /* can be 65536 */
-    uint16_t latched_count;
-    uint8_t count_latched;
-    uint8_t status_latched;
-    uint8_t status;
-    uint8_t read_state;
-    uint8_t write_state;
-    uint8_t write_latch;
-    uint8_t rw_mode;
-    uint8_t mode;
-    uint8_t bcd; /* not supported */
-    uint8_t gate; /* timer start */
-    int64_t count_load_time;
-    /* irq handling */
-    int64_t next_transition_time;
-    QEMUTimer *irq_timer;
-    qemu_irq irq;
-    uint32_t irq_disabled;
-} PITChannelState;
-
-struct PITState {
-    ISADevice dev;
-    MemoryRegion ioports;
-    uint32_t iobase;
-    PITChannelState channels[3];
-};
-
-void pit_save(QEMUFile *f, void *opaque);
-
-int pit_load(QEMUFile *f, void *opaque, int version_id);
-
-typedef struct PITState PITState;
-
-/* i8254-kvm.c */
-void kvm_pit_init(PITState *pit);
 
 #define PIT_FREQ 1193182
 

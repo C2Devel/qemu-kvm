@@ -21,14 +21,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include "hw.h"
-#include "pc.h"
-#include "isa.h"
-#include "qemu-timer.h"
-#include "i8254.h"
-#include "qemu-kvm.h"
 
-extern VMStateDescription vmstate_pit;
+#ifdef CONFIG_KVM_PIT
 
 static void kvm_pit_pre_save(void *opaque)
 {
@@ -103,7 +97,7 @@ static void dummy_timer(void *opaque)
 {
 }
 
-void kvm_pit_init(PITState *pit)
+static void qemu_kvm_pit_init(PITState *pit)
 {
     PITChannelState *s;
 
@@ -116,3 +110,5 @@ void kvm_pit_init(PITState *pit)
     vmstate_pit.post_load = kvm_pit_post_load;
     return;
 }
+
+#endif

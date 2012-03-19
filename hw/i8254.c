@@ -30,7 +30,44 @@
 
 //#define DEBUG_PIT
 
+#define RW_STATE_LSB 1
+#define RW_STATE_MSB 2
+#define RW_STATE_WORD0 3
+#define RW_STATE_WORD1 4
+
+typedef struct PITChannelState {
+    int count; /* can be 65536 */
+    uint16_t latched_count;
+    uint8_t count_latched;
+    uint8_t status_latched;
+    uint8_t status;
+    uint8_t read_state;
+    uint8_t write_state;
+    uint8_t write_latch;
+    uint8_t rw_mode;
+    uint8_t mode;
+    uint8_t bcd; /* not supported */
+    uint8_t gate; /* timer start */
+    int64_t count_load_time;
+    /* irq handling */
+    int64_t next_transition_time;
+    QEMUTimer *irq_timer;
+    qemu_irq irq;
+    uint32_t irq_disabled;
+} PITChannelState;
+
+typedef struct PITState {
+    ISADevice dev;
+    MemoryRegion ioports;
+    uint32_t iobase;
+    PITChannelState channels[3];
+} PITState;
+
 static void pit_irq_timer_update(PITChannelState *s, int64_t current_time);
+
+#ifdef CONFIG_KVM_PIT
+static void qemu_kvm_pit_init(PITState *pit);
+#endif
 
 static int pit_get_count(PITChannelState *s)
 {
@@ -412,7 +449,7 @@ static int pit_load_old(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-VMStateDescription vmstate_pit = {
+static VMStateDescription vmstate_pit = {
     .name = "i8254",
     .version_id = 3,
     .minimum_version_id = 2,
@@ -482,7 +519,7 @@ static int pit_initfn(ISADevice *dev)
 
 #ifdef CONFIG_KVM_PIT
     if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        kvm_pit_init(pit);
+        qemu_kvm_pit_init(pit);
         return 0;
     }
 #endif
@@ -531,3 +568,5 @@ static void pit_register_types(void)
 }
 
 type_init(pit_register_types)
+
+#include "i8254-kvm.c"

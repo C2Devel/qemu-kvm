@@ -251,7 +251,6 @@ obj-i386-y += testdev.o
 obj-i386-y += acpi.o acpi_piix4.o
 
 obj-i386-y += i8254.o
-obj-i386-$(CONFIG_KVM_PIT) += i8254-kvm.o
 obj-i386-$(CONFIG_KVM_DEVICE_ASSIGNMENT) += device-assignment.o
 
 # shared objects
