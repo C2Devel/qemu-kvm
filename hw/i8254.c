@@ -390,10 +390,9 @@ static int pit_load_old(QEMUFile *f, void *opaque, int version_id)
     PITChannelState *s;
     int i;
 
-    if (version_id != PIT_SAVEVM_VERSION)
+    if (version_id != 1)
         return -EINVAL;
 
-    (void)qemu_get_be32(f);
     for(i = 0; i < 3; i++) {
         s = &pit->channels[i];
         s->count=qemu_get_be32(f);
