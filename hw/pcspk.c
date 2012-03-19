@@ -29,7 +29,6 @@
 #include "qemu-timer.h"
 #include "i8254.h"
 #include "pcspk.h"
-#include "qemu-kvm.h"
 
 #define PCSPK_BUF_LEN 1792
 #define PCSPK_SAMPLE_RATE 32000
@@ -141,9 +140,6 @@ static void pcspk_io_write(void *opaque, target_phys_addr_t addr, uint64_t val,
 {
     PCSpkState *s = opaque;
     const int gate = val & 1;
-    PITChannelInfo ch;
-
-    pit_get_channel_info(s->pit, 2, &ch);
 
     s->data_on = (val >> 1) & 1;
     pit_set_gate(s->pit, 2, gate);
@@ -152,8 +148,6 @@ static void pcspk_io_write(void *opaque, target_phys_addr_t addr, uint64_t val,
             s->play_pos = 0;
         AUD_set_active_out(s->voice, gate & s->data_on);
     }
-
-    /*  kvm_set_pit_ch2(s->pit, &inkernel_state); ?? */
 }
 
 static const MemoryRegionOps pcspk_io_ops = {
