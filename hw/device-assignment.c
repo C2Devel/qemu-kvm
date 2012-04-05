@@ -1625,6 +1625,29 @@ static void reset_assigned_device(DeviceState *dev)
     const char reset[] = "1";
     int fd, ret;
 
+    /*
+     * If a guest is reset without being shutdown, MSI/MSI-X can still
+     * be running.  We want to return the device to a known state on
+     * reset, so disable those here.  We especially do not want MSI-X
+     * enabled since it lives in MMIO space, which is about to get
+     * disabled.
+     */
+    if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSIX) {
+        uint16_t ctrl = pci_get_word(pci_dev->config +
+                                     pci_dev->msix_cap + PCI_MSIX_FLAGS);
+
+        pci_set_word(pci_dev->config + pci_dev->msix_cap + PCI_MSIX_FLAGS,
+                     ctrl & ~PCI_MSIX_FLAGS_ENABLE);
+        assigned_dev_update_msix(pci_dev);
+    } else if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSI) {
+        uint8_t ctrl = pci_get_byte(pci_dev->config +
+                                    pci_dev->msi_cap + PCI_MSI_FLAGS);
+
+        pci_set_byte(pci_dev->config + pci_dev->msi_cap + PCI_MSI_FLAGS,
+                     ctrl & ~PCI_MSI_FLAGS_ENABLE);
+        assigned_dev_update_msi(pci_dev);
+    }
+
     snprintf(reset_file, sizeof(reset_file),
              "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/reset",
              adev->host.seg, adev->host.bus, adev->host.dev, adev->host.func);
