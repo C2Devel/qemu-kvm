@@ -26,7 +26,7 @@
 
 static void kvm_pit_pre_save(void *opaque)
 {
-    PITState *s = (void *)opaque;
+    PITCommonState *s = (void *)opaque;
     struct kvm_pit_state2 pit2;
     struct kvm_pit_channel_state *c;
     struct PITChannelState *sc;
@@ -60,7 +60,7 @@ static void kvm_pit_pre_save(void *opaque)
 
 static int kvm_pit_post_load(void *opaque, int version_id)
 {
-    PITState *s = opaque;
+    PITCommonState *s = opaque;
     struct kvm_pit_state2 pit2;
     struct kvm_pit_channel_state *c;
     struct PITChannelState *sc;
@@ -97,7 +97,7 @@ static void dummy_timer(void *opaque)
 {
 }
 
-static void qemu_kvm_pit_init(PITState *pit)
+static void qemu_kvm_pit_init(PITCommonState *pit)
 {
     PITChannelState *s;
 
@@ -106,8 +106,8 @@ static void qemu_kvm_pit_init(PITState *pit)
     }
     s = &pit->channels[0];
     s->irq_timer = qemu_new_timer_ns(vm_clock, dummy_timer, s);
-    vmstate_pit.pre_save = kvm_pit_pre_save;
-    vmstate_pit.post_load = kvm_pit_post_load;
+    vmstate_pit_common.pre_save = kvm_pit_pre_save;
+    vmstate_pit_common.post_load = kvm_pit_post_load;
     return;
 }
 
