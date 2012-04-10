@@ -35,7 +35,7 @@
 #include <sys/eventfd.h>
 #endif
 
-/* KVM uses PAGE_SIZE in it's definition of COALESCED_MMIO_MAX */
+/* KVM uses PAGE_SIZE in its definition of COALESCED_MMIO_MAX */
 #define PAGE_SIZE TARGET_PAGE_SIZE
 
 //#define DEBUG_KVM
@@ -449,6 +449,7 @@ int kvm_coalesce_mmio_region(target_phys_addr_t start, ram_addr_t size)
 
         zone.addr = start;
         zone.size = size;
+        zone.pad = 0;
 
         ret = kvm_vm_ioctl(s, KVM_REGISTER_COALESCED_MMIO, &zone);
     }
@@ -466,6 +467,7 @@ int kvm_uncoalesce_mmio_region(target_phys_addr_t start, ram_addr_t size)
 
         zone.addr = start;
         zone.size = size;
+        zone.pad = 0;
 
         ret = kvm_vm_ioctl(s, KVM_UNREGISTER_COALESCED_MMIO, &zone);
     }
