@@ -318,6 +318,14 @@ static QEMUMachine pc_machine_v1_0 = {
     .is_default = 1,
 };
 
+static QEMUMachine pc_machine_v0_15 = {
+    .name = "pc-0.15",
+    .desc = "Standard PC",
+    .init = pc_init_pci,
+    .max_cpus = 255,
+    .is_default = 1,
+};
+
 static QEMUMachine pc_machine_v0_14 = {
     .name = "pc-0.14",
     .desc = "Standard PC",
@@ -332,6 +340,22 @@ static QEMUMachine pc_machine_v0_14 = {
             .driver   = "qxl-vga",
             .property = "revision",
             .value    = stringify(2),
+        },{
+            .driver   = "virtio-blk-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-serial-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-net-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-balloon-pci",
+            .property = "event_idx",
+            .value    = "off",
         },
         { /* end of list */ }
     },
@@ -369,6 +393,10 @@ static QEMUMachine pc_machine_v0_13 = {
             .value    = "off",
         },{
             .driver   = "virtio-net-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-balloon-pci",
             .property = "event_idx",
             .value    = "off",
         },{
@@ -416,6 +444,10 @@ static QEMUMachine pc_machine_v0_12 = {
             .value    = "off",
         },{
             .driver   = "virtio-net-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-balloon-pci",
             .property = "event_idx",
             .value    = "off",
         },{
@@ -471,6 +503,10 @@ static QEMUMachine pc_machine_v0_11 = {
             .value    = "off",
         },{
             .driver   = "virtio-net-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
+            .driver   = "virtio-balloon-pci",
             .property = "event_idx",
             .value    = "off",
         },{
@@ -541,6 +577,10 @@ static QEMUMachine pc_machine_v0_10 = {
             .property = "event_idx",
             .value    = "off",
         },{
+            .driver   = "virtio-balloon-pci",
+            .property = "event_idx",
+            .value    = "off",
+        },{
             .driver   = "AC97",
             .property = "use_broken_id",
             .value    = stringify(1),
@@ -569,6 +609,7 @@ static QEMUMachine xenfv_machine = {
 static void pc_machine_init(void)
 {
     qemu_register_machine(&pc_machine_v1_0);
+    qemu_register_machine(&pc_machine_v0_15);
     qemu_register_machine(&pc_machine_v0_14);
     qemu_register_machine(&pc_machine_v0_13);
     qemu_register_machine(&pc_machine_v0_12);
