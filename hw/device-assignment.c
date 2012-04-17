@@ -501,7 +501,6 @@ static int get_real_device(AssignedDevice *pci_dev, uint16_t r_seg,
     FILE *f;
     unsigned long long start, end, size, flags;
     uint16_t id;
-    struct stat statbuf;
     PCIRegion *rp;
     PCIDevRegions *dev = &pci_dev->real_device;
 
@@ -610,12 +609,8 @@ again:
     pci_dev->dev.config[2] = id & 0xff;
     pci_dev->dev.config[3] = (id & 0xff00) >> 8;
 
-    /* dealing with virtual function device */
-    snprintf(name, sizeof(name), "%sphysfn/", dir);
-    if (!stat(name, &statbuf)) {
-        /* always provide the written value on readout */
-        assigned_dev_emulate_config_read(pci_dev, PCI_COMMAND, 2);
-    }
+    pci_word_test_and_clear_mask(pci_dev->emulate_config_write + PCI_COMMAND,
+                                 PCI_COMMAND_MASTER | PCI_COMMAND_INTX_DISABLE);
 
     dev->region_number = r;
     return 0;
@@ -785,10 +780,6 @@ static int assign_device(AssignedDevice *dev)
     if (dev->features & ASSIGNED_DEVICE_SHARE_INTX_MASK &&
         kvm_has_intx_set_mask()) {
         assigned_dev_data.flags |= KVM_DEV_ASSIGN_PCI_2_3;
-
-        /* hide host-side INTx masking from the guest */
-        dev->emulate_config_read[PCI_COMMAND + 1] |=
-            PCI_COMMAND_INTX_DISABLE >> 8;
     }
 
     r = kvm_assign_pci_device(kvm_state, &assigned_dev_data);
@@ -1666,10 +1657,10 @@ static void reset_assigned_device(DeviceState *dev)
     }
 
     /*
-     * When a 0 is written to the command register, the device is logically
+     * When a 0 is written to the bus master register, the device is logically
      * disconnected from the PCI bus. This avoids further DMA transfers.
      */
-    assigned_dev_pci_write_config(pci_dev, PCI_COMMAND, 0, 2);
+    assigned_dev_pci_write_config(pci_dev, PCI_COMMAND, 0, 1);
 }
 
 static int assigned_initfn(struct PCIDevice *pci_dev)
@@ -1693,7 +1684,6 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
      * device initialization.
      */
     assigned_dev_emulate_config_read(dev, 0, PCI_CONFIG_SPACE_SIZE);
-    assigned_dev_direct_config_read(dev, PCI_COMMAND, 2);
     assigned_dev_direct_config_read(dev, PCI_STATUS, 2);
     assigned_dev_direct_config_read(dev, PCI_REVISION_ID, 1);
     assigned_dev_direct_config_read(dev, PCI_CLASS_PROG, 3);
