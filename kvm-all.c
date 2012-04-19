@@ -35,7 +35,7 @@
 #include <sys/eventfd.h>
 #endif
 
-/* KVM uses PAGE_SIZE in it's definition of COALESCED_MMIO_MAX */
+/* KVM uses PAGE_SIZE in its definition of COALESCED_MMIO_MAX */
 #define PAGE_SIZE TARGET_PAGE_SIZE
 
 //#define DEBUG_KVM
@@ -76,9 +76,9 @@ struct KVMState
     struct kvm_sw_breakpoint_head kvm_sw_breakpoints;
 #endif
     int pit_in_kernel;
+    int pit_state2;
     int xsave, xcrs;
     int many_ioeventfds;
-    int pit_state2;
     int intx_set_mask;
     int irqchip_inject_ioctl;
 #ifdef KVM_CAP_IRQ_ROUTING
@@ -449,6 +449,7 @@ int kvm_coalesce_mmio_region(target_phys_addr_t start, ram_addr_t size)
 
         zone.addr = start;
         zone.size = size;
+        zone.pad = 0;
 
         ret = kvm_vm_ioctl(s, KVM_REGISTER_COALESCED_MMIO, &zone);
     }
@@ -466,6 +467,7 @@ int kvm_uncoalesce_mmio_region(target_phys_addr_t start, ram_addr_t size)
 
         zone.addr = start;
         zone.size = size;
+        zone.pad = 0;
 
         ret = kvm_vm_ioctl(s, KVM_UNREGISTER_COALESCED_MMIO, &zone);
     }
@@ -1060,7 +1062,6 @@ int kvm_init(void)
     s->xcrs = kvm_check_extension(s, KVM_CAP_XCRS);
 #endif
 
-    s->pit_state2 = 0;
 #ifdef KVM_CAP_PIT_STATE2
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
