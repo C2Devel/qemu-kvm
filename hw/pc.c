@@ -907,7 +907,7 @@ static DeviceState *apic_init(void *env, uint8_t apic_id)
         apic_mapped = 1;
     }
 
-#ifdef UNUSED_UPSTREAM_KVM
+#ifdef UPSTREAM_KVM
     /* KVM does not support MSI yet. */
     if (!kvm_irqchip_in_kernel()) {
         msi_supported = true;
@@ -1127,7 +1127,7 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
     } else {
         pit = pit_init(isa_bus, 0x40, pit_isa_irq, pit_alt_irq);
     }
-    if (hpet && !(kvm_enabled() && kvm_irqchip_in_kernel())) {
+    if (hpet) {
         /* connect PIT to output control line of the HPET */
         qdev_connect_gpio_out(hpet, 0, qdev_get_gpio_in(&pit->qdev, 0));
     }

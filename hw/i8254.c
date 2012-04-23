@@ -25,7 +25,6 @@
 #include "pc.h"
 #include "isa.h"
 #include "qemu-timer.h"
-#include "kvm.h"
 #include "i8254.h"
 #include "i8254_internal.h"
 
@@ -37,10 +36,6 @@
 #define RW_STATE_WORD1 4
 
 static void pit_irq_timer_update(PITChannelState *s, int64_t current_time);
-
-#ifdef CONFIG_KVM_PIT
-static void qemu_kvm_pit_init(PITCommonState *pit);
-#endif
 
 static int pit_get_count(PITChannelState *s)
 {
@@ -266,8 +261,6 @@ static void pit_irq_timer(void *opaque)
     pit_irq_timer_update(s, s->next_transition_time);
 }
 
-extern VMStateDescription vmstate_pit_common;
-
 static void pit_reset(DeviceState *dev)
 {
     PITCommonState *pit = DO_UPCAST(PITCommonState, dev.qdev, dev);
@@ -278,9 +271,6 @@ static void pit_reset(DeviceState *dev)
     s = &pit->channels[0];
     if (!s->irq_disabled) {
         qemu_mod_timer(s->irq_timer, s->next_transition_time);
-    }
-    if (vmstate_pit_common.post_load) {
-        vmstate_pit_common.post_load(pit, 2);
     }
 }
 
@@ -325,13 +315,6 @@ static int pit_initfn(PITCommonState *pit)
 {
     PITChannelState *s;
 
-#ifdef CONFIG_KVM_PIT
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        qemu_kvm_pit_init(pit);
-        return 0;
-    }
-#endif
-
     s = &pit->channels[0];
     /* the timer 0 is connected to an IRQ */
     s->irq_timer = qemu_new_timer_ns(vm_clock, pit_irq_timer, s);
@@ -375,5 +358,3 @@ static void pit_register_types(void)
 }
 
 type_init(pit_register_types)
-
-#include "i8254-kvm.c"

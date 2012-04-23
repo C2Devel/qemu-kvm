@@ -227,8 +227,7 @@ hw-obj-$(CONFIG_EMPTY_SLOT) += empty_slot.o
 
 hw-obj-$(CONFIG_SERIAL) += serial.o
 hw-obj-$(CONFIG_PARALLEL) += parallel.o
-# Moved back to Makefile.target due to #include qemu-kvm.h:
-#hw-obj-$(CONFIG_I8254) += i8254_common.o i8254.o
+hw-obj-$(CONFIG_I8254) += i8254_common.o i8254.o
 hw-obj-$(CONFIG_PCSPK) += pcspk.o
 hw-obj-$(CONFIG_PCKBD) += pckbd.o
 hw-obj-$(CONFIG_USB_UHCI) += usb/hcd-uhci.o

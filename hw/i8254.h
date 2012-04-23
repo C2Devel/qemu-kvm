@@ -27,7 +27,6 @@
 
 #include "hw.h"
 #include "isa.h"
-#include "kvm.h"
 
 #define PIT_FREQ 1193182
 
@@ -46,11 +45,6 @@ static inline ISADevice *pit_init(ISABus *bus, int base, int isa_irq,
     dev = isa_create(bus, "isa-pit");
     qdev_prop_set_uint32(&dev->qdev, "iobase", base);
     qdev_init_nofail(&dev->qdev);
-
-    if (kvm_enabled() && kvm_irqchip_in_kernel()) {
-        return dev;
-    }
-
     qdev_connect_gpio_out(&dev->qdev, 0,
                           isa_irq >= 0 ? isa_get_irq(dev, isa_irq) : alt_irq);
 

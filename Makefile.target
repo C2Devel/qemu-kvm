@@ -253,7 +253,6 @@ obj-i386-$(CONFIG_SPICE) += qxl.o qxl-logger.o qxl-render.o
 obj-i386-y += testdev.o
 obj-i386-y += acpi.o acpi_piix4.o
 
-obj-i386-y += i8254_common.o i8254.o
 obj-i386-$(CONFIG_KVM_DEVICE_ASSIGNMENT) += device-assignment.o
 
 # shared objects
@@ -310,7 +309,6 @@ obj-lm32-y += milkymist-vgafb.o
 obj-lm32-y += framebuffer.o
 
 obj-mips-y = mips_r4k.o mips_jazz.o mips_malta.o mips_mipssim.o
-obj-mips-y += i8254_common.o i8254.o
 obj-mips-y += acpi.o acpi_piix4.o
 obj-mips-y += mips_addr.o mips_timer.o mips_int.o
 obj-mips-y += gt64xxx.o mc146818rtc.o

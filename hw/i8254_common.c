@@ -266,7 +266,7 @@ static int pit_dispatch_post_load(void *opaque, int version_id)
     return 0;
 }
 
-VMStateDescription vmstate_pit_common = {
+static const VMStateDescription vmstate_pit_common = {
     .name = "i8254",
     .version_id = 3,
     .minimum_version_id = 2,
