@@ -96,22 +96,6 @@ int kvm_deassign_pci_device(KVMState *s,
 }
 #endif
 
-int kvm_reinject_control(KVMState *s, int pit_reinject)
-{
-#ifdef KVM_CAP_REINJECT_CONTROL
-    int r;
-    struct kvm_reinject_control control;
-
-    control.pit_reinject = pit_reinject;
-
-    r = kvm_ioctl(s, KVM_CHECK_EXTENSION, KVM_CAP_REINJECT_CONTROL);
-    if (r > 0) {
-        return kvm_vm_ioctl(s, KVM_REINJECT_CONTROL, &control);
-    }
-#endif
-    return -ENOSYS;
-}
-
 int kvm_clear_gsi_routes(void)
 {
 #ifdef KVM_CAP_IRQ_ROUTING
@@ -329,26 +313,6 @@ int kvm_assign_set_msix_entry(KVMState *s,
                               struct kvm_assigned_msix_entry *entry)
 {
     return kvm_vm_ioctl(s, KVM_ASSIGN_SET_MSIX_ENTRY, entry);
-}
-#endif
-
-#ifdef TARGET_I386
-void kvm_hpet_disable_kpit(void)
-{
-    struct kvm_pit_state2 ps2;
-
-    kvm_get_pit2(kvm_state, &ps2);
-    ps2.flags |= KVM_PIT_FLAGS_HPET_LEGACY;
-    kvm_set_pit2(kvm_state, &ps2);
-}
-
-void kvm_hpet_enable_kpit(void)
-{
-    struct kvm_pit_state2 ps2;
-
-    kvm_get_pit2(kvm_state, &ps2);
-    ps2.flags &= ~KVM_PIT_FLAGS_HPET_LEGACY;
-    kvm_set_pit2(kvm_state, &ps2);
 }
 #endif
 

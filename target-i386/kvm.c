@@ -2035,4 +2035,15 @@ void kvm_arch_init_irq_routing(KVMState *s)
     }
 }
 
-#include "qemu-kvm-x86.c"
+#ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
+#include <sys/io.h>
+
+int kvm_arch_set_ioport_access(unsigned long start, unsigned long size,
+                               bool enable)
+{
+    if (ioperm(start, size, enable) < 0) {
+        return -errno;
+    }
+    return 0;
+}
+#endif

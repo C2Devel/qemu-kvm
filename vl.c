@@ -2246,10 +2246,6 @@ static void free_and_trace(gpointer mem)
     free(mem);
 }
 
-#ifdef CONFIG_KVM_OPTIONS
-int kvm_pit_reinject = 1;
-#endif
-
 int qemu_init_main_loop(void)
 {
     return main_loop_init();

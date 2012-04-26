@@ -32,54 +32,6 @@
 
 #include "kvm.h"
 
-#if defined(__i386__) || defined(__x86_64__)
-/*!
- * \brief Get in kernel PIT of the virtual domain
- *
- * Save the PIT state.
- *
- * \param kvm Pointer to the current kvm_context
- * \param s PIT state of the virtual domain
- */
-int kvm_get_pit(KVMState *s, struct kvm_pit_state *pit_state);
-
-/*!
- * \brief Set in kernel PIT of the virtual domain
- *
- * Restore the PIT state.
- * Timer would be retriggerred after restored.
- *
- * \param kvm Pointer to the current kvm_context
- * \param s PIT state of the virtual domain
- */
-int kvm_set_pit(KVMState *s, struct kvm_pit_state *pit_state);
-
-int kvm_reinject_control(KVMState *s, int pit_reinject);
-
-/*!
- * \brief Set in kernel PIT state2 of the virtual domain
- *
- *
- * \param kvm Pointer to the current kvm_context
- * \param ps2 PIT state2 of the virtual domain
- * \return 0 on success
- */
-int kvm_set_pit2(KVMState *s, struct kvm_pit_state2 *ps2);
-
-/*!
- * \brief Get in kernel PIT state2 of the virtual domain
- *
- *
- * \param kvm Pointer to the current kvm_context
- * \param ps2 PIT state2 of the virtual domain
- * \return 0 on success
- */
-int kvm_get_pit2(KVMState *s, struct kvm_pit_state2 *ps2);
-
-#endif
-
-int kvm_enable_vapic(CPUState *env, uint64_t vapic);
-
 /*!
  * \brief Notifies host kernel about a PCI device to be assigned to a guest
  *
@@ -172,15 +124,7 @@ int kvm_assign_set_msix_nr(KVMState *s, struct kvm_assigned_msix_nr *msix_nr);
 int kvm_assign_set_msix_entry(KVMState *s,
                               struct kvm_assigned_msix_entry *entry);
 
-#else                           /* !CONFIG_KVM */
-
-struct kvm_pit_state {
-};
-
-#endif                          /* !CONFIG_KVM */
-
-void kvm_hpet_enable_kpit(void);
-void kvm_hpet_disable_kpit(void);
+#endif /* CONFIG_KVM */
 
 int kvm_add_ioport_region(unsigned long start, unsigned long size,
                           bool is_hot_plug);
@@ -190,10 +134,5 @@ int kvm_remove_ioport_region(unsigned long start, unsigned long size,
 int kvm_update_ioport_access(CPUState *env);
 int kvm_arch_set_ioport_access(unsigned long start, unsigned long size,
                                bool enable);
-
-int kvm_create_pit(KVMState *s);
-
-extern int kvm_pit_reinject;
-extern unsigned int kvm_shadow_memory;
 
 #endif
