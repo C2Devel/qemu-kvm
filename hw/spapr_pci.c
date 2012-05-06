@@ -32,13 +32,6 @@
 
 #include "hw/pci_internals.h"
 
-static const uint32_t bars[] = {
-    PCI_BASE_ADDRESS_0, PCI_BASE_ADDRESS_1,
-    PCI_BASE_ADDRESS_2, PCI_BASE_ADDRESS_3,
-    PCI_BASE_ADDRESS_4, PCI_BASE_ADDRESS_5
-    /*, PCI_ROM_ADDRESS*/
-};
-
 static PCIDevice *find_dev(sPAPREnvironment *spapr,
                            uint64_t buid, uint32_t config_addr)
 {
@@ -197,7 +190,7 @@ static int spapr_phb_init(SysBusDevice *s)
         qemu_irq qirq;
         uint32_t num;
 
-        qirq = spapr_allocate_irq(0, &num);
+        qirq = spapr_allocate_lsi(0, &num);
         if (!qirq) {
             return -1;
         }
@@ -208,25 +201,6 @@ static int spapr_phb_init(SysBusDevice *s)
 
     return 0;
 }
-
-static int spapr_main_pci_host_init(PCIDevice *d)
-{
-    return 0;
-}
-
-static void spapr_main_pci_host_class_init(ObjectClass *klass, void *data)
-{
-    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
-
-    k->init = spapr_main_pci_host_init;
-}
-
-static TypeInfo spapr_main_pci_host_info = {
-    .name          = "spapr-pci-host-bridge-pci",
-    .parent        = TYPE_PCI_DEVICE,
-    .instance_size = sizeof(PCIDevice),
-    .class_init    = spapr_main_pci_host_class_init,
-};
 
 static void spapr_phb_class_init(ObjectClass *klass, void *data)
 {
@@ -245,7 +219,6 @@ static TypeInfo spapr_phb_info = {
 static void spapr_register_types(void)
 {
     type_register_static(&spapr_phb_info);
-    type_register_static(&spapr_main_pci_host_info);
 }
 
 type_init(spapr_register_types)
