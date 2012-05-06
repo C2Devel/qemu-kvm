@@ -193,6 +193,14 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Using KVM without %(capability), %(feature) unavailable",
     },
     {
+        .error_fmt = QERR_MIGRATION_ACTIVE,
+        .desc      = "There's a migration process in progress",
+    },
+    {
+        .error_fmt = QERR_MIGRATION_NOT_SUPPORTED,
+        .desc      = "State blocked by non-migratable device '%(device)'",
+    },
+    {
         .error_fmt = QERR_MIGRATION_EXPECTED,
         .desc      = "An incoming migration is expected before this command can be executed",
     },
@@ -233,9 +241,14 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Property '%(device).%(property)' can't find value '%(value)'",
     },
     {
+        .error_fmt = QERR_PROPERTY_VALUE_NOT_POWER_OF_2,
+        .desc      = "Property '%(device).%(property)' doesn't take "
+                     "value '%(value)', it's not a power of 2",
+    },
+    {
         .error_fmt = QERR_PROPERTY_VALUE_OUT_OF_RANGE,
         .desc      = "Property '%(device).%(property)' doesn't take "
-                     "value %(value) (minimum: %(min), maximum: %(max)'",
+                     "value %(value) (minimum: %(min), maximum: %(max))",
     },
     {
         .error_fmt = QERR_QGA_COMMAND_FAILED,

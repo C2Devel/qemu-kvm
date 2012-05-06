@@ -314,10 +314,7 @@ EQMP
     {
         .name       = "device_del",
         .args_type  = "id:s",
-        .params     = "device",
-        .help       = "remove device",
-        .user_print = monitor_user_noop,
-        .mhandler.cmd_new = do_device_del,
+        .mhandler.cmd_new = qmp_marshal_input_device_del,
     },
 
 SQMP
@@ -444,16 +441,36 @@ Note: inject-nmi is only supported for x86 guest currently, it will
 EQMP
 
     {
+        .name       = "xen-save-devices-state",
+        .args_type  = "filename:F",
+    .mhandler.cmd_new = qmp_marshal_input_xen_save_devices_state,
+    },
+
+SQMP
+xen-save-devices-state
+-------
+
+Save the state of all devices to file. The RAM and the block devices
+of the VM are not saved by this command.
+
+Arguments:
+
+- "filename": the file to save the state of the devices to as binary
+data. See xen-save-devices-state.txt for a description of the binary
+format.
+
+Example:
+
+-> { "execute": "xen-save-devices-state",
+     "arguments": { "filename": "/tmp/save" } }
+<- { "return": {} }
+
+EQMP
+
+    {
         .name       = "migrate",
         .args_type  = "detach:-d,blk:-b,inc:-i,uri:s",
-        .params     = "[-d] [-b] [-i] uri",
-        .help       = "migrate to URI (using -d to not wait for completion)"
-		      "\n\t\t\t -b for migration without shared storage with"
-		      " full copy of disk\n\t\t\t -i for migration without "
-		      "shared storage with incremental copy of disk "
-		      "(base image shared between src and destination)",
-        .user_print = monitor_user_noop,	
-	.mhandler.cmd_new = do_migrate,
+        .mhandler.cmd_new = qmp_marshal_input_migrate,
     },
 
 SQMP
@@ -670,25 +687,25 @@ Example:
 EQMP
 
     {
-        .name       = "block_stream",
-        .args_type  = "device:B,base:s?",
+        .name       = "block-stream",
+        .args_type  = "device:B,base:s?,speed:o?",
         .mhandler.cmd_new = qmp_marshal_input_block_stream,
     },
 
     {
-        .name       = "block_job_set_speed",
-        .args_type  = "device:B,value:o",
+        .name       = "block-job-set-speed",
+        .args_type  = "device:B,speed:o",
         .mhandler.cmd_new = qmp_marshal_input_block_job_set_speed,
     },
 
     {
-        .name       = "block_job_cancel",
+        .name       = "block-job-cancel",
         .args_type  = "device:B",
         .mhandler.cmd_new = qmp_marshal_input_block_job_cancel,
     },
     {
         .name       = "transaction",
-        .args_type  = "actions:O",
+        .args_type  = "actions:q",
         .mhandler.cmd_new = qmp_marshal_input_transaction,
     },
 
@@ -2105,7 +2122,7 @@ EQMP
 
     {
         .name       = "qom-set",
-	.args_type  = "path:s,property:s,opts:O",
+	.args_type  = "path:s,property:s,value:q",
 	.mhandler.cmd_new = qmp_qom_set,
     },
 

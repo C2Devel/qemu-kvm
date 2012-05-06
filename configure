@@ -41,8 +41,8 @@ compile_prog() {
 
 # symbolically link $1 to $2.  Portable version of "ln -sf".
 symlink() {
-  rm -f $2
-  ln -s $1 $2
+  rm -rf "$2"
+  ln -s "$1" "$2"
 }
 
 # check whether a command is available to this shell (may be either an
@@ -165,8 +165,8 @@ mingw32="no"
 EXESUF=""
 prefix="/usr/local"
 mandir="\${prefix}/share/man"
-datadir="\${prefix}/share/qemu"
-docdir="\${prefix}/share/doc/qemu"
+datadir="\${prefix}/share"
+qemu_docdir="\${prefix}/share/doc/qemu"
 bindir="\${prefix}/bin"
 libdir="\${prefix}/lib"
 includedir="\${prefix}/include"
@@ -183,7 +183,6 @@ profiler="no"
 cocoa="no"
 softmmu="yes"
 linux_user="no"
-darwin_user="no"
 bsd_user="no"
 guest_base=""
 uname_release=""
@@ -435,7 +434,6 @@ Darwin)
   else
     QEMU_CFLAGS="-mdynamic-no-pic $QEMU_CFLAGS"
   fi
-  darwin_user="yes"
   cocoa="yes"
   audio_drv_list="coreaudio"
   audio_possible_drivers="coreaudio sdl fmod"
@@ -481,7 +479,9 @@ SunOS)
 # needed for TIOCWIN* defines in termios.h
   QEMU_CFLAGS="-D__EXTENSIONS__ $QEMU_CFLAGS"
   QEMU_CFLAGS="-std=gnu99 $QEMU_CFLAGS"
-  LIBS="-lsocket -lnsl -lresolv $LIBS"
+  solarisnetlibs="-lsocket -lnsl -lresolv"
+  LIBS="$solarisnetlibs $LIBS"
+  libs_qga="$solarisnetlibs $libs_qga"
 ;;
 AIX)
   aix="yes"
@@ -509,8 +509,8 @@ esac
 if [ "$bsd" = "yes" ] ; then
   if [ "$darwin" != "yes" ] ; then
     usb="bsd"
+    bsd_user="yes"
   fi
-  bsd_user="yes"
 fi
 
 : ${make=${MAKE-make}}
@@ -530,14 +530,14 @@ EOF
   if compile_prog "" "-liberty" ; then
     LIBS="-liberty $LIBS"
   fi
-  prefix="c:/Program Files/Qemu"
+  prefix="c:/Program Files/QEMU"
   mandir="\${prefix}"
   datadir="\${prefix}"
-  docdir="\${prefix}"
+  qemu_docdir="\${prefix}"
   bindir="\${prefix}"
   sysconfdir="\${prefix}"
   confsuffix=""
-  libs_qga="-lws2_32 -lwinmm -lpowrprof $lib_qga"
+  libs_qga="-lws2_32 -lwinmm -lpowrprof $libs_qga"
 fi
 
 werror=""
@@ -602,7 +602,9 @@ for opt do
   ;;
   --datadir=*) datadir="$optarg"
   ;;
-  --docdir=*) docdir="$optarg"
+  --with-confsuffix=*) confsuffix="$optarg"
+  ;;
+  --docdir=*) qemu_docdir="$optarg"
   ;;
   --sysconfdir=*) sysconfdir="$optarg"
   ;;
@@ -727,6 +729,8 @@ for opt do
   ;;
   --enable-profiler) profiler="yes"
   ;;
+  --disable-cocoa) cocoa="no"
+  ;;
   --enable-cocoa)
       cocoa="yes" ;
       sdl="no" ;
@@ -739,16 +743,11 @@ for opt do
   --disable-user)
       linux_user="no" ;
       bsd_user="no" ;
-      darwin_user="no"
   ;;
   --enable-user) ;;
   --disable-linux-user) linux_user="no"
   ;;
   --enable-linux-user) linux_user="yes"
-  ;;
-  --disable-darwin-user) darwin_user="no"
-  ;;
-  --enable-darwin-user) darwin_user="yes"
   ;;
   --disable-bsd-user) bsd_user="no"
   ;;
@@ -978,10 +977,6 @@ unicore32-linux-user \
 s390x-linux-user \
 "
 fi
-# the following are Darwin specific
-if [ "$darwin_user" = "yes" ] ; then
-    default_target_list="$default_target_list i386-darwin-user ppc-darwin-user "
-fi
 # the following are BSD specific
 if [ "$bsd_user" = "yes" ] ; then
     default_target_list="${default_target_list}\
@@ -1022,10 +1017,11 @@ echo "  --python=PYTHON          use specified python [$python]"
 echo "  --smbd=SMBD              use specified smbd [$smbd]"
 echo "  --static                 enable static build [$static]"
 echo "  --mandir=PATH            install man pages in PATH"
-echo "  --datadir=PATH           install firmware in PATH"
-echo "  --docdir=PATH            install documentation in PATH"
+echo "  --datadir=PATH           install firmware in PATH$confsuffix"
+echo "  --docdir=PATH            install documentation in PATH$confsuffix"
 echo "  --bindir=PATH            install binaries in PATH"
-echo "  --sysconfdir=PATH        install config in PATH/qemu"
+echo "  --sysconfdir=PATH        install config in PATH$confsuffix"
+echo "  --with-confsuffix=SUFFIX      suffix for Qemu data inside datadir and sysconfdir [$confsuffix]"
 echo "  --enable-debug-tcg       enable TCG debugging"
 echo "  --disable-debug-tcg      disable TCG debugging (default)"
 echo "  --enable-debug           enable common debug build options"
@@ -1039,7 +1035,8 @@ echo "  --disable-virtfs         disable VirtFS"
 echo "  --enable-virtfs          enable VirtFS"
 echo "  --disable-vnc            disable VNC"
 echo "  --enable-vnc             enable VNC"
-echo "  --enable-cocoa           enable COCOA (Mac OS X only)"
+echo "  --disable-cocoa          disable Cocoa (Mac OS X only)"
+echo "  --enable-cocoa           enable Cocoa (default on Mac OS X)"
 echo "  --audio-drv-list=LIST    set audio drivers list:"
 echo "                           Available drivers: $audio_possible_drivers"
 echo "  --audio-card-list=LIST   set list of emulated audio cards [$audio_card_list]"
@@ -1083,8 +1080,6 @@ echo "  --enable-user            enable supported user emulation targets"
 echo "  --disable-user           disable all user emulation targets"
 echo "  --enable-linux-user      enable all linux usermode emulation targets"
 echo "  --disable-linux-user     disable all linux usermode emulation targets"
-echo "  --enable-darwin-user     enable all darwin usermode emulation targets"
-echo "  --disable-darwin-user    disable all darwin usermode emulation targets"
 echo "  --enable-bsd-user        enable all BSD usermode emulation targets"
 echo "  --disable-bsd-user       disable all BSD usermode emulation targets"
 echo "  --enable-guest-base      enable GUEST_BASE support for usermode"
@@ -1114,7 +1109,7 @@ echo "  --disable-docs           disable documentation build"
 echo "  --disable-vhost-net      disable vhost-net acceleration support"
 echo "  --enable-vhost-net       enable vhost-net acceleration support"
 echo "  --enable-trace-backend=B Set trace backend"
-echo "                           Available backends:" $("$source_path"/scripts/tracetool --list-backends)
+echo "                           Available backends:" $($python "$source_path"/scripts/tracetool.py --list-backends)
 echo "  --with-trace-file=NAME   Full PATH,NAME of file to store traces"
 echo "                           Default:trace-<pid>"
 echo "  --disable-spice          disable spice"
@@ -1259,6 +1254,15 @@ if ! has $python; then
   exit 1
 fi
 
+# Note that if the Python conditional here evaluates True we will exit
+# with status 1 which is a shell 'false' value.
+if ! "$python" -c 'import sys; sys.exit(sys.version_info < (2,4) or sys.version_info >= (3,))'; then
+  echo "Cannot use '$python', Python 2.4 or later is required."
+  echo "Note that Python 3 or later is not yet supported."
+  echo "Use --python=/path/to/python to specify a supported Python."
+  exit 1
+fi
+
 if test -z "$target_list" ; then
     target_list="$default_target_list"
 else
@@ -1391,6 +1395,31 @@ EOF
     xen=no
 
   # Xen unstable
+  elif (
+      cat > $TMPC <<EOF
+#include <xenctrl.h>
+#include <xs.h>
+#include <stdint.h>
+#include <xen/hvm/hvm_info_table.h>
+#if !defined(HVM_MAX_VCPUS)
+# error HVM_MAX_VCPUS not defined
+#endif
+int main(void) {
+  xc_interface *xc;
+  xs_daemon_open();
+  xc = xc_interface_open(0, 0, 0);
+  xc_hvm_set_mem_type(0, 0, HVMMEM_ram_ro, 0, 0);
+  xc_gnttab_open(NULL, 0);
+  xc_domain_add_to_physmap(0, 0, XENMAPSPACE_gmfn, 0, 0);
+  xc_hvm_inject_msi(xc, 0, 0xf0000000, 0x00000000);
+  return 0;
+}
+EOF
+      compile_prog "" "$xen_libs"
+    ) ; then
+    xen_ctrl_version=420
+    xen=yes
+
   elif (
       cat > $TMPC <<EOF
 #include <xenctrl.h>
@@ -1864,9 +1893,9 @@ for drv in $audio_drv_list; do
     ;;
 
     pa)
-    audio_drv_probe $drv pulse/simple.h "-lpulse-simple -lpulse" \
-        "pa_simple *s = 0; pa_simple_free(s); return 0;"
-    libs_softmmu="-lpulse -lpulse-simple $libs_softmmu"
+    audio_drv_probe $drv pulse/mainloop.h "-lpulse" \
+        "pa_mainloop *m = 0; pa_mainloop_free (m); return 0;"
+    libs_softmmu="-lpulse $libs_softmmu"
     audio_pt_int="yes"
     ;;
 
@@ -2010,13 +2039,21 @@ fi
 
 ##########################################
 # glib support probe
-if $pkg_config --modversion gthread-2.0 > /dev/null 2>&1 ; then
+
+if test "$mingw32" = yes; then
+    # g_poll is required in order to integrate with the glib main loop.
+    glib_req_ver=2.20
+else
+    glib_req_ver=2.12
+fi
+if $pkg_config --atleast-version=$glib_req_ver gthread-2.0 > /dev/null 2>&1
+then
     glib_cflags=`$pkg_config --cflags gthread-2.0 2>/dev/null`
     glib_libs=`$pkg_config --libs gthread-2.0 2>/dev/null`
     LIBS="$glib_libs $LIBS"
     libs_qga="$glib_libs $libs_qga"
 else
-    echo "glib-2.0 required to compile QEMU"
+    echo "glib-$glib_req_ver required to compile QEMU"
     exit 1
 fi
 
@@ -2056,7 +2093,16 @@ else
   for pthread_lib in $PTHREADLIBS_LIST; do
     if compile_prog "" "$pthread_lib" ; then
       pthread=yes
-      LIBS="$pthread_lib $LIBS"
+      found=no
+      for lib_entry in $LIBS; do
+        if test "$lib_entry" = "$pthread_lib"; then
+          found=yes
+          break
+        fi
+      done
+      if test "$found" = "no"; then
+        LIBS="$pthread_lib $LIBS"
+      fi
       break
     fi
   done
@@ -2378,7 +2424,7 @@ int main(void)
     return 0;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   fallocate=yes
 fi
 
@@ -2393,7 +2439,7 @@ int main(void)
     return 0;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   sync_file_range=yes
 fi
 
@@ -2410,7 +2456,7 @@ int main(void)
     return 0;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   fiemap=yes
 fi
 
@@ -2440,7 +2486,7 @@ int main(void)
     return 0;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   epoll=yes
 fi
 
@@ -2463,7 +2509,7 @@ int main(void)
     return epoll_create1 == epoll_create1;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   epoll_create1=yes
 fi
 
@@ -2477,7 +2523,7 @@ int main(void)
     return 0;
 }
 EOF
-if compile_prog "$ARCH_CFLAGS" "" ; then
+if compile_prog "" "" ; then
   epoll_pwait=yes
 fi
 
@@ -2633,7 +2679,7 @@ int main(void) {
 #if defined(_POSIX_SYNCHRONIZED_IO) && _POSIX_SYNCHRONIZED_IO > 0
 return fdatasync(0);
 #else
-#abort Not supported
+#error Not supported
 #endif
 }
 EOF
@@ -2671,7 +2717,7 @@ fi
 ##########################################
 # check if trace backend exists
 
-sh "$source_path/scripts/tracetool" "--$trace_backend" --check-backend > /dev/null 2> /dev/null
+$python "$source_path/scripts/tracetool.py" "--backend=$trace_backend" --check-backend  > /dev/null 2> /dev/null
 if test "$?" -ne 0 ; then
   echo
   echo "Error: invalid trace backend"
@@ -2689,7 +2735,8 @@ if test "$trace_backend" = "ust"; then
 int main(void) { return 0; }
 EOF
   if compile_prog "" "" ; then
-    LIBS="-lust $LIBS"
+    LIBS="-lust -lurcu-bp $LIBS"
+    libs_qga="-lust -lurcu-bp $libs_qga"
   else
     echo
     echo "Error: Trace backend 'ust' missing libust header files"
@@ -2838,6 +2885,13 @@ if test "$solaris" = "no" ; then
     fi
 fi
 
+# test if pod2man has --utf8 option
+if pod2man --help | grep -q utf8; then
+    POD2MAN="pod2man --utf8"
+else
+    POD2MAN="pod2man"
+fi
+
 # Use ASLR, no-SEH and DEP if available
 if test "$mingw32" = "yes" ; then
     for flag in --dynamicbase --no-seh --nxcompat; do
@@ -2847,7 +2901,8 @@ if test "$mingw32" = "yes" ; then
     done
 fi
 
-confdir=$sysconfdir$confsuffix
+qemu_confdir=$sysconfdir$confsuffix
+qemu_datadir=$datadir$confsuffix
 
 tools=
 if test "$softmmu" = yes ; then
@@ -2882,7 +2937,7 @@ if test "$cpu" = "ppc64" -a "$targetos" != "Darwin" ; then
 fi
 
 echo "Install prefix    $prefix"
-echo "BIOS directory    `eval echo $datadir`"
+echo "BIOS directory    `eval echo $qemu_datadir`"
 echo "binary directory  `eval echo $bindir`"
 echo "library directory `eval echo $libdir`"
 echo "include directory `eval echo $includedir`"
@@ -2991,12 +3046,11 @@ echo "bindir=$bindir" >> $config_host_mak
 echo "libdir=$libdir" >> $config_host_mak
 echo "includedir=$includedir" >> $config_host_mak
 echo "mandir=$mandir" >> $config_host_mak
-echo "datadir=$datadir" >> $config_host_mak
 echo "sysconfdir=$sysconfdir" >> $config_host_mak
-echo "docdir=$docdir" >> $config_host_mak
-echo "confdir=$confdir" >> $config_host_mak
+echo "qemu_confdir=$qemu_confdir" >> $config_host_mak
+echo "qemu_datadir=$qemu_datadir" >> $config_host_mak
+echo "qemu_docdir=$qemu_docdir" >> $config_host_mak
 echo "libexecdir=\${prefix}/libexec" >> $config_host_mak
-echo "CONFIG_QEMU_SHAREDIR=\"$prefix$datasuffix\"" >> $config_host_mak
 echo "CONFIG_QEMU_HELPERDIR=\"$prefix/libexec\"" >> $config_host_mak
 
 echo "ARCH=$ARCH" >> $config_host_mak
@@ -3070,12 +3124,12 @@ if test "$cap_ng" = "yes" ; then
   echo "CONFIG_LIBCAP=y" >> $config_host_mak
 fi
 for card in $audio_card_list; do
-    def=CONFIG_`echo $card | tr '[:lower:]' '[:upper:]'`
+    def=CONFIG_`echo $card | LC_ALL=C tr '[a-z]' '[A-Z]'`
     echo "$def=y" >> $config_host_mak
 done
 echo "CONFIG_AUDIO_DRIVERS=$audio_drv_list" >> $config_host_mak
 for drv in $audio_drv_list; do
-    def=CONFIG_`echo $drv | tr '[:lower:]' '[:upper:]'`
+    def=CONFIG_`echo $drv | LC_ALL=C tr '[a-z]' '[A-Z]'`
     echo "$def=y" >> $config_host_mak
     if test "$drv" = "fmod"; then
         echo "FMOD_CFLAGS=-I$fmod_inc" >> $config_host_mak
@@ -3376,6 +3430,7 @@ echo "LIBS+=$LIBS" >> $config_host_mak
 echo "LIBS_TOOLS+=$libs_tools" >> $config_host_mak
 echo "EXESUF=$EXESUF" >> $config_host_mak
 echo "LIBS_QGA+=$libs_qga" >> $config_host_mak
+echo "POD2MAN=$POD2MAN" >> $config_host_mak
 
 # generate list of library paths for linker script
 
@@ -3391,7 +3446,7 @@ fi
 
 for d in libdis libdis-user; do
     mkdir -p $d
-    symlink $source_path/Makefile.dis $d/Makefile
+    symlink "$source_path/Makefile.dis" "$d/Makefile"
     echo > $d/config.mak
 done
 
@@ -3400,13 +3455,13 @@ if test "$linux" = "yes" ; then
   mkdir -p linux-headers
   case "$cpu" in
   i386|x86_64)
-    symlink $source_path/linux-headers/asm-x86 linux-headers/asm
+    symlink "$source_path/linux-headers/asm-x86" linux-headers/asm
     ;;
   ppcemb|ppc|ppc64)
-    symlink $source_path/linux-headers/asm-powerpc linux-headers/asm
+    symlink "$source_path/linux-headers/asm-powerpc" linux-headers/asm
     ;;
   s390x)
-    symlink $source_path/linux-headers/asm-s390 linux-headers/asm
+    symlink "$source_path/linux-headers/asm-s390" linux-headers/asm
     ;;
   esac
 fi
@@ -3425,7 +3480,6 @@ esac
 target_softmmu="no"
 target_user_only="no"
 target_linux_user="no"
-target_darwin_user="no"
 target_bsd_user="no"
 case "$target" in
   ${target_arch2}-softmmu)
@@ -3438,14 +3492,6 @@ case "$target" in
     fi
     target_user_only="yes"
     target_linux_user="yes"
-    ;;
-  ${target_arch2}-darwin-user)
-    if test "$darwin" != "yes" ; then
-      echo "ERROR: Target '$target' is only available on a Darwin host"
-      exit 1
-    fi
-    target_user_only="yes"
-    target_darwin_user="yes"
     ;;
   ${target_arch2}-bsd-user)
     if test "$bsd" != "yes" ; then
@@ -3471,7 +3517,7 @@ mkdir -p $target_dir/kvm
 if test "$target" = "arm-linux-user" -o "$target" = "armeb-linux-user" -o "$target" = "arm-bsd-user" -o "$target" = "armeb-bsd-user" ; then
   mkdir -p $target_dir/nwfpe
 fi
-symlink $source_path/Makefile.target $target_dir/Makefile
+symlink "$source_path/Makefile.target" "$target_dir/Makefile"
 
 
 echo "# Automatically generated by configure - do not modify" > $config_target_mak
@@ -3624,12 +3670,19 @@ case "$target_arch2" in
     exit 1
   ;;
 esac
+
+case "$target_arch2" in
+  alpha | sparc*)
+    echo "CONFIG_TCG_PASS_AREG0=y" >> $config_target_mak
+  ;;
+esac
+
 echo "TARGET_SHORT_ALIGNMENT=$target_short_alignment" >> $config_target_mak
 echo "TARGET_INT_ALIGNMENT=$target_int_alignment" >> $config_target_mak
 echo "TARGET_LONG_ALIGNMENT=$target_long_alignment" >> $config_target_mak
 echo "TARGET_LLONG_ALIGNMENT=$target_llong_alignment" >> $config_target_mak
 echo "TARGET_ARCH=$TARGET_ARCH" >> $config_target_mak
-target_arch_name="`echo $TARGET_ARCH | tr '[:lower:]' '[:upper:]'`"
+target_arch_name="`echo $TARGET_ARCH | LC_ALL=C tr '[a-z]' '[A-Z]'`"
 echo "TARGET_$target_arch_name=y" >> $config_target_mak
 echo "TARGET_ARCH2=$target_arch2" >> $config_target_mak
 # TARGET_BASE_ARCH needs to be defined after TARGET_ARCH
@@ -3696,9 +3749,6 @@ if test "$target_user_only" = "yes" ; then
 fi
 if test "$target_linux_user" = "yes" ; then
   echo "CONFIG_LINUX_USER=y" >> $config_target_mak
-fi
-if test "$target_darwin_user" = "yes" ; then
-  echo "CONFIG_DARWIN_USER=y" >> $config_target_mak
 fi
 list=""
 if test ! -z "$gdb_xml_files" ; then
@@ -3776,6 +3826,10 @@ for i in $ARCH $TARGET_BASE_ARCH ; do
   ia64*)
     echo "CONFIG_IA64_DIS=y"  >> $config_target_mak
     echo "CONFIG_IA64_DIS=y"  >> $libdis_config_mak
+  ;;
+  lm32)
+    echo "CONFIG_LM32_DIS=y"  >> $config_target_mak
+    echo "CONFIG_LM32_DIS=y"  >> $libdis_config_mak
   ;;
   m68k)
     echo "CONFIG_M68K_DIS=y"  >> $config_target_mak
@@ -3883,7 +3937,8 @@ echo "QEMU_INCLUDES+=$includes" >> $config_target_mak
 done # for target in $targets
 
 # build tree in object directory in case the source is not in the current directory
-DIRS="tests tests/tcg tests/tcg/cris slirp audio block net pc-bios/optionrom"
+DIRS="tests tests/tcg tests/tcg/cris tests/tcg/lm32"
+DIRS="$DIRS slirp audio block net pc-bios/optionrom"
 DIRS="$DIRS pc-bios/spapr-rtas"
 DIRS="$DIRS roms/seabios roms/vgabios"
 DIRS="$DIRS fsdev ui usb"
@@ -3891,6 +3946,7 @@ DIRS="$DIRS qapi qapi-generated"
 DIRS="$DIRS qga trace qom"
 FILES="Makefile tests/tcg/Makefile qdict-test-data.txt"
 FILES="$FILES tests/tcg/cris/Makefile tests/tcg/cris/.gdbinit"
+FILES="$FILES tests/tcg/lm32/Makefile"
 FILES="$FILES pc-bios/optionrom/Makefile pc-bios/keymaps"
 FILES="$FILES pc-bios/spapr-rtas/Makefile"
 FILES="$FILES roms/seabios/Makefile roms/vgabios/Makefile"
@@ -3905,7 +3961,7 @@ do
 done
 mkdir -p $DIRS
 for f in $FILES ; do
-    if [ -e "$source_path/$f" ] && ! [ -e "$f" ]; then
+    if [ -e "$source_path/$f" ] && [ "$source_path" != `pwd` ]; then
         symlink "$source_path/$f" "$f"
     fi
 done
@@ -3928,7 +3984,7 @@ for hwlib in 32 64; do
   mkdir -p $d
   mkdir -p $d/ide
   mkdir -p $d/usb
-  symlink $source_path/Makefile.hw $d/Makefile
+  symlink "$source_path/Makefile.hw" "$d/Makefile"
   mkdir -p $d/9pfs
   echo "QEMU_CFLAGS+=-DTARGET_PHYS_ADDR_BITS=$hwlib" > $d/config.mak
 done
@@ -3936,14 +3992,14 @@ done
 if [ "$source_path" != `pwd` ]; then
     # out of tree build
     mkdir -p libcacard
-    rm -f libcacard/Makefile
     symlink "$source_path/libcacard/Makefile" libcacard/Makefile
 fi
 
 d=libuser
 mkdir -p $d
 mkdir -p $d/trace
-symlink $source_path/Makefile.user $d/Makefile
+mkdir -p $d/qom
+symlink "$source_path/Makefile.user" "$d/Makefile"
 
 if test "$docs" = "yes" ; then
   mkdir -p QMP

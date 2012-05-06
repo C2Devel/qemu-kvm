@@ -166,6 +166,12 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_KVM_MISSING_CAP \
     "{ 'class': 'KVMMissingCap', 'data': { 'capability': %s, 'feature': %s } }"
 
+#define QERR_MIGRATION_ACTIVE \
+    "{ 'class': 'MigrationActive', 'data': {} }"
+
+#define QERR_MIGRATION_NOT_SUPPORTED \
+    "{ 'class': 'MigrationNotSupported', 'data': {'device': %s} }"
+
 #define QERR_MIGRATION_EXPECTED \
     "{ 'class': 'MigrationExpected', 'data': {} }"
 
@@ -195,6 +201,10 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_PROPERTY_VALUE_NOT_FOUND \
     "{ 'class': 'PropertyValueNotFound', 'data': { 'device': %s, 'property': %s, 'value': %s } }"
+
+#define QERR_PROPERTY_VALUE_NOT_POWER_OF_2 \
+    "{ 'class': 'PropertyValueNotPowerOf2', 'data': { " \
+    "'device': %s, 'property': %s, 'value': %"PRId64" } }"
 
 #define QERR_PROPERTY_VALUE_OUT_OF_RANGE \
     "{ 'class': 'PropertyValueOutOfRange', 'data': { 'device': %s, 'property': %s, 'value': %"PRId64", 'min': %"PRId64", 'max': %"PRId64" } }"

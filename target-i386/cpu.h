@@ -42,7 +42,7 @@
 #define ELF_MACHINE	EM_386
 #endif
 
-#define CPUState struct CPUX86State
+#define CPUArchState struct CPUX86State
 
 #include "cpu-defs.h"
 
@@ -783,12 +783,13 @@ typedef struct CPUX86State {
     TPRAccess tpr_access_type;
 } CPUX86State;
 
+#include "cpu-qom.h"
+
 CPUX86State *cpu_x86_init(const char *cpu_model);
 int cpu_x86_exec(CPUX86State *s);
-void cpu_x86_close(CPUX86State *s);
 void x86_cpu_list (FILE *f, fprintf_function cpu_fprintf, const char *optarg);
 void x86_cpudef_setup(void);
-int cpu_x86_support_mca_broadcast(CPUState *env);
+int cpu_x86_support_mca_broadcast(CPUX86State *env);
 
 int cpu_get_pic_interrupt(CPUX86State *s);
 /* MSDOS compatibility mode FPU exception support */
@@ -900,7 +901,7 @@ int cpu_x86_signal_handler(int host_signum, void *pinfo,
 void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
                    uint32_t *eax, uint32_t *ebx,
                    uint32_t *ecx, uint32_t *edx);
-int cpu_x86_register (CPUX86State *env, const char *cpu_model);
+int cpu_x86_register(X86CPU *cpu, const char *cpu_model);
 void cpu_clear_apic_feature(CPUX86State *env);
 void host_cpuid(uint32_t function, uint32_t count,
                 uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
@@ -939,7 +940,7 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4);
 /* hw/pc.c */
 void cpu_smm_update(CPUX86State *env);
 uint64_t cpu_get_tsc(CPUX86State *env);
-CPUState *pc_new_cpu(const char *cpu_model);
+CPUArchState *pc_new_cpu(const char *cpu_model);
 
 /* used to debug */
 #define X86_DUMP_FPU  0x0001 /* dump FPU state too */
@@ -971,7 +972,7 @@ CPUState *pc_new_cpu(const char *cpu_model);
 #define MMU_MODE0_SUFFIX _kernel
 #define MMU_MODE1_SUFFIX _user
 #define MMU_USER_IDX 1
-static inline int cpu_mmu_index (CPUState *env)
+static inline int cpu_mmu_index (CPUX86State *env)
 {
     return (env->hflags & HF_CPL_MASK) == 3 ? 1 : 0;
 }
@@ -1010,7 +1011,7 @@ static inline int cpu_mmu_index (CPUState *env)
 void optimize_flags_init(void);
 
 #if defined(CONFIG_USER_ONLY)
-static inline void cpu_clone_regs(CPUState *env, target_ulong newsp)
+static inline void cpu_clone_regs(CPUX86State *env, target_ulong newsp)
 {
     if (newsp)
         env->regs[R_ESP] = newsp;
@@ -1025,7 +1026,7 @@ static inline void cpu_clone_regs(CPUState *env, target_ulong newsp)
 #include "hw/apic.h"
 #endif
 
-static inline bool cpu_has_work(CPUState *env)
+static inline bool cpu_has_work(CPUX86State *env)
 {
     return ((env->interrupt_request & CPU_INTERRUPT_HARD) &&
             (env->eflags & IF_MASK)) ||
@@ -1037,12 +1038,12 @@ static inline bool cpu_has_work(CPUState *env)
 
 #include "exec-all.h"
 
-static inline void cpu_pc_from_tb(CPUState *env, TranslationBlock *tb)
+static inline void cpu_pc_from_tb(CPUX86State *env, TranslationBlock *tb)
 {
     env->eip = tb->pc - tb->cs_base;
 }
 
-static inline void cpu_get_tb_cpu_state(CPUState *env, target_ulong *pc,
+static inline void cpu_get_tb_cpu_state(CPUX86State *env, target_ulong *pc,
                                         target_ulong *cs_base, int *flags)
 {
     *cs_base = env->segs[R_CS].base;
@@ -1051,29 +1052,29 @@ static inline void cpu_get_tb_cpu_state(CPUState *env, target_ulong *pc,
         (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK));
 }
 
-void do_cpu_init(CPUState *env);
-void do_cpu_sipi(CPUState *env);
+void do_cpu_init(CPUX86State *env);
+void do_cpu_sipi(CPUX86State *env);
 
 #define MCE_INJECT_BROADCAST    1
 #define MCE_INJECT_UNCOND_AO    2
 
-void cpu_x86_inject_mce(Monitor *mon, CPUState *cenv, int bank,
+void cpu_x86_inject_mce(Monitor *mon, CPUX86State *cenv, int bank,
                         uint64_t status, uint64_t mcg_status, uint64_t addr,
                         uint64_t misc, int flags);
 
 /* op_helper.c */
-void do_interrupt(CPUState *env);
-void do_interrupt_x86_hardirq(CPUState *env, int intno, int is_hw);
-void QEMU_NORETURN raise_exception_env(int exception_index, CPUState *nenv);
-void QEMU_NORETURN raise_exception_err_env(CPUState *nenv, int exception_index,
+void do_interrupt(CPUX86State *env);
+void do_interrupt_x86_hardirq(CPUX86State *env, int intno, int is_hw);
+void QEMU_NORETURN raise_exception_env(int exception_index, CPUX86State *nenv);
+void QEMU_NORETURN raise_exception_err_env(CPUX86State *nenv, int exception_index,
                                            int error_code);
 
-void do_smm_enter(CPUState *env1);
+void do_smm_enter(CPUX86State *env1);
 
-void svm_check_intercept(CPUState *env1, uint32_t type);
+void svm_check_intercept(CPUX86State *env1, uint32_t type);
 
-uint32_t cpu_cc_compute_all(CPUState *env1, int op);
+uint32_t cpu_cc_compute_all(CPUX86State *env1, int op);
 
-void cpu_report_tpr_access(CPUState *env, TPRAccess access);
+void cpu_report_tpr_access(CPUX86State *env, TPRAccess access);
 
 #endif /* CPU_I386_H */
