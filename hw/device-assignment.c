@@ -896,6 +896,7 @@ AssignedDevInfo *get_assigned_device(int pcibus, int slot)
 void assigned_dev_update_irqs(void)
 {
     AssignedDevice *dev, *next;
+    Error *err = NULL;
     int r;
 
     dev = QLIST_FIRST(&devs);
@@ -904,7 +905,8 @@ void assigned_dev_update_irqs(void)
         if (dev->irq_requested_type & KVM_DEV_IRQ_HOST_INTX) {
             r = assign_irq(dev);
             if (r < 0) {
-                qdev_unplug(&dev->dev.qdev);
+                qdev_unplug(&dev->dev.qdev, &err);
+                assert(!err);
             }
         }
         dev = next;
