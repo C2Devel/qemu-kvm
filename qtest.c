@@ -12,11 +12,13 @@
  */
 
 #include "qtest.h"
+#include "hw/qdev.h"
 #include "qemu-char.h"
 #include "ioport.h"
 #include "memory.h"
 #include "hw/irq.h"
 #include "sysemu.h"
+#include "cpus.h"
 
 #define MAX_IRQ 256
 
@@ -24,14 +26,15 @@ const char *qtest_chrdev;
 const char *qtest_log;
 int qtest_allowed = 0;
 
+static DeviceState *irq_intercept_dev;
 static FILE *qtest_log_fp;
 static CharDriverState *qtest_chr;
 static GString *inbuf;
 static int irq_levels[MAX_IRQ];
-static struct timeval start_time;
+static qemu_timeval start_time;
 static bool qtest_opened;
 
-#define FMT_timeval "%" PRId64 ".%06" PRId64
+#define FMT_timeval "%ld.%06ld"
 
 /**
  * QTest Protocol
@@ -41,6 +44,30 @@ static bool qtest_opened;
  * comes in.
  *
  * Valid requests
+ *
+ * Clock management:
+ *
+ * The qtest client is completely in charge of the vm_clock.  qtest commands
+ * let you adjust the value of the clock (monotonically).  All the commands
+ * return the current value of the clock in nanoseconds.
+ *
+ *  > clock_step
+ *  < OK VALUE
+ *
+ *     Advance the clock to the next deadline.  Useful when waiting for
+ *     asynchronous events.
+ *
+ *  > clock_step NS
+ *  < OK VALUE
+ *
+ *     Advance the clock by NS nanoseconds.
+ *
+ *  > clock_set NS
+ *  < OK VALUE
+ *
+ *     Advance the clock to NS nanoseconds (do nothing if it's already past).
+ *
+ * PIO and memory access:
  *
  *  > outb ADDR VALUE
  *  < OK
@@ -66,18 +93,30 @@ static bool qtest_opened;
  *  > write ADDR SIZE DATA
  *  < OK
  *
- * Valid async messages:
- *
- *  IRQ raise NUM
- *  IRQ lower NUM
- *
  * ADDR, SIZE, VALUE are all integers parsed with strtoul() with a base of 0.
  *
  * DATA is an arbitrarily long hex number prefixed with '0x'.  If it's smaller
  * than the expected size, the value will be zero filled at the end of the data
  * sequence.
  *
- * NUM is an IRQ number.
+ * IRQ management:
+ *
+ *  > irq_intercept_in QOM-PATH
+ *  < OK
+ *
+ *  > irq_intercept_out QOM-PATH
+ *  < OK
+ *
+ * Attach to the gpio-in (resp. gpio-out) pins exported by the device at
+ * QOM-PATH.  When the pin is triggered, one of the following async messages
+ * will be printed to the qtest stream:
+ *
+ *  IRQ raise NUM
+ *  IRQ lower NUM
+ *
+ * where NUM is an IRQ number.  For the PC, interrupts can be intercepted
+ * simply with "irq_intercept_in ioapic" (note that IRQ0 comes out with
+ * NUM=0 even though it is remapped to GSI 2).
  */
 
 static int hex2nib(char ch)
@@ -93,9 +132,9 @@ static int hex2nib(char ch)
     }
 }
 
-static void qtest_get_time(struct timeval *tv)
+static void qtest_get_time(qemu_timeval *tv)
 {
-    gettimeofday(tv, NULL);
+    qemu_gettimeofday(tv);
     tv->tv_sec -= start_time.tv_sec;
     tv->tv_usec -= start_time.tv_usec;
     if (tv->tv_usec < 0) {
@@ -106,7 +145,7 @@ static void qtest_get_time(struct timeval *tv)
 
 static void qtest_send_prefix(CharDriverState *chr)
 {
-    struct timeval tv;
+    qemu_timeval tv;
 
     if (!qtest_log_fp || !qtest_opened) {
         return;
@@ -133,6 +172,20 @@ static void qtest_send(CharDriverState *chr, const char *fmt, ...)
     }
 }
 
+static void qtest_irq_handler(void *opaque, int n, int level)
+{
+    qemu_irq *old_irqs = opaque;
+    qemu_set_irq(old_irqs[n], level);
+
+    if (irq_levels[n] != level) {
+        CharDriverState *chr = qtest_chr;
+        irq_levels[n] = level;
+        qtest_send_prefix(chr);
+        qtest_send(chr, "IRQ %s %d\n",
+                   level ? "raise" : "lower", n);
+    }
+}
+
 static void qtest_process_command(CharDriverState *chr, gchar **words)
 {
     const gchar *command;
@@ -142,7 +195,7 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
     command = words[0];
 
     if (qtest_log_fp) {
-        struct timeval tv;
+        qemu_timeval tv;
         int i;
 
         qtest_get_time(&tv);
@@ -155,9 +208,40 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
     }
 
     g_assert(command);
-    if (strcmp(words[0], "outb") == 0 ||
-        strcmp(words[0], "outw") == 0 ||
-        strcmp(words[0], "outl") == 0) {
+    if (strcmp(words[0], "irq_intercept_out") == 0
+        || strcmp(words[0], "irq_intercept_in") == 0) {
+	DeviceState *dev;
+
+        g_assert(words[1]);
+        dev = DEVICE(object_resolve_path(words[1], NULL));
+        if (!dev) {
+            qtest_send_prefix(chr);
+            qtest_send(chr, "FAIL Unknown device\n");
+	    return;
+        }
+
+        if (irq_intercept_dev) {
+            qtest_send_prefix(chr);
+            if (irq_intercept_dev != dev) {
+                qtest_send(chr, "FAIL IRQ intercept already enabled\n");
+            } else {
+                qtest_send(chr, "OK\n");
+            }
+	    return;
+        }
+
+        if (words[0][14] == 'o') {
+            qemu_irq_intercept_out(&dev->gpio_out, qtest_irq_handler, dev->num_gpio_out);
+        } else {
+            qemu_irq_intercept_in(dev->gpio_in, qtest_irq_handler, dev->num_gpio_in);
+        }
+        irq_intercept_dev = dev;
+        qtest_send_prefix(chr);
+        qtest_send(chr, "OK\n");
+
+    } else if (strcmp(words[0], "outb") == 0 ||
+               strcmp(words[0], "outw") == 0 ||
+               strcmp(words[0], "outl") == 0) {
         uint16_t addr;
         uint32_t value;
 
@@ -240,6 +324,25 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
 
         qtest_send_prefix(chr);
         qtest_send(chr, "OK\n");
+    } else if (strcmp(words[0], "clock_step") == 0) {
+        int64_t ns;
+
+        if (words[1]) {
+            ns = strtoll(words[1], NULL, 0);
+        } else {
+            ns = qemu_clock_deadline(vm_clock);
+        }
+        qtest_clock_warp(qemu_get_clock_ns(vm_clock) + ns);
+        qtest_send_prefix(chr);
+        qtest_send(chr, "OK %"PRIi64"\n", (int64_t)qemu_get_clock_ns(vm_clock));
+    } else if (strcmp(words[0], "clock_set") == 0) {
+        int64_t ns;
+
+        g_assert(words[1]);
+        ns = strtoll(words[1], NULL, 0);
+        qtest_clock_warp(ns);
+        qtest_send_prefix(chr);
+        qtest_send(chr, "OK %"PRIi64"\n", (int64_t)qemu_get_clock_ns(vm_clock));
     } else {
         qtest_send_prefix(chr);
         qtest_send(chr, "FAIL Unknown command `%s'\n", words[0]);
@@ -291,7 +394,7 @@ static void qtest_event(void *opaque, int event)
         for (i = 0; i < ARRAY_SIZE(irq_levels); i++) {
             irq_levels[i] = 0;
         }
-        gettimeofday(&start_time, NULL);
+        qemu_gettimeofday(&start_time);
         qtest_opened = true;
         if (qtest_log_fp) {
             fprintf(qtest_log_fp, "[I " FMT_timeval "] OPENED\n",
@@ -301,7 +404,7 @@ static void qtest_event(void *opaque, int event)
     case CHR_EVENT_CLOSED:
         qtest_opened = false;
         if (qtest_log_fp) {
-            struct timeval tv;
+            qemu_timeval tv;
             qtest_get_time(&tv);
             fprintf(qtest_log_fp, "[I +" FMT_timeval "] CLOSED\n",
                     tv.tv_sec, tv.tv_usec);
@@ -312,27 +415,13 @@ static void qtest_event(void *opaque, int event)
     }
 }
 
-static void qtest_set_irq(void *opaque, int irq, int level)
-{
-    CharDriverState *chr = qtest_chr;
-    bool changed;
-
-    changed = (irq_levels[irq] != level);
-    irq_levels[irq] = level;
-
-    if (changed) {
-        qtest_send_prefix(chr);
-        qtest_send(chr, "IRQ %s %d\n",
-                   level ? "raise" : "lower", irq);
-    }
-}
-
 int qtest_init(void)
 {
     CharDriverState *chr;
 
     g_assert(qtest_chrdev != NULL);
 
+    configure_icount("0");
     chr = qemu_chr_new("qtest", qtest_chrdev, NULL);
 
     qemu_chr_add_handlers(chr, qtest_can_read, qtest_read, qtest_event, chr);

@@ -180,8 +180,6 @@ typedef struct BdrvCheckResult {
 int bdrv_check(BlockDriverState *bs, BdrvCheckResult *res);
 
 /* async block I/O */
-typedef struct BlockDriverAIOCB BlockDriverAIOCB;
-typedef void BlockDriverCompletionFunc(void *opaque, int ret);
 typedef void BlockDriverDirtyHandler(BlockDriverState *bs, int64_t sector,
                                      int sector_num);
 BlockDriverAIOCB *bdrv_aio_readv(BlockDriverState *bs, int64_t sector_num,
@@ -437,10 +435,10 @@ static inline unsigned int get_physical_block_exp(BlockConf *conf)
 
 #define DEFINE_BLOCK_PROPERTIES(_state, _conf)                          \
     DEFINE_PROP_DRIVE("drive", _state, _conf.bs),                       \
-    DEFINE_PROP_UINT16("logical_block_size", _state,                    \
-                       _conf.logical_block_size, 512),                  \
-    DEFINE_PROP_UINT16("physical_block_size", _state,                   \
-                       _conf.physical_block_size, 512),                 \
+    DEFINE_PROP_BLOCKSIZE("logical_block_size", _state,                 \
+                          _conf.logical_block_size, 512),               \
+    DEFINE_PROP_BLOCKSIZE("physical_block_size", _state,                \
+                          _conf.physical_block_size, 512),              \
     DEFINE_PROP_UINT16("min_io_size", _state, _conf.min_io_size, 0),  \
     DEFINE_PROP_UINT32("opt_io_size", _state, _conf.opt_io_size, 0),    \
     DEFINE_PROP_INT32("bootindex", _state, _conf.bootindex, -1),        \
