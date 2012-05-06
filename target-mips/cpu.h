@@ -15,13 +15,6 @@
 #include "cpu-defs.h"
 #include "softfloat.h"
 
-// uint_fast8_t and uint_fast16_t not in <sys/int_types.h>
-// XXX: move that elsewhere
-#if defined(CONFIG_SOLARIS) && CONFIG_SOLARIS_VERSION < 10
-typedef unsigned char           uint_fast8_t;
-typedef unsigned int            uint_fast16_t;
-#endif
-
 struct CPUMIPSState;
 
 typedef struct r4k_tlb_t r4k_tlb_t;
@@ -482,6 +475,8 @@ struct CPUMIPSState {
     void *irq[8];
     struct QEMUTimer *timer; /* Internal timer */
 };
+
+#include "cpu-qom.h"
 
 #if !defined(CONFIG_USER_ONLY)
 int no_mmu_map_address (CPUMIPSState *env, target_phys_addr_t *physical, int *prot,
