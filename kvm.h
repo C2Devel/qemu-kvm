@@ -84,8 +84,6 @@ int kvm_update_guest_debug(CPUArchState *env, unsigned long reinject_trap);
 int kvm_set_signal_mask(CPUArchState *env, const sigset_t *sigset);
 #endif
 
-int kvm_pit_in_kernel(void);
-
 int kvm_on_sigbus_vcpu(CPUArchState *env, int code, void *addr);
 int kvm_on_sigbus(int code, void *addr);
 #endif /* NEED_CPU_H */
@@ -213,7 +211,8 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
 #endif
 
 #endif
-int kvm_set_ioeventfd_mmio_long(int fd, uint32_t adr, uint32_t val, bool assign);
+int kvm_set_ioeventfd_mmio(int fd, uint32_t adr, uint32_t val, bool assign,
+                           uint32_t size);
 
 int kvm_set_irqfd(int gsi, int fd, bool assigned);
 

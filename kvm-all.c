@@ -75,7 +75,6 @@ struct KVMState
 #ifdef KVM_CAP_SET_GUEST_DEBUG
     struct kvm_sw_breakpoint_head kvm_sw_breakpoints;
 #endif
-    int pit_in_kernel;
     int pit_state2;
     int xsave, xcrs;
     int many_ioeventfds;
@@ -197,11 +196,6 @@ static void kvm_reset_vcpu(void *opaque)
     CPUArchState *env = opaque;
 
     kvm_arch_reset_vcpu(env);
-}
-
-int kvm_pit_in_kernel(void)
-{
-    return kvm_state->pit_in_kernel;
 }
 
 int kvm_init_vcpu(CPUArchState *env)
@@ -748,10 +742,10 @@ static void kvm_mem_ioeventfd_add(MemoryRegionSection *section,
 {
     int r;
 
-    assert(match_data && section->size == 4);
+    assert(match_data && section->size <= 8);
 
-    r = kvm_set_ioeventfd_mmio_long(fd, section->offset_within_address_space,
-                                    data, true);
+    r = kvm_set_ioeventfd_mmio(fd, section->offset_within_address_space,
+                               data, true, section->size);
     if (r < 0) {
         abort();
     }
@@ -762,8 +756,8 @@ static void kvm_mem_ioeventfd_del(MemoryRegionSection *section,
 {
     int r;
 
-    r = kvm_set_ioeventfd_mmio_long(fd, section->offset_within_address_space,
-                                    data, false);
+    r = kvm_set_ioeventfd_mmio(fd, section->offset_within_address_space,
+                               data, false, section->size);
     if (r < 0) {
         abort();
     }
@@ -1650,14 +1644,15 @@ int kvm_set_signal_mask(CPUArchState *env, const sigset_t *sigset)
     return r;
 }
 
-int kvm_set_ioeventfd_mmio_long(int fd, uint32_t addr, uint32_t val, bool assign)
+int kvm_set_ioeventfd_mmio(int fd, uint32_t addr, uint32_t val, bool assign,
+                           uint32_t size)
 {
     int ret;
     struct kvm_ioeventfd iofd;
 
     iofd.datamatch = val;
     iofd.addr = addr;
-    iofd.len = 4;
+    iofd.len = size;
     iofd.flags = KVM_IOEVENTFD_FLAG_DATAMATCH;
     iofd.fd = fd;
 
