@@ -378,6 +378,14 @@ static QEMUMachine pc_machine_v1_1 = {
             .driver   = "virtio-balloon-pci",\
             .property = "class",\
             .value    = stringify(PCI_CLASS_MEMORY_RAM),\
+        },{\
+            .driver   = "apic",\
+            .property = "vapic",\
+            .value    = "off",\
+        },{\
+            .driver   = "USB",\
+            .property = "full-path",\
+            .value    = "no",\
         }
 
 static QEMUMachine pc_machine_v1_0 = {

@@ -293,6 +293,7 @@ static void acpi_piix_eject_slot(PIIX4PMState *s, unsigned slots)
     DeviceState *qdev, *next;
     BusState *bus = qdev_get_parent_bus(&s->dev.qdev);
     int slot = ffs(slots) - 1;
+    bool slot_free = true;
 
     /* Mark request as complete */
     s->pci0_status.down &= ~(1U << slot);
@@ -300,10 +301,16 @@ static void acpi_piix_eject_slot(PIIX4PMState *s, unsigned slots)
     QTAILQ_FOREACH_SAFE(qdev, &bus->children, sibling, next) {
         PCIDevice *dev = PCI_DEVICE(qdev);
         PCIDeviceClass *pc = PCI_DEVICE_GET_CLASS(dev);
-        if (PCI_SLOT(dev->devfn) == slot && !pc->no_hotplug) {
-            s->pci0_slot_device_present &= ~(1U << slot);
-            qdev_free(qdev);
+        if (PCI_SLOT(dev->devfn) == slot) {
+            if (pc->no_hotplug) {
+                slot_free = false;
+            } else {
+                qdev_free(qdev);
+            }
         }
+    }
+    if (slot_free) {
+        s->pci0_slot_device_present &= ~(1U << slot);
     }
 }
 
@@ -531,9 +538,10 @@ static uint32_t pci_down_read(void *opaque, uint32_t addr)
     return val;
 }
 
-static uint32_t pciej_read(void *opaque, uint32_t addr)
+static uint32_t pci_features_read(void *opaque, uint32_t addr)
 {
-    PIIX4_DPRINTF("pciej read %x\n", addr);
+    /* No feature defined yet */
+    PIIX4_DPRINTF("pci_features_read %x\n", 0);
     return 0;
 }
 
@@ -576,7 +584,7 @@ static void piix4_acpi_system_hot_add_init(PCIBus *bus, PIIX4PMState *s)
     register_ioport_read(PCI_DOWN_BASE, 4, 4, pci_down_read, s);
 
     register_ioport_write(PCI_EJ_BASE, 4, 4, pciej_write, s);
-    register_ioport_read(PCI_EJ_BASE, 4, 4,  pciej_read, s);
+    register_ioport_read(PCI_EJ_BASE, 4, 4,  pci_features_read, s);
 
     register_ioport_read(PCI_RMV_BASE, 4, 4,  pcirmv_read, s);
 
