@@ -63,7 +63,7 @@ void gemu_log(const char *fmt, ...)
 }
 
 #if defined(TARGET_I386)
-int cpu_get_pic_interrupt(CPUState *env)
+int cpu_get_pic_interrupt(CPUX86State *env)
 {
     return -1;
 }
@@ -109,7 +109,7 @@ void cpu_list_unlock(void)
 /***********************************************************/
 /* CPUX86 core interface */
 
-void cpu_smm_update(CPUState *env)
+void cpu_smm_update(CPUX86State *env)
 {
 }
 
@@ -917,7 +917,7 @@ int main(int argc, char **argv)
         exit(1);
     }
 #if defined(TARGET_I386) || defined(TARGET_SPARC) || defined(TARGET_PPC)
-    cpu_reset(env);
+    cpu_state_reset(env);
 #endif
     thread_env = env;
 
