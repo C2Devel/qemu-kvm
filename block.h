@@ -15,7 +15,14 @@ typedef struct BlockDriverInfo {
     int cluster_size;
     /* offset at which the VM state can be saved (0 if not possible) */
     int64_t vm_state_offset;
+    bool is_dirty;
 } BlockDriverInfo;
+
+typedef struct BlockFragInfo {
+    uint64_t allocated_clusters;
+    uint64_t total_clusters;
+    uint64_t fragmented_clusters;
+} BlockFragInfo;
 
 typedef struct QEMUSnapshotInfo {
     char id_str[128]; /* unique snapshot id */
@@ -71,6 +78,7 @@ typedef struct BlockDevOps {
 #define BDRV_O_NO_BACKING  0x0100 /* don't open the backing file */
 #define BDRV_O_NO_FLUSH    0x0200 /* disable flushing on this disk */
 #define BDRV_O_COPY_ON_READ 0x0400 /* copy read backing sectors into image */
+#define BDRV_O_INCOMING    0x0800  /* consistency hint for incoming migration */
 
 #define BDRV_O_CACHE_MASK  (BDRV_O_NOCACHE | BDRV_O_CACHE_WB | BDRV_O_NO_FLUSH)
 
@@ -175,6 +183,7 @@ typedef struct BdrvCheckResult {
     int corruptions;
     int leaks;
     int check_errors;
+    BlockFragInfo bfi;
 } BdrvCheckResult;
 
 int bdrv_check(BlockDriverState *bs, BdrvCheckResult *res);
@@ -219,6 +228,8 @@ BlockDriverAIOCB *bdrv_aio_ioctl(BlockDriverState *bs,
 /* Invalidate any cached metadata used by image formats */
 void bdrv_invalidate_cache(BlockDriverState *bs);
 void bdrv_invalidate_cache_all(void);
+
+void bdrv_clear_incoming_migration_all(void);
 
 /* Ensure contents are flushed to disk.  */
 int bdrv_flush(BlockDriverState *bs);

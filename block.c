@@ -813,6 +813,9 @@ unlink_and_fail:
 void bdrv_close(BlockDriverState *bs)
 {
     if (bs->drv) {
+        if (bs->job) {
+            block_job_cancel_sync(bs->job);
+        }
         if (bs == bs_snapshots) {
             bs_snapshots = NULL;
         }
@@ -889,14 +892,16 @@ void bdrv_make_anon(BlockDriverState *bs)
  * This will modify the BlockDriverState fields, and swap contents
  * between bs_new and bs_top. Both bs_new and bs_top are modified.
  *
+ * bs_new is required to be anonymous.
+ *
  * This function does not create any image files.
  */
 void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top)
 {
     BlockDriverState tmp;
 
-    /* the new bs must not be in bdrv_states */
-    bdrv_make_anon(bs_new);
+    /* bs_new must be anonymous */
+    assert(bs_new->device_name[0] == '\0');
 
     tmp = *bs_new;
 
@@ -941,10 +946,17 @@ void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top)
      * swapping bs_new and bs_top contents. */
     tmp.backing_hd = bs_new;
     pstrcpy(tmp.backing_file, sizeof(tmp.backing_file), bs_top->filename);
+    bdrv_get_format(bs_top, tmp.backing_format, sizeof(tmp.backing_format));
 
     /* swap contents of the fixed new bs and the current top */
     *bs_new = *bs_top;
     *bs_top = tmp;
+
+    /* device_name[] was carried over from the old bs_top.  bs_new
+     * shouldn't be in bdrv_states, so we need to make device_name[]
+     * reflect the anonymity of bs_new
+     */
+    bs_new->device_name[0] = '\0';
 
     /* clear the copied fields in the new backing file */
     bdrv_detach_dev(bs_new, bs_new->dev);
@@ -966,6 +978,8 @@ void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top)
 void bdrv_delete(BlockDriverState *bs)
 {
     assert(!bs->dev);
+    assert(!bs->job);
+    assert(!bs->in_use);
 
     /* remove from list, if necessary */
     bdrv_make_anon(bs);
@@ -3610,6 +3624,15 @@ void bdrv_invalidate_cache_all(void)
     }
 }
 
+void bdrv_clear_incoming_migration_all(void)
+{
+    BlockDriverState *bs;
+
+    QTAILQ_FOREACH(bs, &bdrv_states, list) {
+        bs->open_flags = bs->open_flags & ~(BDRV_O_INCOMING);
+    }
+}
+
 int bdrv_flush(BlockDriverState *bs)
 {
     Coroutine *co;
@@ -4080,10 +4103,16 @@ void block_job_complete(BlockJob *job, int ret)
 
 int block_job_set_speed(BlockJob *job, int64_t value)
 {
+    int rc;
+
     if (!job->job_type->set_speed) {
         return -ENOTSUP;
     }
-    return job->job_type->set_speed(job, value);
+    rc = job->job_type->set_speed(job, value);
+    if (rc == 0) {
+        job->speed = value;
+    }
+    return rc;
 }
 
 void block_job_cancel(BlockJob *job)
@@ -4094,4 +4123,15 @@ void block_job_cancel(BlockJob *job)
 bool block_job_is_cancelled(BlockJob *job)
 {
     return job->cancelled;
+}
+
+void block_job_cancel_sync(BlockJob *job)
+{
+    BlockDriverState *bs = job->bs;
+
+    assert(bs->job == job);
+    block_job_cancel(job);
+    while (bs->job != NULL && bs->job->busy) {
+        qemu_aio_wait();
+    }
 }
