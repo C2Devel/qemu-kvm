@@ -156,7 +156,7 @@ struct Monitor {
     int outbuf_index;
     ReadLineState *rs;
     MonitorControl *mc;
-    CPUState *mon_cpu;
+    CPUArchState *mon_cpu;
     BlockDriverCompletionFunc *password_completion_cb;
     void *password_opaque;
 #ifdef CONFIG_DEBUG_MONITOR
@@ -742,7 +742,7 @@ CommandInfoList *qmp_query_commands(Error **errp)
 /* set the current CPU defined by the user */
 int monitor_set_cpu(int cpu_index)
 {
-    CPUState *env;
+    CPUArchState *env;
 
     for(env = first_cpu; env != NULL; env = env->next_cpu) {
         if (env->cpu_index == cpu_index) {
@@ -753,7 +753,7 @@ int monitor_set_cpu(int cpu_index)
     return -1;
 }
 
-static CPUState *mon_get_cpu(void)
+static CPUArchState *mon_get_cpu(void)
 {
     if (!cur_mon->mon_cpu) {
         monitor_set_cpu(0);
@@ -769,7 +769,7 @@ int monitor_get_cpu_index(void)
 
 static void do_info_registers(Monitor *mon)
 {
-    CPUState *env;
+    CPUArchState *env;
     env = mon_get_cpu();
 #ifdef TARGET_I386
     cpu_dump_state(env, (FILE *)mon, monitor_fprintf,
@@ -827,7 +827,7 @@ static void do_info_history(Monitor *mon)
 /* XXX: not implemented in other targets */
 static void do_info_cpu_stats(Monitor *mon)
 {
-    CPUState *env;
+    CPUArchState *env;
 
     env = mon_get_cpu();
     cpu_dump_statistics(env, (FILE *)mon, &monitor_fprintf, 0);
@@ -1008,7 +1008,7 @@ static void monitor_printc(Monitor *mon, int c)
 static void memory_dump(Monitor *mon, int count, int format, int wsize,
                         target_phys_addr_t addr, int is_physical)
 {
-    CPUState *env;
+    CPUArchState *env;
     int l, line_size, i, max_digits, len;
     uint8_t buf[16];
     uint64_t v;
@@ -1568,7 +1568,7 @@ static void print_pte(Monitor *mon, target_phys_addr_t addr,
                    pte & PG_RW_MASK ? 'W' : '-');
 }
 
-static void tlb_info_32(Monitor *mon, CPUState *env)
+static void tlb_info_32(Monitor *mon, CPUArchState *env)
 {
     unsigned int l1, l2;
     uint32_t pgd, pde, pte;
@@ -1596,7 +1596,7 @@ static void tlb_info_32(Monitor *mon, CPUState *env)
     }
 }
 
-static void tlb_info_pae32(Monitor *mon, CPUState *env)
+static void tlb_info_pae32(Monitor *mon, CPUArchState *env)
 {
     unsigned int l1, l2, l3;
     uint64_t pdpe, pde, pte;
@@ -1636,7 +1636,7 @@ static void tlb_info_pae32(Monitor *mon, CPUState *env)
 }
 
 #ifdef TARGET_X86_64
-static void tlb_info_64(Monitor *mon, CPUState *env)
+static void tlb_info_64(Monitor *mon, CPUArchState *env)
 {
     uint64_t l1, l2, l3, l4;
     uint64_t pml4e, pdpe, pde, pte;
@@ -1695,7 +1695,7 @@ static void tlb_info_64(Monitor *mon, CPUState *env)
 
 static void tlb_info(Monitor *mon)
 {
-    CPUState *env;
+    CPUArchState *env;
 
     env = mon_get_cpu();
 
@@ -1740,7 +1740,7 @@ static void mem_print(Monitor *mon, target_phys_addr_t *pstart,
     }
 }
 
-static void mem_info_32(Monitor *mon, CPUState *env)
+static void mem_info_32(Monitor *mon, CPUArchState *env)
 {
     unsigned int l1, l2;
     int prot, last_prot;
@@ -1781,7 +1781,7 @@ static void mem_info_32(Monitor *mon, CPUState *env)
     mem_print(mon, &start, &last_prot, (target_phys_addr_t)1 << 32, 0);
 }
 
-static void mem_info_pae32(Monitor *mon, CPUState *env)
+static void mem_info_pae32(Monitor *mon, CPUArchState *env)
 {
     unsigned int l1, l2, l3;
     int prot, last_prot;
@@ -1838,7 +1838,7 @@ static void mem_info_pae32(Monitor *mon, CPUState *env)
 
 
 #ifdef TARGET_X86_64
-static void mem_info_64(Monitor *mon, CPUState *env)
+static void mem_info_64(Monitor *mon, CPUArchState *env)
 {
     int prot, last_prot;
     uint64_t l1, l2, l3, l4;
@@ -1918,7 +1918,7 @@ static void mem_info_64(Monitor *mon, CPUState *env)
 
 static void mem_info(Monitor *mon)
 {
-    CPUState *env;
+    CPUArchState *env;
 
     env = mon_get_cpu();
 
@@ -1957,7 +1957,7 @@ static void print_tlb(Monitor *mon, int idx, tlb_t *tlb)
 
 static void tlb_info(Monitor *mon)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     int i;
 
     monitor_printf (mon, "ITLB:\n");
@@ -1973,7 +1973,7 @@ static void tlb_info(Monitor *mon)
 #if defined(TARGET_SPARC) || defined(TARGET_PPC) || defined(TARGET_XTENSA)
 static void tlb_info(Monitor *mon)
 {
-    CPUState *env1 = mon_get_cpu();
+    CPUArchState *env1 = mon_get_cpu();
 
     dump_mmu((FILE*)mon, (fprintf_function)monitor_printf, env1);
 }
@@ -1987,7 +1987,7 @@ static void do_info_mtree(Monitor *mon)
 static void do_info_numa(Monitor *mon)
 {
     int i;
-    CPUState *env;
+    CPUArchState *env;
 
     monitor_printf(mon, "%d nodes\n", nb_numa_nodes);
     for (i = 0; i < nb_numa_nodes; i++) {
@@ -2194,7 +2194,7 @@ static void do_acl_remove(Monitor *mon, const QDict *qdict)
 #if defined(TARGET_I386)
 static void do_inject_mce(Monitor *mon, const QDict *qdict)
 {
-    CPUState *cenv;
+    CPUArchState *cenv;
     int cpu_index = qdict_get_int(qdict, "cpu_index");
     int bank = qdict_get_int(qdict, "bank");
     uint64_t status = qdict_get_int(qdict, "status");
@@ -2646,7 +2646,7 @@ typedef struct MonitorDef {
 #if defined(TARGET_I386)
 static target_long monitor_get_pc (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return env->eip + env->segs[R_CS].base;
 }
 #endif
@@ -2654,7 +2654,7 @@ static target_long monitor_get_pc (const struct MonitorDef *md, int val)
 #if defined(TARGET_PPC)
 static target_long monitor_get_ccr (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     unsigned int u;
     int i;
 
@@ -2667,31 +2667,31 @@ static target_long monitor_get_ccr (const struct MonitorDef *md, int val)
 
 static target_long monitor_get_msr (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return env->msr;
 }
 
 static target_long monitor_get_xer (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return env->xer;
 }
 
 static target_long monitor_get_decr (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return cpu_ppc_load_decr(env);
 }
 
 static target_long monitor_get_tbu (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return cpu_ppc_load_tbu(env);
 }
 
 static target_long monitor_get_tbl (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return cpu_ppc_load_tbl(env);
 }
 #endif
@@ -2700,7 +2700,7 @@ static target_long monitor_get_tbl (const struct MonitorDef *md, int val)
 #ifndef TARGET_SPARC64
 static target_long monitor_get_psr (const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
 
     return cpu_get_psr(env);
 }
@@ -2708,7 +2708,7 @@ static target_long monitor_get_psr (const struct MonitorDef *md, int val)
 
 static target_long monitor_get_reg(const struct MonitorDef *md, int val)
 {
-    CPUState *env = mon_get_cpu();
+    CPUArchState *env = mon_get_cpu();
     return env->regwptr[val];
 }
 #endif
@@ -3040,7 +3040,7 @@ static int get_monitor_def(target_long *pval, const char *name)
             if (md->get_value) {
                 *pval = md->get_value(md, md->offset);
             } else {
-                CPUState *env = mon_get_cpu();
+                CPUArchState *env = mon_get_cpu();
                 ptr = (uint8_t *)env + md->offset;
                 switch(md->type) {
                 case MD_I32:

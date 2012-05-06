@@ -593,7 +593,7 @@ static void disable_processor(PIIX4PMState *s, int cpu)
 
 void qemu_system_cpu_hot_add(int cpu, int state)
 {
-    CPUState *env;
+    CPUArchState *env;
     PIIX4PMState *s = global_piix4_pm_state;
 
     if (state && !qemu_get_cpu(cpu)) {

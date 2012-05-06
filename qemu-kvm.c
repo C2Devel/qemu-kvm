@@ -351,7 +351,7 @@ int kvm_add_ioport_region(unsigned long start, unsigned long size,
                           bool is_hot_plug)
 {
     KVMIOPortRegion *region = g_malloc0(sizeof(KVMIOPortRegion));
-    CPUState *env;
+    CPUArchState *env;
     int r = 0;
 
     region->start = start;
@@ -376,7 +376,7 @@ int kvm_remove_ioport_region(unsigned long start, unsigned long size,
                              bool is_hot_unplug)
 {
     KVMIOPortRegion *region, *tmp;
-    CPUState *env;
+    CPUArchState *env;
     int r = -ENOENT;
 
     QLIST_FOREACH_SAFE(region, &ioport_regions, entry, tmp) {
@@ -396,7 +396,7 @@ int kvm_remove_ioport_region(unsigned long start, unsigned long size,
 }
 #endif /* CONFIG_KVM_DEVICE_ASSIGNMENT */
 
-int kvm_update_ioport_access(CPUState *env)
+int kvm_update_ioport_access(CPUArchState *env)
 {
 #ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
     KVMIOPortRegion *region;
