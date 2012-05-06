@@ -1097,11 +1097,12 @@ static void block_stream_cb(void *opaque, int ret)
 }
 
 void qmp_block_stream(const char *device, bool has_base,
-                      const char *base, Error **errp)
+                      const char *base, bool has_speed,
+                      int64_t speed, Error **errp)
 {
     BlockDriverState *bs;
     BlockDriverState *base_bs = NULL;
-    int ret;
+    Error *local_err = NULL;
 
     bs = bdrv_find(device);
     if (!bs) {
@@ -1117,16 +1118,11 @@ void qmp_block_stream(const char *device, bool has_base,
         }
     }
 
-    ret = stream_start(bs, base_bs, base, block_stream_cb, bs);
-    if (ret < 0) {
-        switch (ret) {
-        case -EBUSY:
-            error_set(errp, QERR_DEVICE_IN_USE, device);
-            return;
-        default:
-            error_set(errp, QERR_NOT_SUPPORTED);
-            return;
-        }
+    stream_start(bs, base_bs, base, has_speed ? speed : 0,
+                 block_stream_cb, bs, &local_err);
+    if (error_is_set(&local_err)) {
+        error_propagate(errp, local_err);
+        return;
     }
 
     /* Grab a reference so hotplug does not delete the BlockDriverState from
@@ -1148,7 +1144,7 @@ static BlockJob *find_block_job(const char *device)
     return bs->job;
 }
 
-void qmp_block_job_set_speed(const char *device, int64_t value, Error **errp)
+void qmp_block_job_set_speed(const char *device, int64_t speed, Error **errp)
 {
     BlockJob *job = find_block_job(device);
 
@@ -1157,9 +1153,7 @@ void qmp_block_job_set_speed(const char *device, int64_t value, Error **errp)
         return;
     }
 
-    if (block_job_set_speed(job, value) < 0) {
-        error_set(errp, QERR_NOT_SUPPORTED);
-    }
+    block_job_set_speed(job, speed, errp);
 }
 
 void qmp_block_job_cancel(const char *device, Error **errp)
