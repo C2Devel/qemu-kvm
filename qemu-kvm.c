@@ -30,6 +30,7 @@
 
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
+#ifdef KVM_CAP_IRQ_ROUTING
 static inline void clear_gsi(KVMState *s, unsigned int gsi)
 {
     uint32_t *bitmap = s->used_gsi_bitmap;
@@ -40,6 +41,7 @@ static inline void clear_gsi(KVMState *s, unsigned int gsi)
         DPRINTF("Invalid GSI %u\n", gsi);
     }
 }
+#endif
 
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT
 int kvm_assign_pci_device(KVMState *s,
@@ -228,6 +230,7 @@ int kvm_del_irq_route(int gsi, int irqchip, int pin)
 
 int kvm_get_irq_route_gsi(void)
 {
+#ifdef KVM_CAP_IRQ_ROUTING
     KVMState *s = kvm_state;
     int i, bit;
     uint32_t *buf = s->used_gsi_bitmap;
@@ -243,8 +246,12 @@ int kvm_get_irq_route_gsi(void)
     }
 
     return -ENOSPC;
+#else
+    return -ENOSYS;
+#endif
 }
 
+#ifdef KVM_CAP_IRQ_ROUTING
 static void kvm_msi_routing_entry(struct kvm_irq_routing_entry *e,
                                   KVMMsiMessage *msg)
 
@@ -256,9 +263,11 @@ static void kvm_msi_routing_entry(struct kvm_irq_routing_entry *e,
     e->u.msi.address_hi = msg->addr_hi;
     e->u.msi.data = msg->data;
 }
+#endif
 
 int kvm_msi_message_add(KVMMsiMessage *msg)
 {
+#ifdef KVM_CAP_IRQ_ROUTING
     struct kvm_irq_routing_entry e;
     int ret;
 
@@ -271,18 +280,26 @@ int kvm_msi_message_add(KVMMsiMessage *msg)
     kvm_msi_routing_entry(&e, msg);
     kvm_add_routing_entry(kvm_state, &e);
     return 0;
+#else
+    return -ENOSYS;
+#endif
 }
 
 int kvm_msi_message_del(KVMMsiMessage *msg)
 {
+#ifdef KVM_CAP_IRQ_ROUTING
     struct kvm_irq_routing_entry e;
 
     kvm_msi_routing_entry(&e, msg);
     return kvm_del_routing_entry(&e);
+#else
+    return -ENOSYS;
+#endif
 }
 
 int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
 {
+#ifdef KVM_CAP_IRQ_ROUTING
     struct kvm_irq_routing_entry e1, e2;
     int ret;
 
@@ -300,6 +317,9 @@ int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
     }
 
     return 1;
+#else
+    return -ENOSYS;
+#endif
 }
 
 
@@ -317,9 +337,8 @@ int kvm_assign_set_msix_entry(KVMState *s,
 #endif
 
 #if !defined(TARGET_I386)
-int kvm_arch_init_irq_routing(void)
+void kvm_arch_init_irq_routing(KVMState *s)
 {
-    return 0;
 }
 #endif
 

@@ -938,6 +938,12 @@ int kvm_irqchip_commit_routes(KVMState *s)
 static void kvm_init_irq_routing(KVMState *s)
 {
 }
+
+int kvm_irqchip_commit_routes(KVMState *s)
+{
+    return -ENOSYS;
+}
+
 #endif /* !KVM_CAP_IRQ_ROUTING */
 
 static int kvm_irqchip_create(KVMState *s)
