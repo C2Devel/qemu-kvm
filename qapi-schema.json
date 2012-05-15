@@ -92,6 +92,8 @@
 #
 # @debug: QEMU is running on a debugger
 #
+# @finish-migrate: guest is paused to finish the migration process
+#
 # @inmigrate: guest is paused waiting for an incoming migration
 #
 # @internal-error: An internal error that prevents further guest execution
@@ -106,8 +108,6 @@
 #
 # @prelaunch: QEMU was started with -S and guest has not started
 #
-# @finish-migrate: guest is paused to finish the migration process
-#
 # @restore-vm: guest is paused to restore VM state
 #
 # @running: guest is actively running
@@ -116,12 +116,14 @@
 #
 # @shutdown: guest is shut down (and -no-shutdown is in use)
 #
+# @suspended: guest is suspended (ACPI S3)
+#
 # @watchdog: the watchdog action is configured to pause and has been triggered
 ##
 { 'enum': 'RunState',
   'data': [ 'debug', 'inmigrate', 'internal-error', 'io-error', 'paused',
             'postmigrate', 'prelaunch', 'finish-migrate', 'restore-vm',
-            'running', 'save-vm', 'shutdown', 'watchdog' ] }
+            'running', 'save-vm', 'shutdown', 'suspended', 'watchdog' ] }
 
 ##
 # @StatusInfo:
@@ -634,6 +636,25 @@
            'tls': 'bool'} }
 
 ##
+# @SpiceQueryMouseMode
+#
+# An enumation of Spice mouse states.
+#
+# @client: Mouse cursor position is determined by the client.
+#
+# @server: Mouse cursor position is determined by the server.
+#
+# @unknown: No information is available about mouse mode used by
+#           the spice server.
+#
+# Note: spice/enums.h has a SpiceMouseMode already, hence the name.
+#
+# Since: 1.1
+##
+{ 'enum': 'SpiceQueryMouseMode',
+  'data': [ 'client', 'server', 'unknown' ] }
+
+##
 # @SpiceInfo
 #
 # Information about the SPICE session.
@@ -654,6 +675,12 @@
 #        'spice' uses SASL or direct TLS authentication, depending on command
 #                line options
 #
+# @mouse-mode: The mode in which the mouse cursor is displayed currently. Can
+#              be determined by the client or the server, or unknown if spice
+#              server doesn't provide this information.
+#
+#              Since: 1.1
+#
 # @channels: a list of @SpiceChannel for each active spice channel
 #
 # Since: 0.14.0
@@ -661,7 +688,7 @@
 { 'type': 'SpiceInfo',
   'data': {'enabled': 'bool', '*host': 'str', '*port': 'int',
            '*tls-port': 'int', '*auth': 'str', '*compiled-version': 'str',
-           '*channels': ['SpiceChannel']} }
+           'mouse-mode': 'SpiceQueryMouseMode', '*channels': ['SpiceChannel']} }
 
 ##
 # @query-spice
