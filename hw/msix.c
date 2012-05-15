@@ -349,8 +349,7 @@ int msix_init(struct PCIDevice *dev, unsigned short nentries,
     int ret;
 
     /* Nothing to do if MSI is not supported by interrupt controller */
-    if (!msi_supported ||
-        (kvm_enabled() && kvm_irqchip_in_kernel() && !kvm_has_gsi_routing())) {
+    if (!msi_supported) {
         return -ENOTSUP;
     }
     if (nentries > MSIX_MAX_ENTRIES)
@@ -429,10 +428,6 @@ void msix_save(PCIDevice *dev, QEMUFile *f)
 {
     unsigned n = dev->msix_entries_nr;
 
-    if (!msi_supported) {
-        return;
-    }
-
     if (!(dev->cap_present & QEMU_PCI_CAP_MSIX)) {
         return;
     }
@@ -444,9 +439,6 @@ void msix_save(PCIDevice *dev, QEMUFile *f)
 void msix_load(PCIDevice *dev, QEMUFile *f)
 {
     unsigned n = dev->msix_entries_nr;
-
-    if (!msi_supported)
-        return;
 
     if (!(dev->cap_present & QEMU_PCI_CAP_MSIX)) {
         return;
