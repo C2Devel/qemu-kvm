@@ -80,14 +80,6 @@ int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked);
 int kvm_deassign_pci_device(KVMState *s,
                             struct kvm_assigned_pci_dev *assigned_dev);
 
-/*!
- * \brief Removes an irq route from the temporary irq routing table
- *
- * Adds an irq route to the temporary irq routing table.  Nothing is
- * committed to the running VM.
- */
-int kvm_del_irq_route(int gsi, int irqchip, int pin);
-
 struct kvm_irq_routing_entry;
 
 void kvm_add_routing_entry(KVMState *s, struct kvm_irq_routing_entry *entry);

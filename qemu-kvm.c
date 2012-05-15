@@ -202,22 +202,6 @@ int kvm_update_routing_entry(struct kvm_irq_routing_entry *entry,
 #endif
 }
 
-int kvm_del_irq_route(int gsi, int irqchip, int pin)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    struct kvm_irq_routing_entry e;
-
-    e.gsi = gsi;
-    e.type = KVM_IRQ_ROUTING_IRQCHIP;
-    e.flags = 0;
-    e.u.irqchip.irqchip = irqchip;
-    e.u.irqchip.pin = pin;
-    return kvm_del_routing_entry(&e);
-#else
-    return -ENOSYS;
-#endif
-}
-
 int kvm_get_irq_route_gsi(void)
 {
 #ifdef KVM_CAP_IRQ_ROUTING
