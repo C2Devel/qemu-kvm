@@ -350,6 +350,8 @@ void hmp_info_spice(Monitor *mon)
     }
     monitor_printf(mon, "        auth: %s\n", info->auth);
     monitor_printf(mon, "    compiled: %s\n", info->compiled_version);
+    monitor_printf(mon, "  mouse-mode: %s\n",
+                   SpiceQueryMouseMode_lookup[info->mouse_mode]);
 
     if (!info->has_channels || info->channels == NULL) {
         monitor_printf(mon, "Channels: none\n");
@@ -847,7 +849,7 @@ void hmp_block_job_set_speed(Monitor *mon, const QDict *qdict)
 {
     Error *error = NULL;
     const char *device = qdict_get_str(qdict, "device");
-    int64_t value = qdict_get_int(qdict, "value");
+    int64_t value = qdict_get_int(qdict, "speed");
 
     qmp_block_job_set_speed(device, value, &error);
 
