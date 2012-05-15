@@ -98,16 +98,6 @@ int kvm_deassign_pci_device(KVMState *s,
 }
 #endif
 
-int kvm_clear_gsi_routes(void)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    kvm_state->irq_routes->nr = 0;
-    return 0;
-#else
-    return -EINVAL;
-#endif
-}
-
 int kvm_del_routing_entry(struct kvm_irq_routing_entry *entry)
 {
 #ifdef KVM_CAP_IRQ_ROUTING

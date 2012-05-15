@@ -81,15 +81,6 @@ int kvm_deassign_pci_device(KVMState *s,
                             struct kvm_assigned_pci_dev *assigned_dev);
 
 /*!
- * \brief Clears the temporary irq routing table
- *
- * Clears the temporary irq routing table.  Nothing is committed to the
- * running VM.
- *
- */
-int kvm_clear_gsi_routes(void);
-
-/*!
  * \brief Removes an irq route from the temporary irq routing table
  *
  * Adds an irq route to the temporary irq routing table.  Nothing is
