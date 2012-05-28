@@ -245,18 +245,8 @@ static void assigned_dev_ioport_setup(PCIDevice *pci_dev, int region_num,
 {
     AssignedDevice *r_dev = DO_UPCAST(AssignedDevice, dev, pci_dev);
     AssignedDevRegion *region = &r_dev->v_addrs[region_num];
-    int r;
 
     region->e_size = size;
-
-    if (region->region->resource_fd < 0) {
-        r = kvm_add_ioport_region(region->u.r_baseport, region->r_size,
-                                  pci_dev->qdev.hotplugged);
-        if (r < 0) {
-            fprintf(stderr, "%s: failed to enable ioport access (%m)\n",
-                    __func__);
-        }
-    }
     memory_region_init(&region->container, "assigned-dev-container", size);
     memory_region_init_io(&region->real_iomem, &assigned_dev_ioport_ops,
                           r_dev->v_addrs + region_num,
@@ -440,10 +430,10 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
                         ret);
                 abort();
             } else if (errno != EINVAL) {
-                fprintf(stderr, "Using raw in/out ioport access (sysfs - %s)\n",
-                        strerror(errno));
+                fprintf(stderr,
+                        "Kernel doesn't support ioport resource access.\n");
                 close(pci_dev->v_addrs[i].region->resource_fd);
-                pci_dev->v_addrs[i].region->resource_fd = -1;
+                return -1;
             }
 
             pci_dev->v_addrs[i].u.r_baseport = cur_region->base_addr;
@@ -647,10 +637,6 @@ static void free_assigned_device(AssignedDevice *dev)
             continue;
         }
         if (pci_region->type & IORESOURCE_IO) {
-            if (pci_region->resource_fd < 0) {
-                kvm_remove_ioport_region(region->u.r_baseport, region->r_size,
-                                         dev->dev.qdev.hotplugged);
-            }
             memory_region_del_subregion(&region->container,
                                         &region->real_iomem);
             memory_region_destroy(&region->real_iomem);
