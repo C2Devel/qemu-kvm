@@ -358,11 +358,6 @@ int kvm_arch_init_vcpu(CPUX86State *env)
     uint32_t signature[3];
     int r;
 
-    r = kvm_update_ioport_access(env);
-    if (r < 0) {
-        return r;
-    }
-
     env->cpuid_features &= kvm_arch_get_supported_cpuid(s, 1, 0, R_EDX);
 
     i = env->cpuid_ext_features & CPUID_EXT_HYPERVISOR;
@@ -2034,16 +2029,3 @@ void kvm_arch_init_irq_routing(KVMState *s)
         no_hpet = 1;
     }
 }
-
-#ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
-#include <sys/io.h>
-
-int kvm_arch_set_ioport_access(unsigned long start, unsigned long size,
-                               bool enable)
-{
-    if (ioperm(start, size, enable) < 0) {
-        return -errno;
-    }
-    return 0;
-}
-#endif
