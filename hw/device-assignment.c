@@ -883,7 +883,6 @@ static int assign_irq(AssignedDevice *dev)
     memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
     assigned_irq_data.assigned_dev_id = calc_assigned_dev_id(dev);
     assigned_irq_data.guest_irq = irq;
-    assigned_irq_data.host_irq = dev->real_device.irq;
     if (dev->irq_requested_type) {
         assigned_irq_data.flags = dev->irq_requested_type;
         r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
