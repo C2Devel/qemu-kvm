@@ -749,21 +749,13 @@ static int assign_device(AssignedDevice *dev)
     assigned_dev_data.busnr = dev->h_busnr;
     assigned_dev_data.devfn = dev->h_devfn;
 
-    /* We always enable the IOMMU unless disabled on the command line */
-    if (dev->features & ASSIGNED_DEVICE_USE_IOMMU_MASK) {
-        if (!kvm_check_extension(kvm_state, KVM_CAP_IOMMU)) {
-            fprintf(stderr, "No IOMMU found.  Unable to assign device \"%s\"\n",
-                    dev->dev.qdev.id);
-            return -ENODEV;
-        }
-        assigned_dev_data.flags |= KVM_DEV_ASSIGN_ENABLE_IOMMU;
+    assigned_dev_data.flags = KVM_DEV_ASSIGN_ENABLE_IOMMU;
+    if (!kvm_check_extension(kvm_state, KVM_CAP_IOMMU)) {
+        fprintf(stderr, "No IOMMU found.  Unable to assign device \"%s\"\n",
+                dev->dev.qdev.id);
+        return -ENODEV;
     }
-    if (!(dev->features & ASSIGNED_DEVICE_USE_IOMMU_MASK)) {
-        fprintf(stderr,
-                "WARNING: Assigning a device without IOMMU protection can "
-                "cause host memory corruption if the device issues DMA write "
-                "requests!\n");
-    }
+
     if (dev->features & ASSIGNED_DEVICE_SHARE_INTX_MASK &&
         kvm_has_intx_set_mask()) {
         assigned_dev_data.flags |= KVM_DEV_ASSIGN_PCI_2_3;
@@ -1782,8 +1774,6 @@ PropertyInfo qdev_prop_hostaddr = {
 static Property da_properties[] =
 {
     DEFINE_PROP("host", AssignedDevice, host, qdev_prop_hostaddr, PCIHostDevice),
-    DEFINE_PROP_BIT("iommu", AssignedDevice, features,
-                   ASSIGNED_DEVICE_USE_IOMMU_BIT, true),
     DEFINE_PROP_BIT("prefer_msi", AssignedDevice, features,
                     ASSIGNED_DEVICE_PREFER_MSI_BIT, false),
     DEFINE_PROP_BIT("share_intx", AssignedDevice, features,
