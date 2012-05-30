@@ -95,7 +95,6 @@ typedef struct {
         void *r_virtbase;    /* mmapped access address for memory regions */
         uint32_t r_baseport; /* the base guest port for I/O regions */
     } u;
-    int num;            /* our index within v_addrs[] */
     pcibus_t e_size;    /* emulated size of region in bytes */
     pcibus_t r_size;    /* real size of region in bytes */
     PCIRegion *region;
@@ -449,7 +448,6 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
     for (i = 0; i < regions_num; i++, cur_region++) {
         if (!cur_region->valid)
             continue;
-        pci_dev->v_addrs[i].num = i;
 
         /* handle memory io regions */
         if (cur_region->type & IORESOURCE_MEM) {
