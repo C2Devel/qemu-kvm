@@ -430,10 +430,11 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
                         ret);
                 abort();
             } else if (errno != EINVAL) {
-                fprintf(stderr,
-                        "Kernel doesn't support ioport resource access.\n");
+                fprintf(stderr, "Kernel doesn't support ioport resource "
+                                "access, hiding this region.\n");
                 close(pci_dev->v_addrs[i].region->resource_fd);
-                return -1;
+                cur_region->valid = 0;
+                continue;
             }
 
             pci_dev->v_addrs[i].u.r_baseport = cur_region->base_addr;
