@@ -305,6 +305,7 @@ static void acpi_piix_eject_slot(PIIX4PMState *s, unsigned slots)
             if (pc->no_hotplug) {
                 slot_free = false;
             } else {
+                object_unparent(OBJECT(dev));
                 qdev_free(qdev);
             }
         }
