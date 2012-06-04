@@ -133,21 +133,6 @@ int kvm_get_irq_route_gsi(void)
     return -ENOSYS;
 }
 
-int kvm_msi_message_add(KVMMsiMessage *msg)
-{
-    return -ENOSYS;
-}
-
-int kvm_msi_message_del(KVMMsiMessage *msg)
-{
-    return -ENOSYS;
-}
-
-int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
-{
-    return -ENOSYS;
-}
-
 void kvm_irqchip_commit_routes(KVMState *s)
 {
 }

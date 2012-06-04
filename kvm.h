@@ -222,22 +222,7 @@ void kvm_irqchip_release_virq(KVMState *s, int virq);
 int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq);
 int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq);
 
-typedef struct KVMMsiMessage {
-    uint32_t gsi;
-    uint32_t addr_lo;
-    uint32_t addr_hi;
-    uint32_t data;
-} KVMMsiMessage;
-
 int kvm_get_irq_route_gsi(void);
-
-int kvm_msi_message_add(KVMMsiMessage *msg);
-int kvm_msi_message_del(KVMMsiMessage *msg);
-int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new);
-
-#ifndef NEED_CPU_H
-int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
-#endif
 
 void kvm_irqchip_commit_routes(KVMState *s);
 
