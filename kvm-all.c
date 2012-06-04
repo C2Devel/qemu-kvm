@@ -97,6 +97,7 @@ struct KVMState
     uint32_t *used_gsi_bitmap;
     unsigned int gsi_count;
     QTAILQ_HEAD(msi_hashtab, KVMMSIRoute) msi_hashtab[KVM_MSI_HASHTAB_SIZE];
+    bool direct_msi;
 #endif
 };
 
@@ -899,8 +900,10 @@ static void kvm_init_irq_routing(KVMState *s)
     s->irq_routes = g_malloc0(sizeof(*s->irq_routes));
     s->nr_allocated_irq_routes = 0;
 
-    for (i = 0; i < KVM_MSI_HASHTAB_SIZE; i++) {
-        QTAILQ_INIT(&s->msi_hashtab[i]);
+    if (!s->direct_msi) {
+        for (i = 0; i < KVM_MSI_HASHTAB_SIZE; i++) {
+            QTAILQ_INIT(&s->msi_hashtab[i]);
+        }
     }
 
     kvm_arch_init_irq_routing(s);
@@ -1006,7 +1009,7 @@ again:
 
         return bit - 1 + i * 32;
     }
-    if (retry) {
+    if (!s->direct_msi && retry) {
         retry = false;
         kvm_flush_dynamic_msi_routes(s);
         goto again;
@@ -1032,7 +1035,18 @@ static KVMMSIRoute *kvm_lookup_msi_route(KVMState *s, MSIMessage msg)
 
 int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
 {
+    struct kvm_msi msi;
     KVMMSIRoute *route;
+
+    if (s->direct_msi) {
+        msi.address_lo = (uint32_t)msg.address;
+        msi.address_hi = msg.address >> 32;
+        msi.data = msg.data;
+        msi.flags = 0;
+        memset(msi.pad, 0, sizeof(msi.pad));
+
+        return kvm_vm_ioctl(s, KVM_SIGNAL_MSI, &msi);
+    }
 
     route = kvm_lookup_msi_route(s, msg);
     if (!route) {
@@ -1215,6 +1229,7 @@ int kvm_init(void)
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
 
+    s->direct_msi = (kvm_check_extension(s, KVM_CAP_SIGNAL_MSI) > 0);
     s->intx_set_mask = kvm_check_extension(s, KVM_CAP_PCI_2_3);
 
     ret = kvm_arch_init(s);
