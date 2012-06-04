@@ -30,19 +30,6 @@
 
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
-#ifdef KVM_CAP_IRQ_ROUTING
-static inline void clear_gsi(KVMState *s, unsigned int gsi)
-{
-    uint32_t *bitmap = s->used_gsi_bitmap;
-
-    if (gsi < s->gsi_count) {
-        bitmap[gsi / 32] &= ~(1U << (gsi % 32));
-    } else {
-        DPRINTF("Invalid GSI %u\n", gsi);
-    }
-}
-#endif
-
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT
 int kvm_assign_pci_device(KVMState *s,
                           struct kvm_assigned_pci_dev *assigned_dev)
