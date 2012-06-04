@@ -10,6 +10,7 @@
  * See the COPYING file in the top-level directory.
  */
 #include "hw/apic_internal.h"
+#include "hw/msi.h"
 #include "kvm.h"
 
 static inline void kvm_apic_set_reg(struct kvm_lapic_state *kapic,
@@ -149,6 +150,10 @@ static void kvm_apic_init(APICCommonState *s)
 {
     memory_region_init_reservation(&s->io_memory, "kvm-apic-msi",
                                    MSI_SPACE_SIZE);
+
+    if (kvm_has_gsi_routing()) {
+        msi_supported = true;
+    }
 }
 
 static void kvm_apic_class_init(ObjectClass *klass, void *data)
