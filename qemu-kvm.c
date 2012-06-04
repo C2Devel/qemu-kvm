@@ -35,7 +35,7 @@ static inline void clear_gsi(KVMState *s, unsigned int gsi)
 {
     uint32_t *bitmap = s->used_gsi_bitmap;
 
-    if (gsi < s->max_gsi) {
+    if (gsi < s->gsi_count) {
         bitmap[gsi / 32] &= ~(1U << (gsi % 32));
     } else {
         DPRINTF("Invalid GSI %u\n", gsi);
@@ -206,11 +206,12 @@ int kvm_get_irq_route_gsi(void)
 {
 #ifdef KVM_CAP_IRQ_ROUTING
     KVMState *s = kvm_state;
+    int max_words = ALIGN(s->gsi_count, 32) / 32;
     int i, bit;
     uint32_t *buf = s->used_gsi_bitmap;
 
     /* Return the lowest unused GSI in the bitmap */
-    for (i = 0; i < s->max_gsi / 32; i++) {
+    for (i = 0; i < max_words; i++) {
         bit = ffs(~buf[i]);
         if (!bit) {
             continue;
