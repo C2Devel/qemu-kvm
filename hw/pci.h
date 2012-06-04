@@ -134,9 +134,6 @@ enum {
     QEMU_PCI_CAP_SLOTID = (1 << QEMU_PCI_SLOTID_BITNR),
 };
 
-typedef int (*msix_mask_notifier_func)(PCIDevice *, unsigned vector,
-				       int masked);
-
 #define TYPE_PCI_DEVICE "pci-device"
 #define PCI_DEVICE(obj) \
      OBJECT_CHECK(PCIDevice, (obj), TYPE_PCI_DEVICE)
@@ -176,6 +173,10 @@ typedef struct PCIDeviceClass {
     /* rom bar */
     const char *romfile;
 } PCIDeviceClass;
+
+typedef int (*MSIVectorUseNotifier)(PCIDevice *dev, unsigned int vector,
+                                      MSIMessage msg);
+typedef void (*MSIVectorReleaseNotifier)(PCIDevice *dev, unsigned int vector);
 
 struct PCIDevice {
     DeviceState qdev;
@@ -257,7 +258,9 @@ struct PCIDevice {
 
     KVMMsiMessage *msix_irq_entries;
 
-    msix_mask_notifier_func msix_mask_notifier;
+    /* MSI-X notifiers */
+    MSIVectorUseNotifier msix_vector_use_notifier;
+    MSIVectorReleaseNotifier msix_vector_release_notifier;
 };
 
 void pci_register_bar(PCIDevice *pci_dev, int region_num,

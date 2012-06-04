@@ -44,6 +44,10 @@ typedef struct KVMCapabilityInfo {
 #define KVM_CAP_INFO(CAP) { "KVM_CAP_" stringify(CAP), KVM_CAP_##CAP }
 #define KVM_CAP_LAST_INFO { NULL, 0 }
 
+struct KVMState;
+typedef struct KVMState KVMState;
+extern KVMState *kvm_state;
+
 /* external API */
 
 int kvm_init(void);
@@ -54,8 +58,8 @@ int kvm_has_robust_singlestep(void);
 int kvm_has_debugregs(void);
 int kvm_has_xsave(void);
 int kvm_has_xcrs(void);
-int kvm_has_many_ioeventfds(void);
 int kvm_has_pit_state2(void);
+int kvm_has_many_ioeventfds(void);
 int kvm_has_gsi_routing(void);
 int kvm_has_intx_set_mask(void);
 
@@ -89,10 +93,6 @@ int kvm_on_sigbus(int code, void *addr);
 #endif /* NEED_CPU_H */
 
 /* internal API */
-
-struct KVMState;
-typedef struct KVMState KVMState;
-extern KVMState *kvm_state;
 
 int kvm_ioctl(KVMState *s, int type, ...);
 
@@ -137,8 +137,7 @@ void kvm_arch_init_irq_routing(KVMState *s);
 int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
 int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg);
 
-void kvm_irqchip_add_route(KVMState *s, int gsi, int irqchip, int pin);
-int kvm_irqchip_commit_routes(KVMState *s);
+void kvm_irqchip_add_irq_route(KVMState *s, int gsi, int irqchip, int pin);
 
 void kvm_put_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
 void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
@@ -215,9 +214,13 @@ int kvm_physical_memory_addr_from_host(KVMState *s, void *ram_addr,
 int kvm_set_ioeventfd_mmio(int fd, uint32_t adr, uint32_t val, bool assign,
                            uint32_t size);
 
-int kvm_set_irqfd(int gsi, int fd, bool assigned);
-
 int kvm_set_ioeventfd_pio_word(int fd, uint16_t adr, uint16_t val, bool assign);
+
+int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg);
+void kvm_irqchip_release_virq(KVMState *s, int virq);
+
+int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq);
+int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq);
 
 typedef struct KVMMsiMessage {
     uint32_t gsi;
@@ -234,8 +237,9 @@ int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new);
 
 #ifndef NEED_CPU_H
 int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
-int kvm_irqchip_commit_routes(KVMState *s);
 #endif
+
+void kvm_irqchip_commit_routes(KVMState *s);
 
 #ifdef NEED_CPU_H
 #include "qemu-kvm.h"

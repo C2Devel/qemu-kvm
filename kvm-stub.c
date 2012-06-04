@@ -12,11 +12,13 @@
 
 #include "qemu-common.h"
 #include "hw/hw.h"
+#include "hw/msi.h"
 #include "cpu.h"
 #include "gdbstub.h"
 #include "kvm.h"
 
 KVMState *kvm_state;
+bool kvm_kernel_irqchip;
 
 int kvm_init_vcpu(CPUArchState *env)
 {
@@ -146,9 +148,8 @@ int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
     return -ENOSYS;
 }
 
-int kvm_irqchip_commit_routes(KVMState *s)
+void kvm_irqchip_commit_routes(KVMState *s)
 {
-    return -ENOSYS;
 }
 
 int kvm_irqchip_set_irq(KVMState *s, int irq, int level)
@@ -167,7 +168,21 @@ int kvm_on_sigbus(int code, void *addr)
     return 1;
 }
 
-int kvm_set_irqfd(int gsi, int fd, bool assigned)
+int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg)
+{
+    return -ENOSYS;
+}
+
+void kvm_irqchip_release_virq(KVMState *s, int virq)
+{
+}
+
+int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq)
+{
+    return -ENOSYS;
+}
+
+int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq)
 {
     return -ENOSYS;
 }

@@ -909,8 +909,17 @@ static void kvm_init_irq_routing(KVMState *s)
     kvm_arch_init_irq_routing(s);
 }
 
+void kvm_irqchip_commit_routes(KVMState *s)
+{
+    int ret;
+
+    s->irq_routes->flags = 0;
+    ret = kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
+    assert(ret == 0);
+}
+
 void kvm_add_routing_entry(KVMState *s,
-                           struct kvm_irq_routing_entry *entry)
+                                  struct kvm_irq_routing_entry *entry)
 {
     struct kvm_irq_routing_entry *new;
     int n, size;
@@ -934,9 +943,11 @@ void kvm_add_routing_entry(KVMState *s,
     new->u = entry->u;
 
     set_gsi(s, entry->gsi);
+
+    kvm_irqchip_commit_routes(s);
 }
 
-void kvm_irqchip_add_route(KVMState *s, int irq, int irqchip, int pin)
+void kvm_irqchip_add_irq_route(KVMState *s, int irq, int irqchip, int pin)
 {
     struct kvm_irq_routing_entry e;
 
@@ -950,13 +961,7 @@ void kvm_irqchip_add_route(KVMState *s, int irq, int irqchip, int pin)
     kvm_add_routing_entry(s, &e);
 }
 
-int kvm_irqchip_commit_routes(KVMState *s)
-{
-    s->irq_routes->flags = 0;
-    return kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
-}
-
-static void kvm_irqchip_release_virq(KVMState *s, int virq)
+void kvm_irqchip_release_virq(KVMState *s, int virq)
 {
     struct kvm_irq_routing_entry *e;
     int i;
@@ -969,6 +974,8 @@ static void kvm_irqchip_release_virq(KVMState *s, int virq)
         }
     }
     clear_gsi(s, virq);
+
+    kvm_irqchip_commit_routes(s);
 }
 
 static unsigned int kvm_hash_msi(uint32_t data)
@@ -1050,7 +1057,7 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
 
     route = kvm_lookup_msi_route(s, msg);
     if (!route) {
-        int virq, ret;
+        int virq;
 
         virq = kvm_irqchip_get_virq(s);
         if (virq < 0) {
@@ -1069,16 +1076,52 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
 
         QTAILQ_INSERT_TAIL(&s->msi_hashtab[kvm_hash_msi(msg.data)], route,
                            entry);
-
-        ret = kvm_irqchip_commit_routes(s);
-        if (ret < 0) {
-            return ret;
-        }
     }
 
     assert(route->kroute.type == KVM_IRQ_ROUTING_MSI);
 
     return kvm_irqchip_set_irq(s, route->kroute.gsi, 1);
+}
+
+int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg)
+{
+    struct kvm_irq_routing_entry kroute;
+    int virq;
+
+    if (!kvm_irqchip_in_kernel()) {
+        return -ENOSYS;
+    }
+
+    virq = kvm_irqchip_get_virq(s);
+    if (virq < 0) {
+        return virq;
+    }
+
+    kroute.gsi = virq;
+    kroute.type = KVM_IRQ_ROUTING_MSI;
+    kroute.flags = 0;
+    kroute.u.msi.address_lo = (uint32_t)msg.address;
+    kroute.u.msi.address_hi = msg.address >> 32;
+    kroute.u.msi.data = msg.data;
+
+    kvm_add_routing_entry(s, &kroute);
+
+    return virq;
+}
+
+static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int virq, bool assign)
+{
+    struct kvm_irqfd irqfd = {
+        .fd = fd,
+        .gsi = virq,
+        .flags = assign ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
+    };
+
+    if (!kvm_irqchip_in_kernel()) {
+        return -ENOSYS;
+    }
+
+    return kvm_vm_ioctl(s, KVM_IRQFD, &irqfd);
 }
 
 #else /* !KVM_CAP_IRQ_ROUTING */
@@ -1096,7 +1139,27 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
 {
     abort();
 }
+
+int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg)
+{
+    abort();
+}
+
+static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int virq, bool assign)
+{
+    abort();
+}
 #endif /* !KVM_CAP_IRQ_ROUTING */
+
+int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq)
+{
+    return kvm_irqchip_assign_irqfd(s, fd, virq, true);
+}
+
+int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq)
+{
+    return kvm_irqchip_assign_irqfd(s, fd, virq, false);
+}
 
 static int kvm_irqchip_create(KVMState *s)
 {
@@ -1860,23 +1923,6 @@ int kvm_set_ioeventfd_pio_word(int fd, uint16_t addr, uint16_t val, bool assign)
     if (r < 0) {
         return r;
     }
-    return 0;
-}
-
-int kvm_set_irqfd(int gsi, int fd, bool assigned)
-{
-    struct kvm_irqfd irqfd = {
-        .fd = fd,
-        .gsi = gsi,
-        .flags = assigned ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
-    };
-    int r;
-    if (!kvm_enabled() || !kvm_irqchip_in_kernel())
-        return -ENOSYS;
-
-    r = kvm_vm_ioctl(kvm_state, KVM_IRQFD, &irqfd);
-    if (r < 0)
-        return r;
     return 0;
 }
 
