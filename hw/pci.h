@@ -6,7 +6,6 @@
 #include "qdev.h"
 #include "memory.h"
 #include "dma.h"
-#include "kvm.h"
 
 /* PCI includes legacy ISA access.  */
 #include "isa.h"
@@ -248,15 +247,6 @@ struct PCIDevice {
     bool has_rom;
     MemoryRegion rom;
     uint32_t rom_bar;
-
-    /* How much space does an MSIX table need. */
-    /* The spec requires giving the table structure
-     * a 4K aligned region all by itself. Align it to
-     * target pages so that drivers can do passthrough
-     * on the rest of the region. */
-    target_phys_addr_t msix_page_size;
-
-    KVMMsiMessage *msix_irq_entries;
 
     /* MSI-X notifiers */
     MSIVectorUseNotifier msix_vector_use_notifier;
