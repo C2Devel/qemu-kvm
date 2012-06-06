@@ -6,7 +6,6 @@
 #include "qdev.h"
 #include "memory.h"
 #include "dma.h"
-#include "kvm.h"
 
 /* PCI includes legacy ISA access.  */
 #include "isa.h"
@@ -134,9 +133,6 @@ enum {
     QEMU_PCI_CAP_SLOTID = (1 << QEMU_PCI_SLOTID_BITNR),
 };
 
-typedef int (*msix_mask_notifier_func)(PCIDevice *, unsigned vector,
-				       int masked);
-
 #define TYPE_PCI_DEVICE "pci-device"
 #define PCI_DEVICE(obj) \
      OBJECT_CHECK(PCIDevice, (obj), TYPE_PCI_DEVICE)
@@ -176,6 +172,10 @@ typedef struct PCIDeviceClass {
     /* rom bar */
     const char *romfile;
 } PCIDeviceClass;
+
+typedef int (*MSIVectorUseNotifier)(PCIDevice *dev, unsigned int vector,
+                                      MSIMessage msg);
+typedef void (*MSIVectorReleaseNotifier)(PCIDevice *dev, unsigned int vector);
 
 struct PCIDevice {
     DeviceState qdev;
@@ -248,20 +248,9 @@ struct PCIDevice {
     MemoryRegion rom;
     uint32_t rom_bar;
 
-    /* MSI entries */
-    int msi_entries_nr;
-    struct KVMMsiMessage *msi_irq_entries;
-
-    /* How much space does an MSIX table need. */
-    /* The spec requires giving the table structure
-     * a 4K aligned region all by itself. Align it to
-     * target pages so that drivers can do passthrough
-     * on the rest of the region. */
-    target_phys_addr_t msix_page_size;
-
-    KVMMsiMessage *msix_irq_entries;
-
-    msix_mask_notifier_func msix_mask_notifier;
+    /* MSI-X notifiers */
+    MSIVectorUseNotifier msix_vector_use_notifier;
+    MSIVectorReleaseNotifier msix_vector_release_notifier;
 };
 
 void pci_register_bar(PCIDevice *pci_dev, int region_num,

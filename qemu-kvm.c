@@ -30,19 +30,6 @@
 
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
-#ifdef KVM_CAP_IRQ_ROUTING
-static inline void clear_gsi(KVMState *s, unsigned int gsi)
-{
-    uint32_t *bitmap = s->used_gsi_bitmap;
-
-    if (gsi < s->max_gsi) {
-        bitmap[gsi / 32] &= ~(1U << (gsi % 32));
-    } else {
-        DPRINTF("Invalid GSI %u\n", gsi);
-    }
-}
-#endif
-
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT
 int kvm_assign_pci_device(KVMState *s,
                           struct kvm_assigned_pci_dev *assigned_dev)
@@ -206,11 +193,12 @@ int kvm_get_irq_route_gsi(void)
 {
 #ifdef KVM_CAP_IRQ_ROUTING
     KVMState *s = kvm_state;
+    int max_words = ALIGN(s->gsi_count, 32) / 32;
     int i, bit;
     uint32_t *buf = s->used_gsi_bitmap;
 
     /* Return the lowest unused GSI in the bitmap */
-    for (i = 0; i < s->max_gsi / 32; i++) {
+    for (i = 0; i < max_words; i++) {
         bit = ffs(~buf[i]);
         if (!bit) {
             continue;
@@ -224,78 +212,6 @@ int kvm_get_irq_route_gsi(void)
     return -ENOSYS;
 #endif
 }
-
-#ifdef KVM_CAP_IRQ_ROUTING
-static void kvm_msi_routing_entry(struct kvm_irq_routing_entry *e,
-                                  KVMMsiMessage *msg)
-
-{
-    e->gsi = msg->gsi;
-    e->type = KVM_IRQ_ROUTING_MSI;
-    e->flags = 0;
-    e->u.msi.address_lo = msg->addr_lo;
-    e->u.msi.address_hi = msg->addr_hi;
-    e->u.msi.data = msg->data;
-}
-#endif
-
-int kvm_msi_message_add(KVMMsiMessage *msg)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    struct kvm_irq_routing_entry e;
-    int ret;
-
-    ret = kvm_get_irq_route_gsi();
-    if (ret < 0) {
-        return ret;
-    }
-    msg->gsi = ret;
-
-    kvm_msi_routing_entry(&e, msg);
-    kvm_add_routing_entry(kvm_state, &e);
-    return 0;
-#else
-    return -ENOSYS;
-#endif
-}
-
-int kvm_msi_message_del(KVMMsiMessage *msg)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    struct kvm_irq_routing_entry e;
-
-    kvm_msi_routing_entry(&e, msg);
-    return kvm_del_routing_entry(&e);
-#else
-    return -ENOSYS;
-#endif
-}
-
-int kvm_msi_message_update(KVMMsiMessage *old, KVMMsiMessage *new)
-{
-#ifdef KVM_CAP_IRQ_ROUTING
-    struct kvm_irq_routing_entry e1, e2;
-    int ret;
-
-    new->gsi = old->gsi;
-    if (memcmp(old, new, sizeof(KVMMsiMessage)) == 0) {
-        return 0;
-    }
-
-    kvm_msi_routing_entry(&e1, old);
-    kvm_msi_routing_entry(&e2, new);
-
-    ret = kvm_update_routing_entry(&e1, &e2);
-    if (ret < 0) {
-        return ret;
-    }
-
-    return 1;
-#else
-    return -ENOSYS;
-#endif
-}
-
 
 #ifdef KVM_CAP_DEVICE_MSIX
 int kvm_assign_set_msix_nr(KVMState *s, struct kvm_assigned_msix_nr *msix_nr)
