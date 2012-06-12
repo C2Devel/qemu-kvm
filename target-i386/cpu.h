@@ -787,7 +787,7 @@ typedef struct CPUX86State {
 
 #include "cpu-qom.h"
 
-CPUX86State *cpu_x86_init(const char *cpu_model);
+X86CPU *cpu_x86_init(const char *cpu_model);
 int cpu_x86_exec(CPUX86State *s);
 void x86_cpu_list (FILE *f, fprintf_function cpu_fprintf, const char *optarg);
 void x86_cpudef_setup(void);
@@ -942,7 +942,7 @@ void cpu_x86_update_cr4(CPUX86State *env, uint32_t new_cr4);
 /* hw/pc.c */
 void cpu_smm_update(CPUX86State *env);
 uint64_t cpu_get_tsc(CPUX86State *env);
-CPUArchState *pc_new_cpu(const char *cpu_model);
+X86CPU *pc_new_cpu(const char *cpu_model);
 
 /* used to debug */
 #define X86_DUMP_FPU  0x0001 /* dump FPU state too */
@@ -961,7 +961,15 @@ CPUArchState *pc_new_cpu(const char *cpu_model);
 #define TARGET_VIRT_ADDR_SPACE_BITS 32
 #endif
 
-#define cpu_init cpu_x86_init
+static inline CPUX86State *cpu_init(const char *cpu_model)
+{
+    X86CPU *cpu = cpu_x86_init(cpu_model);
+    if (cpu == NULL) {
+        return NULL;
+    }
+    return &cpu->env;
+}
+
 #define cpu_exec cpu_x86_exec
 #define cpu_gen_code cpu_x86_gen_code
 #define cpu_signal_handler cpu_x86_signal_handler
@@ -1054,8 +1062,8 @@ static inline void cpu_get_tb_cpu_state(CPUX86State *env, target_ulong *pc,
         (env->eflags & (IOPL_MASK | TF_MASK | RF_MASK | VM_MASK));
 }
 
-void do_cpu_init(CPUX86State *env);
-void do_cpu_sipi(CPUX86State *env);
+void do_cpu_init(X86CPU *cpu);
+void do_cpu_sipi(X86CPU *cpu);
 
 #define MCE_INJECT_BROADCAST    1
 #define MCE_INJECT_UNCOND_AO    2
