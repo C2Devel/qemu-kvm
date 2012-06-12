@@ -8,12 +8,11 @@ ifneq ($(HWDIR),)
 include $(HWDIR)/config.mak
 endif
 
-TARGET_PATH=$(SRC_PATH)/target-$(TARGET_BASE_ARCH)
-$(call set-vpath, $(SRC_PATH):$(TARGET_PATH):$(SRC_PATH)/hw)
+$(call set-vpath, $(SRC_PATH))
 ifdef CONFIG_LINUX
 QEMU_CFLAGS += -I../linux-headers
 endif
-QEMU_CFLAGS += -I.. -I$(TARGET_PATH) -DNEED_CPU_H
+QEMU_CFLAGS += -I.. -I$(SRC_PATH)/target-$(TARGET_BASE_ARCH) -DNEED_CPU_H
 
 QEMU_CFLAGS+=-I$(SRC_PATH)/include
 
@@ -149,13 +148,6 @@ else
 obj-y += hw/$(TARGET_BASE_ARCH)/
 endif
 
-# Device tree
-ifeq ($(CONFIG_FDT), y)
-obj-$(TARGET_ARM) += device_tree.o
-obj-$(TARGET_MICROBLAZE) += device_tree.o
-obj-$(TARGET_PPC) += device_tree.o
-endif
-
 main.o: QEMU_CFLAGS+=$(GPROF_CFLAGS)
 
 GENERATED_HEADERS += hmp-commands.h qmp-commands-old.h
@@ -171,16 +163,10 @@ all-obj-y = $(obj-y)
 all-obj-y += $(addprefix ../, $(universal-obj-y))
 
 ifdef CONFIG_SOFTMMU
-
 all-obj-y += $(addprefix ../, $(common-obj-y))
 all-obj-y += $(addprefix ../libdis/, $(libdis-y))
 all-obj-y += $(addprefix $(HWDIR)/, $(hw-obj-y))
 all-obj-y += $(addprefix ../, $(trace-obj-y))
-
-# libcacard needs qemu-thread support, and besides is only needed by devices
-# so not requires with linux-user / bsd-user targets
-all-obj-$(CONFIG_SMARTCARD_NSS) += $(addprefix ../libcacard/, $(libcacard-y))
-
 else
 all-obj-y += $(addprefix ../libuser/, $(user-obj-y))
 all-obj-y += $(addprefix ../libdis-user/, $(libdis-y))
