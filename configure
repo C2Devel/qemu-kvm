@@ -3933,12 +3933,6 @@ if test "$target_softmmu" = "yes" ; then
   esac
 fi
 
-if test "$target_softmmu" = "yes" -a \( \
-        "$TARGET_ARCH" = "microblaze" -o \
-        "$TARGET_ARCH" = "cris" \) ; then
-  echo "CONFIG_NEED_MMU=y" >> $config_target_mak
-fi
-
 if test "$gprof" = "yes" ; then
   echo "TARGET_GPROF=yes" >> $config_target_mak
   if test "$target_linux_user" = "yes" ; then
@@ -3983,7 +3977,7 @@ DIRS="tests tests/tcg tests/tcg/cris tests/tcg/lm32"
 DIRS="$DIRS slirp audio block net pc-bios/optionrom"
 DIRS="$DIRS pc-bios/spapr-rtas"
 DIRS="$DIRS roms/seabios roms/vgabios"
-DIRS="$DIRS fsdev ui usb"
+DIRS="$DIRS fsdev ui hw hw/usb"
 DIRS="$DIRS qapi qapi-generated"
 DIRS="$DIRS qga trace qom"
 FILES="Makefile tests/tcg/Makefile qdict-test-data.txt"
@@ -4024,10 +4018,11 @@ done
 for hwlib in 32 64; do
   d=libhw$hwlib
   mkdir -p $d
-  mkdir -p $d/ide
-  mkdir -p $d/usb
+  mkdir -p $d/hw
+  mkdir -p $d/hw/ide
+  mkdir -p $d/hw/usb
   symlink "$source_path/Makefile.hw" "$d/Makefile"
-  mkdir -p $d/9pfs
+  mkdir -p $d/hw/9pfs
   echo "QEMU_CFLAGS+=-DTARGET_PHYS_ADDR_BITS=$hwlib" > $d/config.mak
 done
 
