@@ -613,7 +613,7 @@ static void disable_processor(PIIX4PMState *s, int cpu)
 
 void qemu_system_cpu_hot_add(int cpu, int state)
 {
-    CPUArchState *env;
+    X86CPU *env;
     PIIX4PMState *s = global_piix4_pm_state;
 
     if (state && !qemu_get_cpu(cpu)) {
@@ -622,7 +622,7 @@ void qemu_system_cpu_hot_add(int cpu, int state)
             fprintf(stderr, "cpu %d creation failed\n", cpu);
             return;
         }
-        env->cpuid_apic_id = cpu;
+        env->env.cpuid_apic_id = cpu;
     }
 
     if (state)

@@ -1157,7 +1157,7 @@ int cpu_x86_get_descr_debug(CPUX86State *env, unsigned int selector,
     return 1;
 }
 
-CPUX86State *cpu_x86_init(const char *cpu_model)
+X86CPU *cpu_x86_init(const char *cpu_model)
 {
     X86CPU *cpu;
     CPUX86State *env;
@@ -1183,31 +1183,34 @@ CPUX86State *cpu_x86_init(const char *cpu_model)
 
     x86_cpu_realize(OBJECT(cpu), NULL);
 
-    return env;
+    return cpu;
 }
 
 #if !defined(CONFIG_USER_ONLY)
-void do_cpu_init(CPUX86State *env)
+void do_cpu_init(X86CPU *cpu)
 {
+    CPUX86State *env = &cpu->env;
     int sipi = env->interrupt_request & CPU_INTERRUPT_SIPI;
     uint64_t pat = env->pat;
 
-    cpu_state_reset(env);
+    cpu_reset(CPU(cpu));
     env->interrupt_request = sipi;
     env->pat = pat;
     apic_init_reset(env->apic_state);
     env->halted = !cpu_is_bsp(env);
 }
 
-void do_cpu_sipi(CPUX86State *env)
+void do_cpu_sipi(X86CPU *cpu)
 {
+    CPUX86State *env = &cpu->env;
+
     apic_sipi(env->apic_state);
 }
 #else
-void do_cpu_init(CPUX86State *env)
+void do_cpu_init(X86CPU *cpu)
 {
 }
-void do_cpu_sipi(CPUX86State *env)
+void do_cpu_sipi(X86CPU *cpu)
 {
 }
 #endif
