@@ -62,11 +62,6 @@ typedef struct KVMSlot
 
 typedef struct kvm_dirty_log KVMDirtyLog;
 
-typedef struct KVMMSIRoute {
-    struct kvm_irq_routing_entry kroute;
-    QTAILQ_ENTRY(KVMMSIRoute) entry;
-} KVMMSIRoute;
-
 struct KVMState
 {
     KVMSlot slots[32];
@@ -868,6 +863,11 @@ int kvm_irqchip_set_irq(KVMState *s, int irq, int level)
 }
 
 #ifdef KVM_CAP_IRQ_ROUTING
+typedef struct KVMMSIRoute {
+    struct kvm_irq_routing_entry kroute;
+    QTAILQ_ENTRY(KVMMSIRoute) entry;
+} KVMMSIRoute;
+
 static void set_gsi(KVMState *s, unsigned int gsi)
 {
     s->used_gsi_bitmap[gsi / 32] |= 1U << (gsi % 32);
@@ -1135,6 +1135,10 @@ int kvm_irqchip_commit_routes(KVMState *s)
     return -ENOSYS;
 }
 
+void kvm_irqchip_release_virq(KVMState *s, int virq)
+{
+}
+
 int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
 {
     abort();
@@ -1292,7 +1296,10 @@ int kvm_init(void)
     s->pit_state2 = kvm_check_extension(s, KVM_CAP_PIT_STATE2);
 #endif
 
+#ifdef KVM_CAP_IRQ_ROUTING
     s->direct_msi = (kvm_check_extension(s, KVM_CAP_SIGNAL_MSI) > 0);
+#endif
+
     s->intx_set_mask = kvm_check_extension(s, KVM_CAP_PCI_2_3);
 
     ret = kvm_arch_init(s);
