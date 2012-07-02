@@ -629,7 +629,7 @@ static int virtio_pci_set_guest_notifiers(void *opaque, bool assign)
 
     /* Must unset mask notifier while guest notifier
      * is still assigned */
-    if (!assign) {
+    if (kvm_irqchip_in_kernel() && !assign) {
 	    r = msix_unset_mask_notifier(&proxy->pci_dev);
             assert(r >= 0);
     }
@@ -647,7 +647,7 @@ static int virtio_pci_set_guest_notifiers(void *opaque, bool assign)
 
     /* Must set mask notifier after guest notifier
      * has been assigned */
-    if (assign) {
+    if (kvm_irqchip_in_kernel() && assign) {
         r = msix_set_mask_notifier(&proxy->pci_dev,
                                    virtio_pci_mask_notifier);
         if (r < 0) {
