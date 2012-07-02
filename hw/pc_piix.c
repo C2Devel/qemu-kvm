@@ -393,6 +393,7 @@ static QEMUMachine pc_machine_v1_0 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_0,
         { /* end of list */ }
@@ -407,6 +408,7 @@ static QEMUMachine pc_machine_v0_15 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_15,
         { /* end of list */ }
