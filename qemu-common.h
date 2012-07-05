@@ -239,6 +239,7 @@ typedef struct VLANState VLANState;
 typedef struct VLANClientState VLANClientState;
 typedef struct i2c_bus i2c_bus;
 typedef struct ISABus ISABus;
+typedef struct ISADevice ISADevice;
 typedef struct SMBusDevice SMBusDevice;
 typedef struct PCIHostState PCIHostState;
 typedef struct PCIExpressHost PCIExpressHost;
@@ -273,6 +274,13 @@ typedef enum LostTickPolicy {
     LOST_TICK_SLEW,
     LOST_TICK_MAX
 } LostTickPolicy;
+
+typedef struct PCIHostDeviceAddress {
+    unsigned int domain;
+    unsigned int bus;
+    unsigned int slot;
+    unsigned int function;
+} PCIHostDeviceAddress;
 
 void tcg_exec_init(unsigned long tb_size);
 bool tcg_enabled(void);
