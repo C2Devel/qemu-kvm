@@ -144,9 +144,9 @@ vnc_tls=""
 vnc_sasl=""
 vnc_jpeg=""
 vnc_png=""
-vnc_thread="no"
 xen=""
 xen_ctrl_version=""
+xen_pci_passthrough=""
 linux_aio=""
 cap_ng=""
 attr=""
@@ -267,7 +267,6 @@ QEMU_CFLAGS="-fno-strict-aliasing $QEMU_CFLAGS"
 QEMU_CFLAGS="-Wall -Wundef -Wwrite-strings -Wmissing-prototypes $QEMU_CFLAGS"
 QEMU_CFLAGS="-Wstrict-prototypes -Wredundant-decls $QEMU_CFLAGS"
 QEMU_CFLAGS="-D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE $QEMU_CFLAGS"
-QEMU_CFLAGS="-D_FORTIFY_SOURCE=2 $QEMU_CFLAGS"
 QEMU_INCLUDES="-I. -I\$(SRC_PATH) -I\$(SRC_PATH)/fpu"
 if test "$debug_info" = "yes"; then
     CFLAGS="-g $CFLAGS"
@@ -678,10 +677,6 @@ for opt do
   ;;
   --enable-vnc-png) vnc_png="yes"
   ;;
-  --disable-vnc-thread) vnc_thread="no"
-  ;;
-  --enable-vnc-thread) vnc_thread="yes"
-  ;;
   --disable-slirp) slirp="no"
   ;;
   --disable-uuid) uuid="no"
@@ -695,6 +690,10 @@ for opt do
   --disable-xen) xen="no"
   ;;
   --enable-xen) xen="yes"
+  ;;
+  --disable-xen-pci-passthrough) xen_pci_passthrough="no"
+  ;;
+  --enable-xen-pci-passthrough) xen_pci_passthrough="yes"
   ;;
   --disable-brlapi) brlapi="no"
   ;;
@@ -1047,6 +1046,8 @@ echo "                           (affects only QEMU, not qemu-img)"
 echo "  --enable-mixemu          enable mixer emulation"
 echo "  --disable-xen            disable xen backend driver support"
 echo "  --enable-xen             enable xen backend driver support"
+echo "  --disable-xen-pci-passthrough"
+echo "  --enable-xen-pci-passthrough"
 echo "  --disable-brlapi         disable BrlAPI"
 echo "  --enable-brlapi          enable BrlAPI"
 echo "  --disable-vnc-tls        disable TLS encryption for VNC server"
@@ -1399,7 +1400,7 @@ EOF
   elif (
       cat > $TMPC <<EOF
 #include <xenctrl.h>
-#include <xs.h>
+#include <xenstore.h>
 #include <stdint.h>
 #include <xen/hvm/hvm_info_table.h>
 #if !defined(HVM_MAX_VCPUS)
@@ -1522,6 +1523,25 @@ EOF
 
   if test "$xen" = yes; then
     libs_softmmu="$xen_libs $libs_softmmu"
+  fi
+fi
+
+if test "$xen_pci_passthrough" != "no"; then
+  if test "$xen" = "yes" && test "$linux" = "yes" &&
+    test "$xen_ctrl_version" -ge 340; then
+    xen_pci_passthrough=yes
+  else
+    if test "$xen_pci_passthrough" = "yes"; then
+      echo "ERROR"
+      echo "ERROR: User requested feature Xen PCI Passthrough"
+      echo "ERROR: but this feature require /sys from Linux"
+      if test "$xen_ctrl_version" -lt 340; then
+        echo "ERROR: This feature does not work with Xen 3.3"
+      fi
+      echo "ERROR"
+      exit 1;
+    fi
+    xen_pci_passthrough=no
   fi
 fi
 
@@ -2826,10 +2846,14 @@ fi
 ##########################################
 # check if we have open_by_handle_at
 
-open_by_hande_at=no
+open_by_handle_at=no
 cat > $TMPC << EOF
 #include <fcntl.h>
+#if !defined(AT_EMPTY_PATH)
+# error missing definition
+#else
 int main(void) { struct file_handle fh; return open_by_handle_at(0, &fh, 0); }
+#endif
 EOF
 if compile_prog "" "" ; then
     open_by_handle_at=yes
@@ -2869,7 +2893,7 @@ fi
 # After here, no more $cc or $ld runs
 
 if test "$debug" = "no" ; then
-  CFLAGS="-O2 $CFLAGS"
+  CFLAGS="-O2 -D_FORTIFY_SOURCE=2 $CFLAGS"
 fi
 
 # Consult white-list to determine whether to enable werror
@@ -3012,7 +3036,6 @@ if test "$vnc" = "yes" ; then
     echo "VNC SASL support  $vnc_sasl"
     echo "VNC JPEG support  $vnc_jpeg"
     echo "VNC PNG support   $vnc_png"
-    echo "VNC thread        $vnc_thread"
 fi
 if test -n "$sparc_cpu"; then
     echo "Target Sparc Arch $sparc_cpu"
@@ -3188,9 +3211,6 @@ fi
 if test "$vnc_png" = "yes" ; then
   echo "CONFIG_VNC_PNG=y" >> $config_host_mak
   echo "VNC_PNG_CFLAGS=$vnc_png_cflags" >> $config_host_mak
-fi
-if test "$vnc_thread" = "yes" ; then
-  echo "CONFIG_VNC_THREAD=y" >> $config_host_mak
 fi
 if test "$fnmatch" = "yes" ; then
   echo "CONFIG_FNMATCH=y" >> $config_host_mak
@@ -3480,6 +3500,7 @@ done
 
 # use included Linux headers
 if test "$linux" = "yes" ; then
+  mkdir -p linux-headers
   case "$cpu" in
   i386|x86_64)
     symlink "$source_path/linux-headers/asm-x86" linux-headers/asm
@@ -3694,7 +3715,7 @@ symlink "$source_path/Makefile.target" "$target_dir/Makefile"
 
 
 case "$target_arch2" in
-  alpha | sparc* | xtensa*)
+  alpha | sparc* | xtensa* | ppc*)
     echo "CONFIG_TCG_PASS_AREG0=y" >> $config_target_mak
   ;;
 esac
@@ -3717,6 +3738,9 @@ case "$target_arch2" in
     if test "$xen" = "yes" -a "$target_softmmu" = "yes" ; then
       target_phys_bits=64
       echo "CONFIG_XEN=y" >> $config_target_mak
+      if test "$xen_pci_passthrough" = yes; then
+        echo "CONFIG_XEN_PCI_PASSTHROUGH=y" >> "$config_target_mak"
+      fi
     else
       echo "CONFIG_NO_XEN=y" >> $config_target_mak
     fi

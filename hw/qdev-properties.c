@@ -899,6 +899,113 @@ PropertyInfo qdev_prop_blocksize = {
     .set   = set_blocksize,
 };
 
+/* --- pci host address --- */
+
+static void get_pci_host_devaddr(Object *obj, Visitor *v, void *opaque,
+                                 const char *name, Error **errp)
+{
+    DeviceState *dev = DEVICE(obj);
+    Property *prop = opaque;
+    PCIHostDeviceAddress *addr = qdev_get_prop_ptr(dev, prop);
+    char buffer[] = "xxxx:xx:xx.x";
+    char *p = buffer;
+    int rc = 0;
+
+    rc = snprintf(buffer, sizeof(buffer), "%04x:%02x:%02x.%d",
+                  addr->domain, addr->bus, addr->slot, addr->function);
+    assert(rc == sizeof(buffer) - 1);
+
+    visit_type_str(v, &p, name, errp);
+}
+
+/*
+ * Parse [<domain>:]<bus>:<slot>.<func>
+ *   if <domain> is not supplied, it's assumed to be 0.
+ */
+static void set_pci_host_devaddr(Object *obj, Visitor *v, void *opaque,
+                                 const char *name, Error **errp)
+{
+    DeviceState *dev = DEVICE(obj);
+    Property *prop = opaque;
+    PCIHostDeviceAddress *addr = qdev_get_prop_ptr(dev, prop);
+    Error *local_err = NULL;
+    char *str, *p;
+    char *e;
+    unsigned long val;
+    unsigned long dom = 0, bus = 0;
+    unsigned int slot = 0, func = 0;
+
+    if (dev->state != DEV_STATE_CREATED) {
+        error_set(errp, QERR_PERMISSION_DENIED);
+        return;
+    }
+
+    visit_type_str(v, &str, name, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    p = str;
+    val = strtoul(p, &e, 16);
+    if (e == p || *e != ':') {
+        goto inval;
+    }
+    bus = val;
+
+    p = e + 1;
+    val = strtoul(p, &e, 16);
+    if (e == p) {
+        goto inval;
+    }
+    if (*e == ':') {
+        dom = bus;
+        bus = val;
+        p = e + 1;
+        val = strtoul(p, &e, 16);
+        if (e == p) {
+            goto inval;
+        }
+    }
+    slot = val;
+
+    if (*e != '.') {
+        goto inval;
+    }
+    p = e + 1;
+    val = strtoul(p, &e, 10);
+    if (e == p) {
+        goto inval;
+    }
+    func = val;
+
+    if (dom > 0xffff || bus > 0xff || slot > 0x1f || func > 7) {
+        goto inval;
+    }
+
+    if (*e) {
+        goto inval;
+    }
+
+    addr->domain = dom;
+    addr->bus = bus;
+    addr->slot = slot;
+    addr->function = func;
+
+    g_free(str);
+    return;
+
+inval:
+    error_set_from_qdev_prop_error(errp, EINVAL, dev, prop, str);
+    g_free(str);
+}
+
+PropertyInfo qdev_prop_pci_host_devaddr = {
+    .name = "pci-host-devaddr",
+    .get = get_pci_host_devaddr,
+    .set = set_pci_host_devaddr,
+};
+
 /* --- public helpers --- */
 
 static Property *qdev_prop_walk(Property *props, const char *name)
@@ -915,24 +1022,20 @@ static Property *qdev_prop_walk(Property *props, const char *name)
 
 static Property *qdev_prop_find(DeviceState *dev, const char *name)
 {
+    ObjectClass *class;
     Property *prop;
 
     /* device properties */
-    prop = qdev_prop_walk(qdev_get_props(dev), name);
-    if (prop)
-        return prop;
-
-    /* bus properties */
-    prop = qdev_prop_walk(dev->parent_bus->info->props, name);
-    if (prop)
-        return prop;
+    class = object_get_class(OBJECT(dev));
+    do {
+        prop = qdev_prop_walk(DEVICE_CLASS(class)->props, name);
+        if (prop) {
+            return prop;
+        }
+        class = object_class_get_parent(class);
+    } while (class != object_class_by_name(TYPE_DEVICE));
 
     return NULL;
-}
-
-int qdev_prop_exists(DeviceState *dev, const char *name)
-{
-    return qdev_prop_find(dev, name) ? true : false;
 }
 
 void error_set_from_qdev_prop_error(Error **errp, int ret, DeviceState *dev,
@@ -1105,28 +1208,6 @@ void qdev_prop_set_ptr(DeviceState *dev, const char *name, void *value)
     *ptr = value;
 }
 
-void qdev_prop_set_defaults(DeviceState *dev, Property *props)
-{
-    Object *obj = OBJECT(dev);
-    if (!props)
-        return;
-    for (; props->name; props++) {
-        Error *errp = NULL;
-        if (props->qtype == QTYPE_NONE) {
-            continue;
-        }
-        if (props->qtype == QTYPE_QBOOL) {
-            object_property_set_bool(obj, props->defval, props->name, &errp);
-        } else if (props->info->enum_table) {
-            object_property_set_str(obj, props->info->enum_table[props->defval],
-                                    props->name, &errp);
-        } else if (props->qtype == QTYPE_QINT) {
-            object_property_set_int(obj, props->defval, props->name, &errp);
-        }
-        assert_no_error(errp);
-    }
-}
-
 static QTAILQ_HEAD(, GlobalProperty) global_props = QTAILQ_HEAD_INITIALIZER(global_props);
 
 static void qdev_prop_register_global(GlobalProperty *prop)
@@ -1145,17 +1226,20 @@ void qdev_prop_register_global_list(GlobalProperty *props)
 
 void qdev_prop_set_globals(DeviceState *dev)
 {
-    GlobalProperty *prop;
+    ObjectClass *class = object_get_class(OBJECT(dev));
 
-    QTAILQ_FOREACH(prop, &global_props, next) {
-        if (strcmp(object_get_typename(OBJECT(dev)), prop->driver) != 0 &&
-            strcmp(qdev_get_bus_info(dev)->name, prop->driver) != 0) {
-            continue;
+    do {
+        GlobalProperty *prop;
+        QTAILQ_FOREACH(prop, &global_props, next) {
+            if (strcmp(object_class_get_name(class), prop->driver) != 0) {
+                continue;
+            }
+            if (qdev_prop_parse(dev, prop->property, prop->value) != 0) {
+                exit(1);
+            }
         }
-        if (qdev_prop_parse(dev, prop->property, prop->value) != 0) {
-            exit(1);
-        }
-    }
+        class = object_class_get_parent(class);
+    } while (class);
 }
 
 static int qdev_add_one_global(QemuOpts *opts, void *opaque)

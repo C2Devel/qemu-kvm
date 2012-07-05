@@ -29,6 +29,7 @@
 #include "apic.h"
 #include "pci.h"
 #include "pci_ids.h"
+#include "usb.h"
 #include "net.h"
 #include "boards.h"
 #include "ide.h"
@@ -148,6 +149,7 @@ static void pc_init1(MemoryRegion *system_memory,
     MemoryRegion *ram_memory;
     MemoryRegion *pci_memory;
     MemoryRegion *rom_memory;
+    void *fw_cfg = NULL;
 
     global_cpu_model = cpu_model;
 
@@ -176,7 +178,7 @@ static void pc_init1(MemoryRegion *system_memory,
 
     /* allocate ram and load rom/bios */
     if (!xen_enabled()) {
-        pc_memory_init(system_memory,
+        fw_cfg = pc_memory_init(system_memory,
                        kernel_filename, kernel_cmdline, initrd_filename,
                        below_4g_mem_size, above_4g_mem_size,
                        pci_enabled ? rom_memory : system_memory, &ram_memory);
@@ -280,7 +282,7 @@ static void pc_init1(MemoryRegion *system_memory,
         /* TODO: Populate SPD eeprom data.  */
         smbus = piix4_pm_init(pci_bus, piix3_devfn + 3, 0xb100,
                               gsi[9], *smi_irq,
-                              kvm_enabled());
+                              kvm_enabled(), fw_cfg);
         smbus_eeprom_init(smbus, 8, NULL, 0);
     }
 
@@ -351,8 +353,8 @@ static void pc_xen_hvm_init(ram_addr_t ram_size,
 }
 #endif
 
-static QEMUMachine pc_machine_v1_1 = {
-    .name = "pc-1.1",
+static QEMUMachine pc_machine_v1_2 = {
+    .name = "pc-1.2",
     .alias = "pc",
     .desc = "Standard PC",
     .init = pc_init_pci,
@@ -361,7 +363,38 @@ static QEMUMachine pc_machine_v1_1 = {
     .default_machine_opts = "accel=kvm,kernel_irqchip=on",
 };
 
+#define PC_COMPAT_1_1 \
+        {\
+            .driver   = "VGA",\
+            .property = "vgamem_mb",\
+            .value    = stringify(8),\
+        },{\
+            .driver   = "vmware-svga",\
+            .property = "vgamem_mb",\
+            .value    = stringify(8),\
+        },{\
+            .driver   = "qxl-vga",\
+            .property = "vgamem_mb",\
+            .value    = stringify(8),\
+        },{\
+            .driver   = "qxl",\
+            .property = "vgamem_mb",\
+            .value    = stringify(8),\
+        }
+
+static QEMUMachine pc_machine_v1_1 = {
+    .name = "pc-1.1",
+    .desc = "Standard PC",
+    .init = pc_init_pci,
+    .max_cpus = 255,
+    .compat_props = (GlobalProperty[]) {
+        PC_COMPAT_1_1,
+        { /* end of list */ }
+    },
+};
+
 #define PC_COMPAT_1_0 \
+        PC_COMPAT_1_1,\
         {\
             .driver   = "pc-sysfw",\
             .property = "rom_only",\
@@ -379,7 +412,7 @@ static QEMUMachine pc_machine_v1_1 = {
             .property = "vapic",\
             .value    = "off",\
         },{\
-            .driver   = "USB",\
+            .driver   = TYPE_USB_DEVICE,\
             .property = "full-path",\
             .value    = "no",\
         }
@@ -393,6 +426,7 @@ static QEMUMachine pc_machine_v1_0 = {
         PC_COMPAT_1_0,
         { /* end of list */ }
     },
+    .hw_version = "1.0",
 };
 
 #define PC_COMPAT_0_15 \
@@ -407,6 +441,7 @@ static QEMUMachine pc_machine_v0_15 = {
         PC_COMPAT_0_15,
         { /* end of list */ }
     },
+    .hw_version = "0.15",
 };
 
 #define PC_COMPAT_0_14 \
@@ -448,12 +483,13 @@ static QEMUMachine pc_machine_v0_14 = {
         },
         { /* end of list */ }
     },
+    .hw_version = "0.14",
 };
 
 #define PC_COMPAT_0_13 \
         PC_COMPAT_0_14,\
         {\
-            .driver   = "PCI",\
+            .driver   = TYPE_PCI_DEVICE,\
             .property = "command_serr_enable",\
             .value    = "off",\
         },{\
@@ -485,6 +521,7 @@ static QEMUMachine pc_machine_v0_13 = {
         },
         { /* end of list */ }
     },
+    .hw_version = "0.13",
 };
 
 #define PC_COMPAT_0_12 \
@@ -517,7 +554,8 @@ static QEMUMachine pc_machine_v0_12 = {
             .value    = stringify(0),
         },
         { /* end of list */ }
-    }
+    },
+    .hw_version = "0.12",
 };
 
 #define PC_COMPAT_0_11 \
@@ -527,7 +565,7 @@ static QEMUMachine pc_machine_v0_12 = {
             .property = "vectors",\
             .value    = stringify(0),\
         },{\
-            .driver   = "PCI",\
+            .driver   = TYPE_PCI_DEVICE,\
             .property = "rombar",\
             .value    = stringify(0),\
         }
@@ -550,7 +588,8 @@ static QEMUMachine pc_machine_v0_11 = {
             .value    = "0.11",
         },
         { /* end of list */ }
-    }
+    },
+    .hw_version = "0.11",
 };
 
 static QEMUMachine pc_machine_v0_10 = {
@@ -584,6 +623,7 @@ static QEMUMachine pc_machine_v0_10 = {
         },
         { /* end of list */ }
     },
+    .hw_version = "0.10",
 };
 
 static QEMUMachine isapc_machine = {
@@ -614,6 +654,7 @@ static QEMUMachine xenfv_machine = {
 
 static void pc_machine_init(void)
 {
+    qemu_register_machine(&pc_machine_v1_2);
     qemu_register_machine(&pc_machine_v1_1);
     qemu_register_machine(&pc_machine_v1_0);
     qemu_register_machine(&pc_machine_v0_15);

@@ -34,7 +34,6 @@ do { printf("scsi-disk: " fmt , ## __VA_ARGS__); } while (0)
 #include "scsi-defs.h"
 #include "sysemu.h"
 #include "blockdev.h"
-#include "block_int.h"
 #include "dma.h"
 
 #ifdef __linux
@@ -1716,7 +1715,7 @@ static int scsi_initfn(SCSIDevice *dev)
     }
 
     if (!s->version) {
-        s->version = g_strdup(QEMU_VERSION);
+        s->version = g_strdup(qemu_get_version());
     }
 
     if (bdrv_is_sg(s->qdev.conf.bs)) {
@@ -1889,7 +1888,7 @@ static SCSIRequest *scsi_block_new_request(SCSIDevice *d, uint32_t tag,
 	 * ones (such as WRITE SAME or EXTENDED COPY, etc.).  So, without
 	 * O_DIRECT everything must go through SG_IO.
          */
-        if (!(s->qdev.conf.bs->open_flags & BDRV_O_NOCACHE)) {
+        if (bdrv_get_flags(s->qdev.conf.bs) & BDRV_O_NOCACHE) {
             break;
         }
 
