@@ -35,6 +35,7 @@
 #include "range.h"
 #include "qmp-commands.h"
 #include "msi.h"
+#include "msix.h"
 
 //#define DEBUG_PCI
 #ifdef DEBUG_PCI
@@ -192,6 +193,9 @@ void pci_device_reset(PCIDevice *dev)
         }
     }
     pci_update_mappings(dev);
+
+    msi_reset(dev);
+    msix_reset(dev);
 }
 
 /*
