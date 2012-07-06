@@ -63,13 +63,6 @@
 #define DEBUG(fmt, ...) do { } while(0)
 #endif
 
-typedef struct PCIHostDevice {
-    int seg;
-    int bus;
-    int dev;
-    int func;
-} PCIHostDevice;
-
 typedef struct {
     int type;           /* Memory or port I/O */
     int valid;
@@ -115,7 +108,7 @@ typedef struct {
 
 typedef struct AssignedDevice {
     PCIDevice dev;
-    PCIHostDevice host;
+    PCIHostDeviceAddress host;
     uint32_t features;
     int intpin;
     uint8_t debug_flags;
@@ -778,7 +771,8 @@ static void assign_failed_examine(AssignedDevice *dev)
     int r;
 
     sprintf(dir, "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/",
-            dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func);
+            dev->host.domain, dev->host.bus, dev->host.slot,
+            dev->host.function);
 
     sprintf(name, "%sdriver", dir);
 
@@ -796,7 +790,8 @@ static void assign_failed_examine(AssignedDevice *dev)
 
     fprintf(stderr, "*** The driver '%s' is occupying your device "
                     "%04x:%02x:%02x.%x.\n",
-            ns, dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func);
+            ns, dev->host.domain, dev->host.bus, dev->host.slot,
+            dev->host.function);
     fprintf(stderr, "***\n");
     fprintf(stderr, "*** You can try the following commands to free it:\n");
     fprintf(stderr, "***\n");
@@ -804,10 +799,12 @@ static void assign_failed_examine(AssignedDevice *dev)
                     "new_id\n", vendor_id, device_id);
     fprintf(stderr, "*** $ echo \"%04x:%02x:%02x.%x\" > /sys/bus/pci/drivers/"
                     "%s/unbind\n",
-            dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func, ns);
+            dev->host.domain, dev->host.bus, dev->host.slot,
+            dev->host.function, ns);
     fprintf(stderr, "*** $ echo \"%04x:%02x:%02x.%x\" > /sys/bus/pci/drivers/"
                     "pci-stub/bind\n",
-            dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func);
+            dev->host.domain, dev->host.bus, dev->host.slot,
+            dev->host.function);
     fprintf(stderr, "*** $ echo \"%04x %04x\" > /sys/bus/pci/drivers/pci-stub"
                     "/remove_id\n", vendor_id, device_id);
     fprintf(stderr, "***\n");
@@ -1699,7 +1696,8 @@ static void reset_assigned_device(DeviceState *dev)
 
     snprintf(reset_file, sizeof(reset_file),
              "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/reset",
-             adev->host.seg, adev->host.bus, adev->host.dev, adev->host.func);
+             adev->host.domain, adev->host.bus, adev->host.slot,
+             adev->host.function);
 
     /*
      * Issue a device reset via pci-sysfs.  Note that we use write(2) here
@@ -1732,7 +1730,8 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
         return -1;
     }
 
-    if (!dev->host.seg && !dev->host.bus && !dev->host.dev && !dev->host.func) {
+    if (!dev->host.domain && !dev->host.bus && !dev->host.slot &&
+        !dev->host.function) {
         error_report("pci-assign: error: no host device specified");
         return -1;
     }
@@ -1757,8 +1756,8 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     memcpy(dev->emulate_config_write, dev->emulate_config_read,
            sizeof(dev->emulate_config_read));
 
-    if (get_real_device(dev, dev->host.seg, dev->host.bus,
-                        dev->host.dev, dev->host.func)) {
+    if (get_real_device(dev, dev->host.domain, dev->host.bus,
+                        dev->host.slot, dev->host.function)) {
         error_report("pci-assign: Error: Couldn't get real device (%s)!",
                      dev->dev.qdev.id);
         goto out;
@@ -1786,9 +1785,9 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     dev->intpin = e_intx;
     dev->run = 0;
     dev->girq = -1;
-    dev->h_segnr = dev->host.seg;
+    dev->h_segnr = dev->host.domain;
     dev->h_busnr = dev->host.bus;
-    dev->h_devfn = PCI_DEVFN(dev->host.dev, dev->host.func);
+    dev->h_devfn = PCI_DEVFN(dev->host.slot, dev->host.function);
 
     /* assign device to guest */
     r = assign_device(dev);
@@ -1824,33 +1823,9 @@ static int assigned_exitfn(struct PCIDevice *pci_dev)
     return 0;
 }
 
-static int parse_hostaddr(DeviceState *dev, Property *prop, const char *str)
-{
-    PCIHostDevice *ptr = qdev_get_prop_ptr(dev, prop);
-    int rc;
-
-    rc = pci_parse_host_devaddr(str, &ptr->seg, &ptr->bus, &ptr->dev, &ptr->func);
-    if (rc != 0)
-        return -1;
-    return 0;
-}
-
-static int print_hostaddr(DeviceState *dev, Property *prop, char *dest, size_t len)
-{
-    PCIHostDevice *ptr = qdev_get_prop_ptr(dev, prop);
-
-    return snprintf(dest, len, "%02x:%02x.%x", ptr->bus, ptr->dev, ptr->func);
-}
-
-PropertyInfo qdev_prop_hostaddr = {
-    .name  = "pci-hostaddr",
-    .parse = parse_hostaddr,
-    .print = print_hostaddr,
-};
-
 static Property da_properties[] =
 {
-    DEFINE_PROP("host", AssignedDevice, host, qdev_prop_hostaddr, PCIHostDevice),
+    DEFINE_PROP_PCI_HOST_DEVADDR("host", AssignedDevice, host),
     DEFINE_PROP_BIT("prefer_msi", AssignedDevice, features,
                     ASSIGNED_DEVICE_PREFER_MSI_BIT, false),
     DEFINE_PROP_BIT("share_intx", AssignedDevice, features,
@@ -1907,7 +1882,8 @@ static void assigned_dev_load_option_rom(AssignedDevice *dev)
 
     snprintf(rom_file, sizeof(rom_file),
              "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/rom",
-             dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func);
+             dev->host.domain, dev->host.bus, dev->host.slot,
+             dev->host.function);
 
     if (stat(rom_file, &st)) {
         return;
