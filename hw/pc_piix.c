@@ -353,6 +353,12 @@ static void pc_xen_hvm_init(ram_addr_t ram_size,
 }
 #endif
 
+#ifdef CONFIG_KVM_OPTIONS
+#define KVM_MACHINE_OPTIONS "accel=kvm"
+#else
+#define KVM_MACHINE_OPTIONS ""
+#endif
+
 static QEMUMachine pc_machine_v1_2 = {
     .name = "pc-1.2",
     .alias = "pc",
@@ -360,7 +366,7 @@ static QEMUMachine pc_machine_v1_2 = {
     .init = pc_init_pci,
     .max_cpus = 255,
     .is_default = 1,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
 };
 
 #define PC_COMPAT_1_1 \
@@ -387,6 +393,7 @@ static QEMUMachine pc_machine_v1_1 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_1,
         { /* end of list */ }
@@ -422,6 +429,7 @@ static QEMUMachine pc_machine_v1_0 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_1_0,
         { /* end of list */ }
@@ -437,6 +445,7 @@ static QEMUMachine pc_machine_v0_15 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_15,
         { /* end of list */ }
@@ -469,7 +478,7 @@ static QEMUMachine pc_machine_v0_14 = {
     .desc = "Standard PC",
     .init = pc_init_pci,
     .max_cpus = 255,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_14, 
         {
@@ -503,7 +512,7 @@ static QEMUMachine pc_machine_v0_13 = {
     .desc = "Standard PC",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_13,
         {
@@ -541,7 +550,7 @@ static QEMUMachine pc_machine_v0_12 = {
     .desc = "Standard PC",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_12,
         {
@@ -575,7 +584,7 @@ static QEMUMachine pc_machine_v0_11 = {
     .desc = "Standard PC, qemu 0.11",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_11,
         {
@@ -597,7 +606,7 @@ static QEMUMachine pc_machine_v0_10 = {
     .desc = "Standard PC, qemu 0.10",
     .init = pc_init_pci_no_kvmclock,
     .max_cpus = 255,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         PC_COMPAT_0_11,
         {
@@ -631,7 +640,7 @@ static QEMUMachine isapc_machine = {
     .desc = "ISA-only PC",
     .init = pc_init_isa,
     .max_cpus = 1,
-    .default_machine_opts = "accel=kvm,kernel_irqchip=on",
+    .default_machine_opts = KVM_MACHINE_OPTIONS,
     .compat_props = (GlobalProperty[]) {
         {
             .driver   = "pc-sysfw",
