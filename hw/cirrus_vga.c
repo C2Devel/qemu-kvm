@@ -43,7 +43,7 @@
 //#define DEBUG_CIRRUS
 //#define DEBUG_BITBLT
 
-#define VGA_RAM_SIZE (8192 * 1024)
+#define VGA_RAM_SIZE (16384 * 1024)
 
 /***************************************
  *

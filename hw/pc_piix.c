@@ -367,19 +367,19 @@ static QEMUMachine pc_machine_v1_2 = {
         {\
             .driver   = "VGA",\
             .property = "vgamem_mb",\
-            .value    = stringify(8),\
+            .value    = stringify(16),\
         },{\
             .driver   = "vmware-svga",\
             .property = "vgamem_mb",\
-            .value    = stringify(8),\
+            .value    = stringify(16),\
         },{\
             .driver   = "qxl-vga",\
             .property = "vgamem_mb",\
-            .value    = stringify(8),\
+            .value    = stringify(16),\
         },{\
             .driver   = "qxl",\
             .property = "vgamem_mb",\
-            .value    = stringify(8),\
+            .value    = stringify(16),\
         }
 
 static QEMUMachine pc_machine_v1_1 = {
