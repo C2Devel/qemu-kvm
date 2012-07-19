@@ -141,6 +141,10 @@ ecc_mem_readl_ecr1(uint32_t ret) "Read event count 2 %08x"
 ecc_diag_mem_writeb(uint64_t addr, uint32_t val) "Write diagnostic %"PRId64" = %02x"
 ecc_diag_mem_readb(uint64_t addr, uint32_t ret) "Read diagnostic %"PRId64"= %02x"
 
+# hw/hd-geometry.c
+hd_geometry_lchs_guess(void *bs, int cyls, int heads, int secs) "bs %p LCHS %d %d %d"
+hd_geometry_guess(void *bs, uint32_t cyls, uint32_t heads, uint32_t secs, int trans) "bs %p CHS %u %u %u trans %d"
+
 # hw/jazz-led.c
 jazz_led_read(uint64_t addr, uint8_t val) "read addr=0x%"PRIx64": 0x%x"
 jazz_led_write(uint64_t addr, uint8_t new) "write addr=0x%"PRIx64": 0x%x"
@@ -258,7 +262,7 @@ usb_ehci_port_reset(uint32_t port, int enable) "reset port #%d - %d"
 usb_ehci_data(int rw, uint32_t cpage, uint32_t offset, uint32_t addr, uint32_t len, uint32_t bufpos) "write %d, cpage %d, offset 0x%03x, addr 0x%08x, len %d, bufpos %d"
 usb_ehci_queue_action(void *q, const char *action) "q %p: %s"
 usb_ehci_packet_action(void *q, void *p, const char *action) "q %p p %p: %s"
-usb_ehci_interrupt(uint32_t level, uint32_t sts, uint32_t mask) "level %d, sts 0x%x, mask 0x%x"
+usb_ehci_irq(uint32_t level, uint32_t frindex, uint32_t sts, uint32_t mask) "level %d, frindex 0x%04x, sts 0x%x, mask 0x%x"
 
 # hw/usb/hcd-uhci.c
 usb_uhci_reset(void) "=== RESET ==="
@@ -346,6 +350,20 @@ usb_hub_set_port_feature(int addr, int nr, const char *f) "dev %d, port %d, feat
 usb_hub_clear_port_feature(int addr, int nr, const char *f) "dev %d, port %d, feature %s"
 usb_hub_attach(int addr, int nr) "dev %d, port %d"
 usb_hub_detach(int addr, int nr) "dev %d, port %d"
+
+# hw/usb/dev-uas.c
+usb_uas_reset(int addr) "dev %d"
+usb_uas_command(int addr, uint16_t tag, int lun, uint32_t lun64_1, uint32_t lun64_2) "dev %d, tag 0x%x, lun %d, lun64 %08x-%08x"
+usb_uas_response(int addr, uint16_t tag, uint8_t code) "dev %d, tag 0x%x, code 0x%x"
+usb_uas_sense(int addr, uint16_t tag, uint8_t status) "dev %d, tag 0x%x, status 0x%x"
+usb_uas_read_ready(int addr, uint16_t tag) "dev %d, tag 0x%x"
+usb_uas_write_ready(int addr, uint16_t tag) "dev %d, tag 0x%x"
+usb_uas_xfer_data(int addr, uint16_t tag, uint32_t copy, uint32_t uoff, uint32_t usize, uint32_t soff, uint32_t ssize) "dev %d, tag 0x%x, copy %d, usb-pkt %d/%d, scsi-buf %d/%d"
+usb_uas_scsi_data(int addr, uint16_t tag, uint32_t bytes) "dev %d, tag 0x%x, bytes %d"
+usb_uas_scsi_complete(int addr, uint16_t tag, uint32_t status, uint32_t resid) "dev %d, tag 0x%x, status 0x%x, residue %d"
+usb_uas_tmf_abort_task(int addr, uint16_t tag, uint16_t task_tag) "dev %d, tag 0x%x, task-tag 0x%x"
+usb_uas_tmf_logical_unit_reset(int addr, uint16_t tag, int lun) "dev %d, tag 0x%x, lun %d"
+usb_uas_tmf_unsupported(int addr, uint16_t tag, uint32_t function) "dev %d, tag 0x%x, function 0x%x"
 
 # hw/usb/host-linux.c
 usb_host_open_started(int bus, int addr) "dev %d:%d"
@@ -726,6 +744,9 @@ iscsi_aio_read16_cb(void *iscsi, int status, void *acb, int canceled) "iscsi %p 
 iscsi_aio_readv(void *iscsi, int64_t sector_num, int nb_sectors, void *opaque, void *acb) "iscsi %p sector_num %"PRId64" nb_sectors %d opaque %p acb %p"
 
 # hw/esp.c
+esp_error_fifo_overrun(void) "FIFO overrun"
+esp_error_unhandled_command(uint32_t val) "unhandled command (%2.2x)"
+esp_error_invalid_write(uint32_t val, uint32_t addr) "invalid write of 0x%02x at [0x%x]"
 esp_raise_irq(void) "Raise IRQ"
 esp_lower_irq(void) "Lower IRQ"
 esp_dma_enable(void) "Raise enable"
@@ -751,10 +772,24 @@ esp_mem_writeb_cmd_iccs(uint32_t val) "Initiator Command Complete Sequence (%2.2
 esp_mem_writeb_cmd_msgacc(uint32_t val) "Message Accepted (%2.2x)"
 esp_mem_writeb_cmd_pad(uint32_t val) "Transfer padding (%2.2x)"
 esp_mem_writeb_cmd_satn(uint32_t val) "Set ATN (%2.2x)"
+esp_mem_writeb_cmd_rstatn(uint32_t val) "Reset ATN (%2.2x)"
 esp_mem_writeb_cmd_sel(uint32_t val) "Select without ATN (%2.2x)"
 esp_mem_writeb_cmd_selatn(uint32_t val) "Select with ATN (%2.2x)"
 esp_mem_writeb_cmd_selatns(uint32_t val) "Select with ATN & stop (%2.2x)"
 esp_mem_writeb_cmd_ensel(uint32_t val) "Enable selection (%2.2x)"
+esp_mem_writeb_cmd_dissel(uint32_t val) "Disable selection (%2.2x)"
+esp_pci_error_invalid_dma_direction(void) "invalid DMA transfer direction"
+esp_pci_error_invalid_read(uint32_t reg) "read access outside bounds (reg 0x%x)"
+esp_pci_error_invalid_write(uint32_t reg) "write access outside bounds (reg 0x%x)"
+esp_pci_error_invalid_write_dma(uint32_t val, uint32_t addr) "invalid write of 0x%02x at [0x%x]"
+esp_pci_dma_read(uint32_t saddr, uint32_t reg) "reg[%d]: 0x%8.8x"
+esp_pci_dma_write(uint32_t saddr, uint32_t reg, uint32_t val) "reg[%d]: 0x%8.8x -> 0x%8.8x"
+esp_pci_dma_idle(uint32_t val) "IDLE (%.8x)"
+esp_pci_dma_blast(uint32_t val) "BLAST (%.8x)"
+esp_pci_dma_abort(uint32_t val) "ABORT (%.8x)"
+esp_pci_dma_start(uint32_t val) "START (%.8x)"
+esp_pci_sbac_read(uint32_t reg) "sbac: 0x%8.8x"
+esp_pci_sbac_write(uint32_t reg, uint32_t val) "sbac: 0x%8.8x -> 0x%8.8x"
 
 # monitor.c
 handle_qmp_command(void *mon, const char *cmd_name) "mon %p cmd_name \"%s\""
