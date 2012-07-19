@@ -6,7 +6,7 @@ BUILD_DIR=$(CURDIR)
 # All following code might depend on configuration variables
 ifneq ($(wildcard config-host.mak),)
 # Put the all: rule here so that config-host.mak can contain dependencies.
-all: build-all
+all:
 include config-host.mak
 include $(SRC_PATH)/rules.mak
 config-host.mak: $(SRC_PATH)/configure
@@ -31,7 +31,7 @@ Makefile: ;
 configure: ;
 
 .PHONY: all clean cscope distclean dvi html info install install-doc \
-	pdf recurse-all speed tar tarbin test build-all
+	pdf recurse-all speed test dist
 
 $(call set-vpath, $(SRC_PATH))
 
@@ -82,7 +82,7 @@ defconfig:
 
 -include config-all-devices.mak
 
-build-all: $(DOCS) $(TOOLS) $(HELPERS-y) recurse-all
+all: $(DOCS) $(TOOLS) $(HELPERS-y) recurse-all
 
 config-host.h: config-host.h-timestamp
 config-host.h-timestamp: config-host.mak
@@ -232,6 +232,13 @@ clean:
 	if test -d $$d; then $(MAKE) -C $$d $@ || exit 1; fi; \
 	rm -f $$d/qemu-options.def; \
         done
+
+VERSION ?= $(shell cat VERSION)
+
+dist: qemu-$(VERSION).tar.bz2
+
+qemu-%.tar.bz2:
+	$(SRC_PATH)/scripts/make-release "$(SRC_PATH)" "$(patsubst qemu-%.tar.bz2,%,$@)"
 
 distclean: clean
 	rm -f config-host.mak config-host.h* config-host.ld $(DOCS) qemu-options.texi qemu-img-cmds.texi qemu-monitor.texi
@@ -390,16 +397,6 @@ pdf: qemu-doc.pdf qemu-tech.pdf
 qemu-doc.dvi qemu-doc.html qemu-doc.info qemu-doc.pdf: \
 	qemu-img.texi qemu-nbd.texi qemu-options.texi \
 	qemu-monitor.texi qemu-img-cmds.texi
-
-VERSION ?= $(shell cat VERSION)
-FILE = qemu-$(VERSION)
-
-# tar release (use 'make -k tar' on a checkouted tree)
-tar:
-	rm -rf /tmp/$(FILE)
-	cp -r . /tmp/$(FILE)
-	cd /tmp && tar zcvf ~/$(FILE).tar.gz $(FILE) --exclude CVS --exclude .git --exclude .svn
-	rm -rf /tmp/$(FILE)
 
 # Add a dependency on the generated files, so that they are always
 # rebuilt before other object files

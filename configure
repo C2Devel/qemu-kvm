@@ -90,8 +90,8 @@ static="no"
 sparc_cpu=""
 cross_prefix=""
 audio_drv_list=""
-audio_card_list="ac97 es1370 sb16 hda"
-audio_possible_cards="ac97 es1370 sb16 cs4231a adlib gus hda"
+audio_card_list="ac97 es1370 sb16 hda pcspk"
+audio_possible_cards="ac97 es1370 sb16 cs4231a adlib gus hda pcspk"
 block_drv_whitelist=""
 host_cc="gcc"
 helper_cflags=""
@@ -1156,10 +1156,26 @@ else
     exit 1
 fi
 
+# Consult white-list to determine whether to enable werror
+# by default.  Only enable by default for git builds
+z_version=`cut -f3 -d. $source_path/VERSION`
+
+if test -z "$werror" ; then
+    if test "$z_version" = "50" -a \
+        "$linux" = "yes" ; then
+        werror="yes"
+    else
+        werror="no"
+    fi
+fi
+
 gcc_flags="-Wold-style-declaration -Wold-style-definition -Wtype-limits"
 gcc_flags="-Wformat-security -Wformat-y2k -Winit-self -Wignored-qualifiers $gcc_flags"
 gcc_flags="-Wmissing-include-dirs -Wempty-body -Wnested-externs $gcc_flags"
 gcc_flags="-fstack-protector-all -Wendif-labels $gcc_flags"
+if test "$werror" = "yes" ; then
+    gcc_flags="-Werror $gcc_flags"
+fi
 cat > $TMPC << EOF
 int main(void) { return 0; }
 EOF
@@ -2590,7 +2606,7 @@ if test "$libiscsi" != "no" ; then
 #include <iscsi/iscsi.h>
 int main(void) { iscsi_unmap_sync(NULL,0,0,0,NULL,0); return 0; }
 EOF
-  if compile_prog "-Werror" "-liscsi" ; then
+  if compile_prog "" "-liscsi" ; then
     libiscsi="yes"
     LIBS="$LIBS -liscsi"
   else
@@ -2872,6 +2888,22 @@ if compile_prog "" "" ; then
 fi
 
 ########################################
+# check if we have valgrind/valgrind.h
+
+valgrind_h=no
+cat > $TMPC << EOF
+#include <valgrind/valgrind.h>
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+int main(void) {
+  VALGRIND_STACK_DEREGISTER(0);
+  return 0;
+}
+EOF
+if compile_prog "" "" ; then
+    valgrind_h=yes
+fi
+
+########################################
 # check if environ is declared
 
 has_environ=no
@@ -2894,19 +2926,6 @@ if test "$debug" = "no" ; then
   CFLAGS="-O2 -D_FORTIFY_SOURCE=2 $CFLAGS"
 fi
 
-# Consult white-list to determine whether to enable werror
-# by default.  Only enable by default for git builds
-z_version=`cut -f3 -d. $source_path/VERSION`
-
-if test -z "$werror" ; then
-    if test "$z_version" = "50" -a \
-        "$linux" = "yes" ; then
-        werror="yes"
-    else
-        werror="no"
-    fi
-fi
-
 # Disable zero malloc errors for official releases unless explicitly told to
 # enable/disable
 if test -z "$zero_malloc" ; then
@@ -2915,10 +2934,6 @@ if test -z "$zero_malloc" ; then
     else
 	zero_malloc="yes"
     fi
-fi
-
-if test "$werror" = "yes" ; then
-    QEMU_CFLAGS="-Werror $QEMU_CFLAGS"
 fi
 
 if test "$solaris" = "no" ; then
@@ -3398,6 +3413,10 @@ if test "$linux_magic_h" = "yes" ; then
   echo "CONFIG_LINUX_MAGIC_H=y" >> $config_host_mak
 fi
 
+if test "$valgrind_h" = "yes" ; then
+  echo "CONFIG_VALGRIND_H=y" >> $config_host_mak
+fi
+
 if test "$has_environ" = "yes" ; then
   echo "CONFIG_HAS_ENVIRON=y" >> $config_host_mak
 fi
@@ -3589,7 +3608,7 @@ case "$target_arch2" in
     bflt="yes"
     target_nptl="yes"
     gdb_xml_files="arm-core.xml arm-vfp.xml arm-vfp3.xml arm-neon.xml"
-    target_phys_bits=32
+    target_phys_bits=64
     target_llong_alignment=4
     target_libs_softmmu="$fdt_libs"
   ;;

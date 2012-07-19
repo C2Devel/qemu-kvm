@@ -2536,26 +2536,14 @@ ram_addr_t qemu_ram_alloc_from_ptr(ram_addr_t size, void *host,
             exit(1);
 #endif
         } else {
-#if defined(TARGET_S390X) && defined(CONFIG_KVM)
-            /* S390 KVM requires the topmost vma of the RAM to be smaller than
-               an system defined value, which is at least 256GB. Larger systems
-               have larger values. We put the guest between the end of data
-               segment (system break) and this value. We use 32GB as a base to
-               have enough room for the system break to grow. */
-            new_block->host = mmap((void*)0x800000000, size,
-                                   PROT_EXEC|PROT_READ|PROT_WRITE,
-                                   MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-            if (new_block->host == MAP_FAILED) {
-                fprintf(stderr, "Allocating RAM failed\n");
-                abort();
-            }
-#else
             if (xen_enabled()) {
                 xen_ram_alloc(new_block->offset, size, mr);
+            } else if (kvm_enabled()) {
+                /* some s390/kvm configurations have special constraints */
+                new_block->host = kvm_vmalloc(size);
             } else {
                 new_block->host = qemu_vmalloc(size);
             }
-#endif
             qemu_madvise(new_block->host, size, QEMU_MADV_MERGEABLE);
         }
     }
@@ -3222,13 +3210,13 @@ static void core_log_global_stop(MemoryListener *listener)
 
 static void core_eventfd_add(MemoryListener *listener,
                              MemoryRegionSection *section,
-                             bool match_data, uint64_t data, int fd)
+                             bool match_data, uint64_t data, EventNotifier *e)
 {
 }
 
 static void core_eventfd_del(MemoryListener *listener,
                              MemoryRegionSection *section,
-                             bool match_data, uint64_t data, int fd)
+                             bool match_data, uint64_t data, EventNotifier *e)
 {
 }
 
@@ -3288,13 +3276,13 @@ static void io_log_global_stop(MemoryListener *listener)
 
 static void io_eventfd_add(MemoryListener *listener,
                            MemoryRegionSection *section,
-                           bool match_data, uint64_t data, int fd)
+                           bool match_data, uint64_t data, EventNotifier *e)
 {
 }
 
 static void io_eventfd_del(MemoryListener *listener,
                            MemoryRegionSection *section,
-                           bool match_data, uint64_t data, int fd)
+                           bool match_data, uint64_t data, EventNotifier *e)
 {
 }
 

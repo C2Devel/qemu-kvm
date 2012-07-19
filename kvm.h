@@ -71,6 +71,8 @@ int kvm_init_vcpu(CPUArchState *env);
 int kvm_cpu_exec(CPUArchState *env);
 
 #if !defined(CONFIG_USER_ONLY)
+void *kvm_vmalloc(ram_addr_t size);
+void *kvm_arch_vmalloc(ram_addr_t size);
 void kvm_setup_guest_memory(void *start, size_t size);
 
 int kvm_coalesce_mmio_region(target_phys_addr_t start, ram_addr_t size);
@@ -221,6 +223,8 @@ void kvm_irqchip_release_virq(KVMState *s, int virq);
 
 int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq);
 int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq);
+int kvm_irqchip_add_irq_notifier(KVMState *s, EventNotifier *n, int virq);
+int kvm_irqchip_remove_irq_notifier(KVMState *s, EventNotifier *n, int virq);
 
 int kvm_get_irq_route_gsi(void);
 
