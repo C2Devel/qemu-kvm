@@ -250,8 +250,6 @@ static int i440fx_initfn(PCIDevice *dev)
     return 0;
 }
 
-static PIIX3State *piix3_dev;
-
 static PCIBus *i440fx_common_init(const char *device_name,
                                   PCII440FXState **pi440fx_state,
                                   int *piix3_devfn,
@@ -331,7 +329,6 @@ static PCIBus *i440fx_common_init(const char *device_name,
         ram_size = 255;
     (*pi440fx_state)->dev.config[0x57]=ram_size;
 
-    piix3_dev = piix3;
     i440fx_update_memory_mappings(f);
 
     return b;

@@ -149,9 +149,6 @@ void piix4_smbus_register_device(SMBusDevice *dev, uint8_t addr);
 extern int no_hpet;
 
 /* piix_pci.c */
-/* config space register for IRQ routing */
-#define PIIX_CONFIG_IRQ_ROUTE 0x60
-
 struct PCII440FXState;
 typedef struct PCII440FXState PCII440FXState;
 

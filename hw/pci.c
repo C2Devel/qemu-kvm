@@ -29,9 +29,6 @@
 #include "net.h"
 #include "sysemu.h"
 #include "loader.h"
-#include "hw/pc.h"
-#include "kvm.h"
-#include "device-assignment.h"
 #include "range.h"
 #include "qmp-commands.h"
 #include "msi.h"
@@ -1048,14 +1045,6 @@ void pci_default_write_config(PCIDevice *d, uint32_t addr, uint32_t val, int l)
         d->config[addr + i] = (d->config[addr + i] & ~wmask) | (val & wmask);
         d->config[addr + i] &= ~(val & w1cmask); /* W1C: Write 1 to Clear */
     }
-
-#ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
-    if (kvm_enabled() && kvm_irqchip_in_kernel() &&
-        addr >= PIIX_CONFIG_IRQ_ROUTE &&
-	addr < PIIX_CONFIG_IRQ_ROUTE + 4)
-        assigned_dev_update_irqs();
-#endif /* CONFIG_KVM_DEVICE_ASSIGNMENT */
-
     if (ranges_overlap(addr, l, PCI_BASE_ADDRESS_0, 24) ||
         ranges_overlap(addr, l, PCI_ROM_ADDRESS, 4) ||
         ranges_overlap(addr, l, PCI_ROM_ADDRESS1, 4) ||

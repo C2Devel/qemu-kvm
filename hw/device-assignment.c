@@ -36,7 +36,6 @@
 #include "pc.h"
 #include "qemu-error.h"
 #include "console.h"
-#include "device-assignment.h"
 #include "loader.h"
 #include "monitor.h"
 #include "range.h"
@@ -142,6 +141,8 @@ typedef struct AssignedDevice {
     int32_t bootindex;
     QLIST_ENTRY(AssignedDevice) next;
 } AssignedDevice;
+
+static void assigned_dev_update_irq_routing(PCIDevice *dev);
 
 static void assigned_dev_load_option_rom(AssignedDevice *dev);
 
@@ -869,8 +870,13 @@ static int assign_irq(AssignedDevice *dev)
     int r = 0;
 
     /* Interrupt PIN 0 means don't use INTx */
-    if (assigned_dev_pci_read_byte(&dev->dev, PCI_INTERRUPT_PIN) == 0)
+    if (assigned_dev_pci_read_byte(&dev->dev, PCI_INTERRUPT_PIN) == 0) {
+        pci_device_set_intx_routing_notifier(&dev->dev, NULL);
         return 0;
+    }
+
+    pci_device_set_intx_routing_notifier(&dev->dev,
+                                         assigned_dev_update_irq_routing);
 
     intx_route = pci_device_route_intx_to_irq(&dev->dev, 0);
     assert(intx_route.mode != PCI_INTX_INVERTED);
@@ -944,43 +950,19 @@ static void deassign_device(AssignedDevice *dev)
                 dev->dev.qdev.id, strerror(-r));
 }
 
-#if 0
-AssignedDevInfo *get_assigned_device(int pcibus, int slot)
-{
-    AssignedDevice *assigned_dev = NULL;
-    AssignedDevInfo *adev = NULL;
-
-    QLIST_FOREACH(adev, &adev_head, next) {
-        assigned_dev = adev->assigned_dev;
-        if (pci_bus_num(assigned_dev->dev.bus) == pcibus &&
-            PCI_SLOT(assigned_dev->dev.devfn) == slot)
-            return adev;
-    }
-
-    return NULL;
-}
-#endif
-
 /* The pci config space got updated. Check if irq numbers have changed
  * for our devices
  */
-void assigned_dev_update_irqs(void)
+static void assigned_dev_update_irq_routing(PCIDevice *dev)
 {
-    AssignedDevice *dev, *next;
+    AssignedDevice *assigned_dev = DO_UPCAST(AssignedDevice, dev, dev);
     Error *err = NULL;
     int r;
 
-    dev = QLIST_FIRST(&devs);
-    while (dev) {
-        next = QLIST_NEXT(dev, next);
-        if (dev->irq_requested_type & KVM_DEV_IRQ_HOST_INTX) {
-            r = assign_irq(dev);
-            if (r < 0) {
-                qdev_unplug(&dev->dev.qdev, &err);
-                assert(!err);
-            }
-        }
-        dev = next;
+    r = assign_irq(assigned_dev);
+    if (r < 0) {
+        qdev_unplug(&dev->qdev, &err);
+        assert(!err);
     }
 }
 
@@ -1009,6 +991,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
             perror("assigned_dev_update_msi: deassign irq");
 
         assigned_dev->irq_requested_type = 0;
+        pci_device_set_intx_routing_notifier(pci_dev, NULL);
     }
 
     if (ctrl_byte & PCI_MSI_FLAGS_ENABLE) {
@@ -1152,6 +1135,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
             perror("assigned_dev_update_msix: deassign irq");
 
         assigned_dev->irq_requested_type = 0;
+        pci_device_set_intx_routing_notifier(pci_dev, NULL);
     }
 
     if (ctrl_word & PCI_MSIX_FLAGS_ENABLE) {
