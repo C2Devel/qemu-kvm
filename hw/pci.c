@@ -1089,10 +1089,6 @@ static void pci_set_irq(void *opaque, int irq_num, int level)
     pci_change_irq_level(pci_dev, irq_num, change);
 }
 
-int pci_map_irq(PCIDevice *pci_dev, int pin)
-{
-    return pci_dev->bus->map_irq(pci_dev, pin);
-}
 /* Special hooks used by device assignment */
 void pci_bus_set_route_irq_fn(PCIBus *bus, pci_route_irq_fn route_intx_to_irq)
 {

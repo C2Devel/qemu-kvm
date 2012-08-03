@@ -115,7 +115,7 @@ typedef struct AssignedDevice {
     AssignedDevRegion v_addrs[PCI_NUM_REGIONS - 1];
     PCIDevRegions real_device;
     int run;
-    int girq;
+    PCIINTxRoute intx_route;
     uint16_t h_segnr;
     uint8_t h_busnr;
     uint8_t h_devfn;
@@ -865,21 +865,24 @@ static int assign_device(AssignedDevice *dev)
 static int assign_irq(AssignedDevice *dev)
 {
     struct kvm_assigned_irq assigned_irq_data;
-    int irq, r = 0;
+    PCIINTxRoute intx_route;
+    int r = 0;
 
     /* Interrupt PIN 0 means don't use INTx */
     if (assigned_dev_pci_read_byte(&dev->dev, PCI_INTERRUPT_PIN) == 0)
         return 0;
 
-    irq = pci_map_irq(&dev->dev, dev->intpin);
-    irq = piix_get_irq(irq);
+    intx_route = pci_device_route_intx_to_irq(&dev->dev, 0);
+    assert(intx_route.mode != PCI_INTX_INVERTED);
 
-    if (dev->girq == irq)
+    if (dev->intx_route.mode == intx_route.mode &&
+        dev->intx_route.irq == intx_route.irq) {
         return r;
+    }
 
     memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
     assigned_irq_data.assigned_dev_id = calc_assigned_dev_id(dev);
-    assigned_irq_data.guest_irq = irq;
+    assigned_irq_data.guest_irq = intx_route.irq;
     if (dev->irq_requested_type) {
         assigned_irq_data.flags = dev->irq_requested_type;
         r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
@@ -887,6 +890,11 @@ static int assign_irq(AssignedDevice *dev)
             perror("assign_irq: deassign");
         }
         dev->irq_requested_type = 0;
+    }
+
+    if (intx_route.mode == PCI_INTX_DISABLED) {
+        dev->intx_route = intx_route;
+        return 0;
     }
 
 retry:
@@ -917,7 +925,7 @@ retry:
         return r;
     }
 
-    dev->girq = irq;
+    dev->intx_route = intx_route;
     dev->irq_requested_type = assigned_irq_data.flags;
     return r;
 }
@@ -1029,7 +1037,8 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
             perror("assigned_dev_enable_msi: assign irq");
         }
 
-        assigned_dev->girq = -1;
+        assigned_dev->intx_route.mode = PCI_INTX_DISABLED;
+        assigned_dev->intx_route.irq = -1;
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
     } else {
         assign_irq(assigned_dev);
@@ -1160,7 +1169,8 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
                 return;
             }
         }
-        assigned_dev->girq = -1;
+        assigned_dev->intx_route.mode = PCI_INTX_DISABLED;
+        assigned_dev->intx_route.irq = -1;
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
     } else {
         assign_irq(assigned_dev);
@@ -1784,7 +1794,8 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     e_intx = dev->dev.config[0x3d] - 1;
     dev->intpin = e_intx;
     dev->run = 0;
-    dev->girq = -1;
+    dev->intx_route.mode = PCI_INTX_DISABLED;
+    dev->intx_route.irq = -1;
     dev->h_segnr = dev->host.domain;
     dev->h_busnr = dev->host.bus;
     dev->h_devfn = PCI_DEVFN(dev->host.slot, dev->host.function);

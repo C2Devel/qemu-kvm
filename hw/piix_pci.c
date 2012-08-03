@@ -435,13 +435,6 @@ static void piix3_write_config(PCIDevice *dev,
     }
 }
 
-int piix_get_irq(int pin)
-{
-    if (piix3_dev)
-        return piix3_dev->dev.config[0x60+pin];
-    return 0;
-}
-
 static void piix3_write_config_xen(PCIDevice *dev,
                                uint32_t address, uint32_t val, int len)
 {
