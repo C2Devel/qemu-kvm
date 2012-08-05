@@ -2846,13 +2846,11 @@ void cpu_loop(CPUAlphaState *env)
                     break;
                 }
                 /* Syscall writes 0 to V0 to bypass error check, similar
-                   to how this is handled internal to Linux kernel.  */
-                if (env->ir[IR_V0] == 0) {
-                    env->ir[IR_V0] = sysret;
-                } else {
-                    env->ir[IR_V0] = (sysret < 0 ? -sysret : sysret);
-                    env->ir[IR_A3] = (sysret < 0);
-                }
+                   to how this is handled internal to Linux kernel.
+                   (Ab)use trapnr temporarily as boolean indicating error.  */
+                trapnr = (env->ir[IR_V0] != 0 && sysret < 0);
+                env->ir[IR_V0] = (trapnr ? -sysret : sysret);
+                env->ir[IR_A3] = trapnr;
                 break;
             case 0x86:
                 /* IMB */
@@ -2920,6 +2918,9 @@ void cpu_loop(CPUAlphaState *env)
         case EXCP_STL_C:
         case EXCP_STQ_C:
             do_store_exclusive(env, env->error_code, trapnr - EXCP_STL_C);
+            break;
+        case EXCP_INTERRUPT:
+            /* Just indicate that signals should be handled asap.  */
             break;
         default:
             printf ("Unhandled trap: 0x%x\n", trapnr);
@@ -3140,7 +3141,7 @@ static void handle_arg_uname(const char *arg)
 static void handle_arg_cpu(const char *arg)
 {
     cpu_model = strdup(arg);
-    if (cpu_model == NULL || strcmp(cpu_model, "?") == 0) {
+    if (cpu_model == NULL || is_help_option(cpu_model)) {
         /* XXX: implement xxx_cpu_list for targets that still miss it */
 #if defined(cpu_list_id)
         cpu_list_id(stdout, &fprintf, "");
@@ -3231,7 +3232,7 @@ struct qemu_argument arg_table[] = {
     {"s",          "QEMU_STACK_SIZE",  true,  handle_arg_stack_size,
      "size",       "set the stack size to 'size' bytes"},
     {"cpu",        "QEMU_CPU",         true,  handle_arg_cpu,
-     "model",      "select CPU (-cpu ? for list)"},
+     "model",      "select CPU (-cpu help for list)"},
     {"E",          "QEMU_SET_ENV",     true,  handle_arg_set_env,
      "var=value",  "sets targets environment variable (see below)"},
     {"U",          "QEMU_UNSET_ENV",   true,  handle_arg_unset_env,
