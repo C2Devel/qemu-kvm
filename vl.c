@@ -159,6 +159,7 @@ int main(int argc, char **argv)
 #include "qemu-queue.h"
 #include "cpus.h"
 #include "arch_init.h"
+#include "osdep.h"
 
 #include "ui/qemu-spice.h"
 
@@ -2086,7 +2087,7 @@ static QEMUMachine *machine_parse(const char *name)
         printf("%-20s %s%s\n", m->name, m->desc,
                m->is_default ? " (default)" : "");
     }
-    exit(!name || *name != '?');
+    exit(!name || !is_help_option(name));
 }
 
 static int tcg_init(void)
@@ -3233,6 +3234,9 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_qtest_log:
                 qtest_log = optarg;
                 break;
+            case QEMU_OPTION_enablefips:
+                fips_set_state(true);
+                break;
             default:
                 os_parse_cmd_args(popt->index, optarg);
             }
@@ -3251,7 +3255,7 @@ int main(int argc, char **argv, char **envp)
      */
     cpudef_init();
 
-    if (cpu_model && *cpu_model == '?') {
+    if (cpu_model && is_help_option(cpu_model)) {
         list_cpus(stdout, &fprintf, cpu_model);
         exit(0);
     }
