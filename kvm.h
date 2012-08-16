@@ -24,13 +24,26 @@
 
 extern int kvm_allowed;
 extern bool kvm_kernel_irqchip;
+extern bool kvm_async_interrupts_allowed;
 
 #if defined CONFIG_KVM || !defined NEED_CPU_H
 #define kvm_enabled()           (kvm_allowed)
 #define kvm_irqchip_in_kernel() (kvm_kernel_irqchip)
+
+/**
+ * kvm_async_interrupts_enabled:
+ *
+ * Returns: true if we can deliver interrupts to KVM
+ * asynchronously (ie by ioctl from any thread at any time)
+ * rather than having to do interrupt delivery synchronously
+ * (where the vcpu must be stopped at a suitable point first).
+ */
+#define kvm_async_interrupts_enabled() (kvm_async_interrupts_allowed)
+
 #else
 #define kvm_enabled()           (0)
 #define kvm_irqchip_in_kernel() (false)
+#define kvm_async_interrupts_enabled() (false)
 #endif
 
 struct kvm_run;
@@ -62,8 +75,6 @@ int kvm_has_pit_state2(void);
 int kvm_has_many_ioeventfds(void);
 int kvm_has_gsi_routing(void);
 int kvm_has_intx_set_mask(void);
-
-int kvm_allows_irq0_override(void);
 
 #ifdef NEED_CPU_H
 int kvm_init_vcpu(CPUArchState *env);
@@ -136,7 +147,7 @@ int kvm_arch_on_sigbus(int code, void *addr);
 
 void kvm_arch_init_irq_routing(KVMState *s);
 
-int kvm_irqchip_set_irq(KVMState *s, int irq, int level);
+int kvm_set_irq(KVMState *s, int irq, int level);
 int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg);
 
 void kvm_irqchip_add_irq_route(KVMState *s, int gsi, int irqchip, int pin);

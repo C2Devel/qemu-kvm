@@ -19,6 +19,7 @@
 
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
+bool kvm_async_interrupts_allowed;
 
 int kvm_init_vcpu(CPUArchState *env)
 {
@@ -69,11 +70,6 @@ int kvm_has_sync_mmu(void)
 int kvm_has_many_ioeventfds(void)
 {
     return 0;
-}
-
-int kvm_allows_irq0_override(void)
-{
-    return 1;
 }
 
 int kvm_has_pit_state2(void)
