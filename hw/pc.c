@@ -42,6 +42,7 @@
 #include "sysbus.h"
 #include "sysemu.h"
 #include "kvm.h"
+#include "kvm_i386.h"
 #include "xen.h"
 #include "blockdev.h"
 #include "hw/block-common.h"
@@ -50,6 +51,7 @@
 #include "exec-memory.h"
 #include "arch_init.h"
 #include "bitmap.h"
+#include "vga-pci.h"
 
 /* output Bochs bios info messages */
 //#define DEBUG_BIOS
