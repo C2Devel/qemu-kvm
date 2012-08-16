@@ -27,16 +27,40 @@ printf " '%s'" "$0" "$@" >> config.log
 echo >> config.log
 echo "#" >> config.log
 
+do_cc() {
+    # Run the compiler, capturing its output to the log.
+    echo $cc "$@" >> config.log
+    $cc "$@" >> config.log 2>&1 || return $?
+    # Test passed. If this is an --enable-werror build, rerun
+    # the test with -Werror and bail out if it fails. This
+    # makes warning-generating-errors in configure test code
+    # obvious to developers.
+    if test "$werror" != "yes"; then
+        return 0
+    fi
+    # Don't bother rerunning the compile if we were already using -Werror
+    case "$*" in
+        *-Werror*)
+           return 0
+        ;;
+    esac
+    echo $cc -Werror "$@" >> config.log
+    $cc -Werror "$@" >> config.log 2>&1 && return $?
+    echo "ERROR: configure test passed without -Werror but failed with -Werror."
+    echo "This is probably a bug in the configure script. The failing command"
+    echo "will be at the bottom of config.log."
+    echo "You can run configure with --disable-werror to bypass this check."
+    exit 1
+}
+
 compile_object() {
-  echo $cc $QEMU_CFLAGS -c -o $TMPO $TMPC >> config.log
-  $cc $QEMU_CFLAGS -c -o $TMPO $TMPC >> config.log 2>&1
+  do_cc $QEMU_CFLAGS -c -o $TMPO $TMPC
 }
 
 compile_prog() {
   local_cflags="$1"
   local_ldflags="$2"
-  echo $cc $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log
-  $cc $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags >> config.log 2>&1
+  do_cc $QEMU_CFLAGS $local_cflags -o $TMPE $TMPC $LDFLAGS $local_ldflags
 }
 
 # symbolically link $1 to $2.  Portable version of "ln -sf".
@@ -157,7 +181,6 @@ vhost_net="no"
 kvm="no"
 gprof="no"
 debug_tcg="no"
-debug_mon="no"
 debug="no"
 strip_opt="yes"
 tcg_interpreter="no"
@@ -644,14 +667,9 @@ for opt do
   ;;
   --disable-debug-tcg) debug_tcg="no"
   ;;
-  --enable-debug-mon) debug_mon="yes"
-  ;;
-  --disable-debug-mon) debug_mon="no"
-  ;;
   --enable-debug)
       # Enable debugging options that aren't excessively noisy
       debug_tcg="yes"
-      debug_mon="yes"
       debug="yes"
       strip_opt="no"
   ;;
@@ -950,6 +968,7 @@ sparc64-softmmu \
 s390x-softmmu \
 xtensa-softmmu \
 xtensaeb-softmmu \
+unicore32-softmmu \
 "
 fi
 # the following are Linux specific
@@ -2248,7 +2267,7 @@ cat > $TMPC <<EOF
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <unistd.h>
-int main(void) { return preadv == preadv; }
+int main(void) { return preadv(0, 0, 0, 0); }
 EOF
 preadv=no
 if compile_prog "" "" ; then
@@ -2544,7 +2563,7 @@ int main(void)
      * warning but not an error, and will proceed to fail the
      * qemu compile where we compile with -Werror.)
      */
-    return epoll_create1 == epoll_create1;
+    return (int)(uintptr_t)&epoll_create1;
 }
 EOF
 if compile_prog "" "" ; then
@@ -2937,7 +2956,7 @@ has_environ=no
 cat > $TMPC << EOF
 #include <unistd.h>
 int main(void) {
-    environ = environ;
+    environ = 0;
     return 0;
 }
 EOF
@@ -3056,7 +3075,6 @@ echo "host CPU          $cpu"
 echo "host big endian   $bigendian"
 echo "target list       $target_list"
 echo "tcg debug enabled $debug_tcg"
-echo "Mon debug enabled $debug_mon"
 echo "gprof enabled     $gprof"
 echo "sparse enabled    $sparse"
 echo "strip binaries    $strip_opt"
@@ -3149,9 +3167,6 @@ echo "CONFIG_QEMU_HELPERDIR=\"$prefix/libexec\"" >> $config_host_mak
 echo "ARCH=$ARCH" >> $config_host_mak
 if test "$debug_tcg" = "yes" ; then
   echo "CONFIG_DEBUG_TCG=y" >> $config_host_mak
-fi
-if test "$debug_mon" = "yes" ; then
-  echo "CONFIG_DEBUG_MONITOR=y" >> $config_host_mak
 fi
 if test "$debug" = "yes" ; then
   echo "CONFIG_DEBUG_EXEC=y" >> $config_host_mak
@@ -3781,7 +3796,7 @@ symlink "$source_path/Makefile.target" "$target_dir/Makefile"
 
 
 case "$target_arch2" in
-  alpha | or32 | sparc* | xtensa* | ppc*)
+  alpha | i386 | or32 | sparc* | x86_64 | xtensa* | ppc*)
     echo "CONFIG_TCG_PASS_AREG0=y" >> $config_target_mak
   ;;
 esac
@@ -3886,6 +3901,11 @@ if test "$target_user_only" = "yes" -a "$guest_base" = "yes"; then
 fi
 if test "$target_bsd_user" = "yes" ; then
   echo "CONFIG_BSD_USER=y" >> $config_target_mak
+fi
+
+# the static way of configuring available audio cards requires this workaround
+if test "$target_user_only" != "yes" && grep -q CONFIG_PCSPK $source_path/default-configs/$target.mak; then
+  echo "CONFIG_PCSPK=y" >> $config_target_mak
 fi
 
 # generate QEMU_CFLAGS/LDFLAGS for targets

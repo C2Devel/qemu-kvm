@@ -102,6 +102,9 @@ struct KVMState
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
 bool kvm_async_interrupts_allowed;
+bool kvm_irqfds_allowed;
+bool kvm_msi_via_irqfd_allowed;
+bool kvm_gsi_routing_allowed;
 
 static const KVMCapabilityInfo kvm_required_capabilites[] = {
     KVM_CAP_INFO(USER_MEMORY),
@@ -1098,7 +1101,7 @@ int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg)
     struct kvm_irq_routing_entry kroute;
     int virq;
 
-    if (!kvm_irqchip_in_kernel()) {
+    if (!kvm_gsi_routing_enabled()) {
         return -ENOSYS;
     }
 
@@ -1127,7 +1130,7 @@ static int kvm_irqchip_assign_irqfd(KVMState *s, int fd, int virq, bool assign)
         .flags = assign ? 0 : KVM_IRQFD_FLAG_DEASSIGN,
     };
 
-    if (!kvm_irqchip_in_kernel()) {
+    if (!kvm_irqfds_enabled()) {
         return -ENOSYS;
     }
 
