@@ -862,6 +862,16 @@ static int assign_device(AssignedDevice *dev)
     return r;
 }
 
+static bool check_irqchip_in_kernel(void)
+{
+    if (kvm_irqchip_in_kernel()) {
+        return true;
+    }
+    error_report("pci-assign: error: requires KVM with in-kernel irqchip "
+                 "enabled");
+    return false;
+}
+
 static int assign_intx(AssignedDevice *dev)
 {
     AssignedIRQType new_type;
@@ -873,6 +883,10 @@ static int assign_intx(AssignedDevice *dev)
     if (assigned_dev_pci_read_byte(&dev->dev, PCI_INTERRUPT_PIN) == 0) {
         pci_device_set_intx_routing_notifier(&dev->dev, NULL);
         return 0;
+    }
+
+    if (!check_irqchip_in_kernel()) {
+        return -ENOTSUP;
     }
 
     pci_device_set_intx_routing_notifier(&dev->dev,
@@ -1236,6 +1250,9 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
      * MSI capability is the 1st capability in capability config */
     pos = pci_find_cap_offset(pci_dev, PCI_CAP_ID_MSI, 0);
     if (pos != 0 && kvm_check_extension(kvm_state, KVM_CAP_ASSIGN_DEV_IRQ)) {
+        if (!check_irqchip_in_kernel()) {
+            return -ENOTSUP;
+        }
         dev->cap.available |= ASSIGNED_DEVICE_CAP_MSI;
         /* Only 32-bit/no-mask currently supported */
         ret = pci_add_capability(pci_dev, PCI_CAP_ID_MSI, pos, 10);
@@ -1262,6 +1279,9 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
         int bar_nr;
         uint32_t msix_table_entry;
 
+        if (!check_irqchip_in_kernel()) {
+            return -ENOTSUP;
+        }
         dev->cap.available |= ASSIGNED_DEVICE_CAP_MSIX;
         ret = pci_add_capability(pci_dev, PCI_CAP_ID_MSIX, pos, 12);
         if (ret < 0) {
