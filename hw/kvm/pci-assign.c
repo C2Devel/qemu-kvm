@@ -120,13 +120,10 @@ typedef struct AssignedDevice {
     uint32_t dev_id;
     uint32_t features;
     int intpin;
-    uint8_t debug_flags;
     AssignedDevRegion v_addrs[PCI_NUM_REGIONS - 1];
     PCIDevRegions real_device;
-    int run;
     PCIINTxRoute intx_route;
     AssignedIRQType assigned_irq_type;
-    int bound;
     struct {
 #define ASSIGNED_DEVICE_CAP_MSI (1 << 0)
 #define ASSIGNED_DEVICE_CAP_MSIX (1 << 1)
@@ -146,7 +143,6 @@ typedef struct AssignedDevice {
     MemoryRegion mmio;
     char *configfd_name;
     int32_t bootindex;
-    QLIST_ENTRY(AssignedDevice) next;
 } AssignedDevice;
 
 static void assigned_dev_update_irq_routing(PCIDevice *dev);
@@ -698,8 +694,6 @@ again:
     dev->region_number = r;
     return 0;
 }
-
-static QLIST_HEAD(, AssignedDevice) devs = QLIST_HEAD_INITIALIZER(devs);
 
 static void free_msi_virqs(AssignedDevice *dev)
 {
@@ -1767,7 +1761,6 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     /* handle interrupt routing */
     e_intx = dev->dev.config[0x3d] - 1;
     dev->intpin = e_intx;
-    dev->run = 0;
     dev->intx_route.mode = PCI_INTX_DISABLED;
     dev->intx_route.irq = -1;
 
@@ -1784,7 +1777,6 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     }
 
     assigned_dev_load_option_rom(dev);
-    QLIST_INSERT_HEAD(&devs, dev, next);
 
     add_boot_device_path(dev->bootindex, &pci_dev->qdev, NULL);
 
@@ -1801,7 +1793,6 @@ static void assigned_exitfn(struct PCIDevice *pci_dev)
 {
     AssignedDevice *dev = DO_UPCAST(AssignedDevice, dev, pci_dev);
 
-    QLIST_REMOVE(dev, next);
     deassign_device(dev);
     free_assigned_device(dev);
 }
