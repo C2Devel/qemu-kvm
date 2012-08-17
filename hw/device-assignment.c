@@ -106,6 +106,14 @@ typedef struct {
     uint32_t ctrl;
 } MSIXTableEntry;
 
+typedef enum AssignedIRQType {
+    ASSIGNED_IRQ_NONE = 0,
+    ASSIGNED_IRQ_INTX_HOST_INTX,
+    ASSIGNED_IRQ_INTX_HOST_MSI,
+    ASSIGNED_IRQ_MSI,
+    ASSIGNED_IRQ_MSIX
+} AssignedIRQType;
+
 typedef struct AssignedDevice {
     PCIDevice dev;
     PCIHostDeviceAddress host;
@@ -117,7 +125,7 @@ typedef struct AssignedDevice {
     PCIDevRegions real_device;
     int run;
     PCIINTxRoute intx_route;
-    int irq_requested_type;
+    AssignedIRQType assigned_irq_type;
     int bound;
     struct {
 #define ASSIGNED_DEVICE_CAP_MSI (1 << 0)
@@ -854,7 +862,9 @@ static int assign_device(AssignedDevice *dev)
 static int assign_intx(AssignedDevice *dev)
 {
     struct kvm_assigned_irq assigned_irq_data;
+    AssignedIRQType new_type;
     PCIINTxRoute intx_route;
+    bool intx_host_msi;
     int r = 0;
 
     /* Interrupt PIN 0 means don't use INTx */
@@ -874,17 +884,26 @@ static int assign_intx(AssignedDevice *dev)
         return r;
     }
 
-    memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
-    assigned_irq_data.assigned_dev_id = dev->dev_id;
-    assigned_irq_data.guest_irq = intx_route.irq;
-    if (dev->irq_requested_type) {
-        assigned_irq_data.flags = dev->irq_requested_type;
-        r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
-        if (r) {
-            perror("assign_intx: deassign");
-        }
-        dev->irq_requested_type = 0;
+    switch (dev->assigned_irq_type) {
+    case ASSIGNED_IRQ_INTX_HOST_INTX:
+    case ASSIGNED_IRQ_INTX_HOST_MSI:
+        intx_host_msi = dev->assigned_irq_type == ASSIGNED_IRQ_INTX_HOST_MSI;
+        r = kvm_device_intx_deassign(kvm_state, dev->dev_id, intx_host_msi);
+        break;
+    case ASSIGNED_IRQ_MSI:
+        r = kvm_device_msi_deassign(kvm_state, dev->dev_id);
+        break;
+    case ASSIGNED_IRQ_MSIX:
+        r = kvm_device_msix_deassign(kvm_state, dev->dev_id);
+        break;
+    default:
+        r = 0;
+        break;
     }
+    if (r) {
+        perror("assign_intx: deassign");
+    }
+    dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
 
     if (intx_route.mode == PCI_INTX_DISABLED) {
         dev->intx_route = intx_route;
@@ -892,12 +911,18 @@ static int assign_intx(AssignedDevice *dev)
     }
 
 retry:
+    memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
+    assigned_irq_data.assigned_dev_id = dev->dev_id;
+    assigned_irq_data.guest_irq = intx_route.irq;
     assigned_irq_data.flags = KVM_DEV_IRQ_GUEST_INTX;
     if (dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK &&
-        dev->cap.available & ASSIGNED_DEVICE_CAP_MSI)
+        dev->cap.available & ASSIGNED_DEVICE_CAP_MSI) {
         assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_MSI;
-    else
+        new_type = ASSIGNED_IRQ_INTX_HOST_MSI;
+    } else {
         assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_INTX;
+        new_type = ASSIGNED_IRQ_INTX_HOST_INTX;
+    }
 
     r = kvm_assign_irq(kvm_state, &assigned_irq_data);
     if (r < 0) {
@@ -920,7 +945,7 @@ retry:
     }
 
     dev->intx_route = intx_route;
-    dev->irq_requested_type = assigned_irq_data.flags;
+    dev->assigned_irq_type = new_type;
     return r;
 }
 
@@ -958,23 +983,19 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
                                      PCI_MSI_FLAGS);
     int r;
 
-    memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
-    assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
-
     /* Some guests gratuitously disable MSI even if they're not using it,
      * try to catch this by only deassigning irqs if the guest is using
      * MSI or intends to start. */
-    if ((assigned_dev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSI) ||
+    if (assigned_dev->assigned_irq_type == ASSIGNED_IRQ_MSI ||
         (ctrl_byte & PCI_MSI_FLAGS_ENABLE)) {
 
-        assigned_irq_data.flags = assigned_dev->irq_requested_type;
         free_dev_irq_entries(assigned_dev);
-        r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
+        r = kvm_device_msi_deassign(kvm_state, assigned_dev->dev_id);
         /* -ENXIO means no assigned irq */
         if (r && r != -ENXIO)
             perror("assigned_dev_update_msi: deassign irq");
 
-        assigned_dev->irq_requested_type = 0;
+        assigned_dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
         pci_device_set_intx_routing_notifier(pci_dev, NULL);
     }
 
@@ -998,6 +1019,8 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
         kvm_irqchip_commit_routes(kvm_state);
 	assigned_dev->irq_entries_nr = 1;
 
+        memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
+        assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
         assigned_irq_data.guest_irq = assigned_dev->entry->gsi;
 	assigned_irq_data.flags = KVM_DEV_IRQ_HOST_MSI | KVM_DEV_IRQ_GUEST_MSI;
         if (kvm_assign_irq(kvm_state, &assigned_irq_data) < 0) {
@@ -1006,7 +1029,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
 
         assigned_dev->intx_route.mode = PCI_INTX_DISABLED;
         assigned_dev->intx_route.irq = -1;
-        assigned_dev->irq_requested_type = assigned_irq_data.flags;
+        assigned_dev->assigned_irq_type = ASSIGNED_IRQ_MSI;
     } else {
         assign_intx(assigned_dev);
     }
@@ -1108,17 +1131,16 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
     /* Some guests gratuitously disable MSIX even if they're not using it,
      * try to catch this by only deassigning irqs if the guest is using
      * MSIX or intends to start. */
-    if ((assigned_dev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSIX) ||
+    if ((assigned_dev->assigned_irq_type == ASSIGNED_IRQ_MSIX) ||
         (ctrl_word & PCI_MSIX_FLAGS_ENABLE)) {
 
-        assigned_irq_data.flags = assigned_dev->irq_requested_type;
         free_dev_irq_entries(assigned_dev);
-        r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
+        r = kvm_device_msix_deassign(kvm_state, assigned_dev->dev_id);
         /* -ENXIO means no assigned irq */
         if (r && r != -ENXIO)
             perror("assigned_dev_update_msix: deassign irq");
 
-        assigned_dev->irq_requested_type = 0;
+        assigned_dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
         pci_device_set_intx_routing_notifier(pci_dev, NULL);
     }
 
@@ -1139,7 +1161,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
         }
         assigned_dev->intx_route.mode = PCI_INTX_DISABLED;
         assigned_dev->intx_route.irq = -1;
-        assigned_dev->irq_requested_type = assigned_irq_data.flags;
+        assigned_dev->assigned_irq_type = ASSIGNED_IRQ_MSIX;
     } else {
         assign_intx(assigned_dev);
     }
@@ -1655,14 +1677,14 @@ static void reset_assigned_device(DeviceState *dev)
      * enabled since it lives in MMIO space, which is about to get
      * disabled.
      */
-    if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSIX) {
+    if (adev->assigned_irq_type == ASSIGNED_IRQ_MSIX) {
         uint16_t ctrl = pci_get_word(pci_dev->config +
                                      pci_dev->msix_cap + PCI_MSIX_FLAGS);
 
         pci_set_word(pci_dev->config + pci_dev->msix_cap + PCI_MSIX_FLAGS,
                      ctrl & ~PCI_MSIX_FLAGS_ENABLE);
         assigned_dev_update_msix(pci_dev);
-    } else if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSI) {
+    } else if (adev->assigned_irq_type == ASSIGNED_IRQ_MSI) {
         uint8_t ctrl = pci_get_byte(pci_dev->config +
                                     pci_dev->msi_cap + PCI_MSI_FLAGS);
 

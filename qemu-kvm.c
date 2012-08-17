@@ -58,11 +58,6 @@ int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
 
     return kvm_old_assign_irq(s, assigned_irq);
 }
-
-int kvm_deassign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
-{
-    return kvm_vm_ioctl(s, KVM_DEASSIGN_DEV_IRQ, assigned_irq);
-}
 #else
 int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
 {

@@ -2090,3 +2090,32 @@ int kvm_device_pci_deassign(KVMState *s, uint32_t dev_id)
 
     return kvm_vm_ioctl(s, KVM_DEASSIGN_PCI_DEVICE, &dev_data);
 }
+
+static int kvm_deassign_irq_internal(KVMState *s, uint32_t dev_id,
+                                     uint32_t type)
+{
+    struct kvm_assigned_irq assigned_irq = {
+        .assigned_dev_id = dev_id,
+        .flags = type,
+    };
+
+    return kvm_vm_ioctl(s, KVM_DEASSIGN_DEV_IRQ, &assigned_irq);
+}
+
+int kvm_device_intx_deassign(KVMState *s, uint32_t dev_id, bool use_host_msi)
+{
+    return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_INTX |
+        (use_host_msi ? KVM_DEV_IRQ_HOST_MSI : KVM_DEV_IRQ_HOST_INTX));
+}
+
+int kvm_device_msi_deassign(KVMState *s, uint32_t dev_id)
+{
+    return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_MSI |
+                                                KVM_DEV_IRQ_HOST_MSI);
+}
+
+int kvm_device_msix_deassign(KVMState *s, uint32_t dev_id)
+{
+    return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_MSIX |
+                                                KVM_DEV_IRQ_HOST_MSIX);
+}

@@ -43,17 +43,6 @@
  */
 int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
 
-/*!
- * \brief Deassign IRQ for an assigned device
- *
- * Used for PCI device assignment, this function deassigns IRQ numbers
- * for an assigned device.
- *
- * \param kvm Pointer to the current kvm_context
- * \param assigned_irq Parameters, like dev id, host irq, guest irq, etc
- */
-int kvm_deassign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
-
 int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked);
 
 struct kvm_irq_routing_entry;
