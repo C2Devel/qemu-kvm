@@ -31,16 +31,16 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include "hw.h"
-#include "pc.h"
+#include "hw/hw.h"
+#include "hw/pc.h"
 #include "qemu-error.h"
 #include "console.h"
-#include "loader.h"
+#include "hw/loader.h"
 #include "monitor.h"
 #include "range.h"
 #include "sysemu.h"
-#include "pci.h"
-#include "msi.h"
+#include "hw/pci.h"
+#include "hw/msi.h"
 #include "kvm_i386.h"
 
 #define MSIX_PAGE_SIZE 0x1000
