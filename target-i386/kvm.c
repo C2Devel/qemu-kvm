@@ -2155,6 +2155,13 @@ int kvm_device_msi_deassign(KVMState *s, uint32_t dev_id)
                                                 KVM_DEV_IRQ_HOST_MSI);
 }
 
+bool kvm_device_msix_supported(KVMState *s)
+{
+    /* The kernel lacks a corresponding KVM_CAP, so we probe by calling
+     * KVM_ASSIGN_SET_MSIX_NR with an invalid parameter. */
+    return kvm_vm_ioctl(s, KVM_ASSIGN_SET_MSIX_NR, NULL) == -EFAULT;
+}
+
 int kvm_device_msix_deassign(KVMState *s, uint32_t dev_id)
 {
     return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_MSIX |
