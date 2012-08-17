@@ -31,7 +31,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include "qemu-kvm.h"
 #include "hw.h"
 #include "pc.h"
 #include "qemu-error.h"

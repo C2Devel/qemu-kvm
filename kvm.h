@@ -146,7 +146,6 @@ int kvm_set_signal_mask(CPUArchState *env, const sigset_t *sigset);
 
 int kvm_on_sigbus_vcpu(CPUArchState *env, int code, void *addr);
 int kvm_on_sigbus(int code, void *addr);
-#endif /* NEED_CPU_H */
 
 /* internal API */
 
@@ -154,7 +153,6 @@ int kvm_ioctl(KVMState *s, int type, ...);
 
 int kvm_vm_ioctl(KVMState *s, int type, ...);
 
-#ifdef NEED_CPU_H
 int kvm_vcpu_ioctl(CPUArchState *env, int type, ...);
 
 /* Arch specific hooks */
@@ -280,9 +278,4 @@ int kvm_irqchip_add_irqfd(KVMState *s, int fd, int virq);
 int kvm_irqchip_remove_irqfd(KVMState *s, int fd, int virq);
 int kvm_irqchip_add_irq_notifier(KVMState *s, EventNotifier *n, int virq);
 int kvm_irqchip_remove_irq_notifier(KVMState *s, EventNotifier *n, int virq);
-
-#ifdef NEED_CPU_H
-#include "qemu-kvm.h"
-#endif
-
 #endif

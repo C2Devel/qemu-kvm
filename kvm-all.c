@@ -2043,6 +2043,3 @@ int kvm_on_sigbus(int code, void *addr)
 {
     return kvm_arch_on_sigbus(code, addr);
 }
-
-#undef PAGE_SIZE
-#include "qemu-kvm.c"
