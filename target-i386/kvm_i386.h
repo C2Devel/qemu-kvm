@@ -28,6 +28,8 @@ int kvm_device_msi_assign(KVMState *s, uint32_t dev_id, int virq);
 int kvm_device_msi_deassign(KVMState *s, uint32_t dev_id);
 
 bool kvm_device_msix_supported(KVMState *s);
+int kvm_device_msix_init_vectors(KVMState *s, uint32_t dev_id,
+                                 uint32_t nr_vectors);
 int kvm_device_msix_deassign(KVMState *s, uint32_t dev_id);
 
 #endif

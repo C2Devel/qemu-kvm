@@ -186,11 +186,6 @@ int kvm_get_irq_route_gsi(void)
 }
 
 #ifdef KVM_CAP_DEVICE_MSIX
-int kvm_assign_set_msix_nr(KVMState *s, struct kvm_assigned_msix_nr *msix_nr)
-{
-    return kvm_vm_ioctl(s, KVM_ASSIGN_SET_MSIX_NR, msix_nr);
-}
-
 int kvm_assign_set_msix_entry(KVMState *s,
                               struct kvm_assigned_msix_entry *entry)
 {
