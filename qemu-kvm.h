@@ -43,8 +43,6 @@
  */
 int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
 
-int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked);
-
 struct kvm_irq_routing_entry;
 
 void kvm_add_routing_entry(KVMState *s, struct kvm_irq_routing_entry *entry);

@@ -21,6 +21,7 @@ int kvm_device_pci_deassign(KVMState *s, uint32_t dev_id);
 
 int kvm_device_intx_assign(KVMState *s, uint32_t dev_id,
                            bool use_host_msi, uint32_t guest_irq);
+int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked);
 int kvm_device_intx_deassign(KVMState *s, uint32_t dev_id, bool use_host_msi);
 
 int kvm_device_msi_deassign(KVMState *s, uint32_t dev_id);

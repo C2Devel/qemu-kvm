@@ -2116,6 +2116,15 @@ int kvm_device_intx_assign(KVMState *s, uint32_t dev_id, bool use_host_msi,
     return kvm_assign_irq_internal(s, dev_id, irq_type, guest_irq);
 }
 
+int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked)
+{
+    struct kvm_assigned_pci_dev assigned_dev;
+
+    assigned_dev.assigned_dev_id = dev_id;
+    assigned_dev.flags = masked ? KVM_DEV_ASSIGN_MASK_INTX : 0;
+    return kvm_vm_ioctl(s, KVM_ASSIGN_SET_INTX_MASK, &assigned_dev);
+}
+
 static int kvm_deassign_irq_internal(KVMState *s, uint32_t dev_id,
                                      uint32_t type)
 {

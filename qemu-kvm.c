@@ -37,15 +37,6 @@ static int kvm_old_assign_irq(KVMState *s,
     return kvm_vm_ioctl(s, KVM_ASSIGN_IRQ, assigned_irq);
 }
 
-int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked)
-{
-    struct kvm_assigned_pci_dev assigned_dev;
-
-    assigned_dev.assigned_dev_id = dev_id;
-    assigned_dev.flags = masked ? KVM_DEV_ASSIGN_MASK_INTX : 0;
-    return kvm_vm_ioctl(s, KVM_ASSIGN_SET_INTX_MASK, &assigned_dev);
-}
-
 #ifdef KVM_CAP_ASSIGN_DEV_IRQ
 int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
 {
