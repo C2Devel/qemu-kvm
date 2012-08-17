@@ -14,7 +14,7 @@ obj-$(CONFIG_SPICE) += qxl.o qxl-logger.o qxl-render.o
 obj-y += testdev.o
 obj-y += acpi.o acpi_piix4.o
 
-obj-$(CONFIG_KVM_DEVICE_ASSIGNMENT) += device-assignment.o
+obj-$(CONFIG_KVM) += device-assignment.o
 
 
 obj-y := $(addprefix ../,$(obj-y))
