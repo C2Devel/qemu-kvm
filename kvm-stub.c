@@ -122,15 +122,6 @@ int kvm_set_ioeventfd_mmio(int fd, uint32_t adr, uint32_t val, bool assign, uint
     return -ENOSYS;
 }
 
-int kvm_get_irq_route_gsi(void)
-{
-    return -ENOSYS;
-}
-
-void kvm_irqchip_commit_routes(KVMState *s)
-{
-}
-
 int kvm_on_sigbus_vcpu(CPUArchState *env, int code, void *addr)
 {
     return 1;

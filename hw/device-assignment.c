@@ -141,8 +141,6 @@ typedef struct AssignedDevice {
     uint8_t emulate_config_write[PCI_CONFIG_SPACE_SIZE];
     int msi_virq_nr;
     int *msi_virq;
-    int irq_entries_nr;
-    struct kvm_irq_routing_entry *entry;
     MSIXTableEntry *msix_table;
     target_phys_addr_t msix_table_addr;
     uint16_t msix_max;
@@ -701,7 +699,7 @@ again:
 
 static QLIST_HEAD(, AssignedDevice) devs = QLIST_HEAD_INITIALIZER(devs);
 
-static void free_dev_irq_entries(AssignedDevice *dev)
+static void free_msi_virqs(AssignedDevice *dev)
 {
     int i;
 
@@ -714,15 +712,6 @@ static void free_dev_irq_entries(AssignedDevice *dev)
     g_free(dev->msi_virq);
     dev->msi_virq = NULL;
     dev->msi_virq_nr = 0;
-
-    for (i = 0; i < dev->irq_entries_nr; i++) {
-        if (dev->entry[i].type) {
-            kvm_del_routing_entry(&dev->entry[i]);
-        }
-    }
-    g_free(dev->entry);
-    dev->entry = NULL;
-    dev->irq_entries_nr = 0;
 }
 
 static void free_assigned_device(AssignedDevice *dev)
@@ -778,7 +767,7 @@ static void free_assigned_device(AssignedDevice *dev)
         close(dev->real_device.config_fd);
     }
 
-    free_dev_irq_entries(dev);
+    free_msi_virqs(dev);
 }
 
 static void assign_failed_examine(AssignedDevice *dev)
@@ -1001,7 +990,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
         if (r && r != -ENXIO)
             perror("assigned_dev_update_msi: deassign irq");
 
-        free_dev_irq_entries(assigned_dev);
+        free_msi_virqs(assigned_dev);
 
         assigned_dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
         pci_device_set_intx_routing_notifier(pci_dev, NULL);
@@ -1046,6 +1035,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
     uint16_t entries_nr = 0;
     int i, r = 0;
     MSIXTableEntry *entry = adev->msix_table;
+    MSIMessage msg;
 
     /* Get the usable entry number for allocating */
     for (i = 0; i < adev->msix_max; i++, entry++) {
@@ -1069,43 +1059,36 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
         return r;
     }
 
-    free_dev_irq_entries(adev);
+    free_msi_virqs(adev);
 
-    adev->irq_entries_nr = adev->msix_max;
-    adev->entry = g_malloc0(adev->msix_max * sizeof(*(adev->entry)));
+    adev->msi_virq_nr = adev->msix_max;
+    adev->msi_virq = g_malloc(adev->msix_max * sizeof(*adev->msi_virq));
 
     entry = adev->msix_table;
     for (i = 0; i < adev->msix_max; i++, entry++) {
+        adev->msi_virq[i] = -1;
+
         if (msix_masked(entry)) {
             continue;
         }
 
-        r = kvm_get_irq_route_gsi();
-        if (r < 0)
+        msg.address = entry->addr_lo | ((uint64_t)entry->addr_hi << 32);
+        msg.data = entry->data;
+        r = kvm_irqchip_add_msi_route(kvm_state, msg);
+        if (r < 0) {
             return r;
-
-        adev->entry[i].gsi = r;
-        adev->entry[i].type = KVM_IRQ_ROUTING_MSI;
-        adev->entry[i].flags = 0;
-        adev->entry[i].u.msi.address_lo = entry->addr_lo;
-        adev->entry[i].u.msi.address_hi = entry->addr_hi;
-        adev->entry[i].u.msi.data = entry->data;
+        }
+        adev->msi_virq[i] = r;
 
         DEBUG("MSI-X vector %d, gsi %d, addr %08x_%08x, data %08x\n", i,
               r, entry->addr_hi, entry->addr_lo, entry->data);
 
-        kvm_add_routing_entry(kvm_state, &adev->entry[i]);
-
         r = kvm_device_msix_set_vector(kvm_state, adev->dev_id, i,
-                                       adev->entry[i].gsi);
+                                       adev->msi_virq[i]);
         if (r) {
             fprintf(stderr, "fail to set MSI-X entry! %s\n", strerror(-r));
             break;
         }
-    }
-
-    if (r == 0) {
-        kvm_irqchip_commit_routes(kvm_state);
     }
 
     return r;
@@ -1127,12 +1110,12 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
      * MSIX or intends to start. */
     if ((assigned_dev->assigned_irq_type == ASSIGNED_IRQ_MSIX) ||
         (ctrl_word & PCI_MSIX_FLAGS_ENABLE)) {
-
-        free_dev_irq_entries(assigned_dev);
         r = kvm_device_msix_deassign(kvm_state, assigned_dev->dev_id);
         /* -ENXIO means no assigned irq */
         if (r && r != -ENXIO)
             perror("assigned_dev_update_msix: deassign irq");
+
+        free_msi_virqs(assigned_dev);
 
         assigned_dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
         pci_device_set_intx_routing_notifier(pci_dev, NULL);
@@ -1147,7 +1130,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
             return;
         }
 
-        if (assigned_dev->irq_entries_nr) {
+        if (assigned_dev->msi_virq_nr > 0) {
             if (kvm_assign_irq(kvm_state, &assigned_irq_data) < 0) {
                 perror("assigned_dev_enable_msix: assign irq");
                 return;
@@ -1561,27 +1544,25 @@ static void msix_mmio_write(void *opaque, target_phys_addr_t addr,
              */
         } else if (msix_masked(&orig) && !msix_masked(entry)) {
             /* Vector unmasked */
-            if (i >= adev->irq_entries_nr || !adev->entry[i].type) {
+            if (i >= adev->msi_virq_nr || adev->msi_virq[i] < 0) {
                 /* Previously unassigned vector, start from scratch */
                 assigned_dev_update_msix(pdev);
                 return;
             } else {
                 /* Update an existing, previously masked vector */
-                struct kvm_irq_routing_entry orig = adev->entry[i];
+                MSIMessage msg;
                 int ret;
 
-                adev->entry[i].u.msi.address_lo = entry->addr_lo;
-                adev->entry[i].u.msi.address_hi = entry->addr_hi;
-                adev->entry[i].u.msi.data = entry->data;
+                msg.address = entry->addr_lo |
+                    ((uint64_t)entry->addr_hi << 32);
+                msg.data = entry->data;
 
-                ret = kvm_update_routing_entry(&orig, &adev->entry[i]);
+                ret = kvm_irqchip_update_msi_route(kvm_state,
+                                                   adev->msi_virq[i], msg);
                 if (ret) {
                     fprintf(stderr,
                             "Error updating irq routing entry (%d)\n", ret);
-                    return;
                 }
-
-                kvm_irqchip_commit_routes(kvm_state);
             }
         }
     }

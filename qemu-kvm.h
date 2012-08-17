@@ -43,28 +43,6 @@
  */
 int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
 
-struct kvm_irq_routing_entry;
-
-void kvm_add_routing_entry(KVMState *s, struct kvm_irq_routing_entry *entry);
-
-/*!
- * \brief Removes a routing from the temporary irq routing table
- *
- * Remove a routing to the temporary irq routing table.  Nothing is
- * committed to the running VM.
- */
-int kvm_del_routing_entry(struct kvm_irq_routing_entry *entry);
-
-/*!
- * \brief Updates a routing in the temporary irq routing table
- *
- * Update a routing in the temporary irq routing table
- * with a new value. entry type and GSI can not be changed.
- * Nothing is committed to the running VM.
- */
-int kvm_update_routing_entry(struct kvm_irq_routing_entry *entry,
-                             struct kvm_irq_routing_entry *newentry);
-
 #endif /* CONFIG_KVM */
 
 #endif
