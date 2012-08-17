@@ -720,10 +720,12 @@ static void free_assigned_device(AssignedDevice *dev)
             continue;
         }
         if (pci_region->type & IORESOURCE_IO) {
-            memory_region_del_subregion(&region->container,
-                                        &region->real_iomem);
-            memory_region_destroy(&region->real_iomem);
-            memory_region_destroy(&region->container);
+            if (region->u.r_baseport) {
+                memory_region_del_subregion(&region->container,
+                                            &region->real_iomem);
+                memory_region_destroy(&region->real_iomem);
+                memory_region_destroy(&region->container);
+            }
         } else if (pci_region->type & IORESOURCE_MEM) {
             if (region->u.r_virtbase) {
                 memory_region_del_subregion(&region->container,
