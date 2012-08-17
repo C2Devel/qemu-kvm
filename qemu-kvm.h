@@ -65,10 +65,6 @@ int kvm_del_routing_entry(struct kvm_irq_routing_entry *entry);
 int kvm_update_routing_entry(struct kvm_irq_routing_entry *entry,
                              struct kvm_irq_routing_entry *newentry);
 
-
-int kvm_assign_set_msix_entry(KVMState *s,
-                              struct kvm_assigned_msix_entry *entry);
-
 #endif /* CONFIG_KVM */
 
 #endif

@@ -1045,7 +1045,6 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
     AssignedDevice *adev = DO_UPCAST(AssignedDevice, dev, pci_dev);
     uint16_t entries_nr = 0;
     int i, r = 0;
-    struct kvm_assigned_msix_entry msix_entry;
     MSIXTableEntry *entry = adev->msix_table;
 
     /* Get the usable entry number for allocating */
@@ -1075,7 +1074,6 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
     adev->irq_entries_nr = adev->msix_max;
     adev->entry = g_malloc0(adev->msix_max * sizeof(*(adev->entry)));
 
-    msix_entry.assigned_dev_id = adev->dev_id;
     entry = adev->msix_table;
     for (i = 0; i < adev->msix_max; i++, entry++) {
         if (msix_masked(entry)) {
@@ -1098,9 +1096,8 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
 
         kvm_add_routing_entry(kvm_state, &adev->entry[i]);
 
-        msix_entry.gsi = adev->entry[i].gsi;
-        msix_entry.entry = i;
-        r = kvm_assign_set_msix_entry(kvm_state, &msix_entry);
+        r = kvm_device_msix_set_vector(kvm_state, adev->dev_id, i,
+                                       adev->entry[i].gsi);
         if (r) {
             fprintf(stderr, "fail to set MSI-X entry! %s\n", strerror(-r));
             break;
