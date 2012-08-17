@@ -2185,6 +2185,12 @@ int kvm_device_msix_set_vector(KVMState *s, uint32_t dev_id, uint32_t vector,
     return kvm_vm_ioctl(s, KVM_ASSIGN_SET_MSIX_ENTRY, &msix_entry);
 }
 
+int kvm_device_msix_assign(KVMState *s, uint32_t dev_id)
+{
+    return kvm_assign_irq_internal(s, dev_id, KVM_DEV_IRQ_HOST_MSIX |
+                                              KVM_DEV_IRQ_GUEST_MSIX, 0);
+}
+
 int kvm_device_msix_deassign(KVMState *s, uint32_t dev_id)
 {
     return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_MSIX |

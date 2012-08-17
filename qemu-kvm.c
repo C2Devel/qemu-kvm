@@ -30,33 +30,6 @@
 
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
-#ifdef KVM_CAP_DEVICE_ASSIGNMENT
-static int kvm_old_assign_irq(KVMState *s,
-                              struct kvm_assigned_irq *assigned_irq)
-{
-    return kvm_vm_ioctl(s, KVM_ASSIGN_IRQ, assigned_irq);
-}
-
-#ifdef KVM_CAP_ASSIGN_DEV_IRQ
-int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
-{
-    int ret;
-
-    ret = kvm_ioctl(s, KVM_CHECK_EXTENSION, KVM_CAP_ASSIGN_DEV_IRQ);
-    if (ret > 0) {
-        return kvm_vm_ioctl(s, KVM_ASSIGN_DEV_IRQ, assigned_irq);
-    }
-
-    return kvm_old_assign_irq(s, assigned_irq);
-}
-#else
-int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
-{
-    return kvm_old_assign_irq(s, assigned_irq);
-}
-#endif
-#endif
-
 #if !defined(TARGET_I386)
 void kvm_arch_init_irq_routing(KVMState *s)
 {

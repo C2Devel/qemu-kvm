@@ -1096,14 +1096,10 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
 
 static void assigned_dev_update_msix(PCIDevice *pci_dev)
 {
-    struct kvm_assigned_irq assigned_irq_data;
     AssignedDevice *assigned_dev = DO_UPCAST(AssignedDevice, dev, pci_dev);
     uint16_t ctrl_word = pci_get_word(pci_dev->config + pci_dev->msix_cap +
                                       PCI_MSIX_FLAGS);
     int r;
-
-    memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
-    assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
 
     /* Some guests gratuitously disable MSIX even if they're not using it,
      * try to catch this by only deassigning irqs if the guest is using
@@ -1122,16 +1118,13 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
     }
 
     if (ctrl_word & PCI_MSIX_FLAGS_ENABLE) {
-        assigned_irq_data.flags = KVM_DEV_IRQ_HOST_MSIX |
-                                  KVM_DEV_IRQ_GUEST_MSIX;
-
         if (assigned_dev_update_msix_mmio(pci_dev) < 0) {
             perror("assigned_dev_update_msix_mmio");
             return;
         }
 
         if (assigned_dev->msi_virq_nr > 0) {
-            if (kvm_assign_irq(kvm_state, &assigned_irq_data) < 0) {
+            if (kvm_device_msix_assign(kvm_state, assigned_dev->dev_id) < 0) {
                 perror("assigned_dev_enable_msix: assign irq");
                 return;
             }

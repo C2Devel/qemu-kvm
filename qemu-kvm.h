@@ -32,17 +32,6 @@
 
 #include "kvm.h"
 
-/*!
- * \brief Assign IRQ for an assigned device
- *
- * Used for PCI device assignment, this function assigns IRQ numbers for
- * an physical device and guest IRQ handling.
- *
- * \param kvm Pointer to the current kvm_context
- * \param assigned_irq Parameters, like dev id, host irq, guest irq, etc
- */
-int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
-
 #endif /* CONFIG_KVM */
 
 #endif
