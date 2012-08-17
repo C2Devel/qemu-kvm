@@ -861,11 +861,10 @@ static int assign_device(AssignedDevice *dev)
 
 static int assign_intx(AssignedDevice *dev)
 {
-    struct kvm_assigned_irq assigned_irq_data;
     AssignedIRQType new_type;
     PCIINTxRoute intx_route;
     bool intx_host_msi;
-    int r = 0;
+    int r;
 
     /* Interrupt PIN 0 means don't use INTx */
     if (assigned_dev_pci_read_byte(&dev->dev, PCI_INTERRUPT_PIN) == 0) {
@@ -881,7 +880,7 @@ static int assign_intx(AssignedDevice *dev)
 
     if (dev->intx_route.mode == intx_route.mode &&
         dev->intx_route.irq == intx_route.irq) {
-        return r;
+        return 0;
     }
 
     switch (dev->assigned_irq_type) {
@@ -911,20 +910,17 @@ static int assign_intx(AssignedDevice *dev)
     }
 
 retry:
-    memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
-    assigned_irq_data.assigned_dev_id = dev->dev_id;
-    assigned_irq_data.guest_irq = intx_route.irq;
-    assigned_irq_data.flags = KVM_DEV_IRQ_GUEST_INTX;
     if (dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK &&
         dev->cap.available & ASSIGNED_DEVICE_CAP_MSI) {
-        assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_MSI;
+        intx_host_msi = true;
         new_type = ASSIGNED_IRQ_INTX_HOST_MSI;
     } else {
-        assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_INTX;
+        intx_host_msi = false;
         new_type = ASSIGNED_IRQ_INTX_HOST_INTX;
     }
 
-    r = kvm_assign_irq(kvm_state, &assigned_irq_data);
+    r = kvm_device_intx_assign(kvm_state, dev->dev_id, intx_host_msi,
+                               intx_route.irq);
     if (r < 0) {
         if (r == -EIO && !(dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK) &&
             dev->cap.available & ASSIGNED_DEVICE_CAP_MSI) {
