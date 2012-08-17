@@ -851,7 +851,7 @@ static int assign_device(AssignedDevice *dev)
     return r;
 }
 
-static int assign_irq(AssignedDevice *dev)
+static int assign_intx(AssignedDevice *dev)
 {
     struct kvm_assigned_irq assigned_irq_data;
     PCIINTxRoute intx_route;
@@ -881,7 +881,7 @@ static int assign_irq(AssignedDevice *dev)
         assigned_irq_data.flags = dev->irq_requested_type;
         r = kvm_deassign_irq(kvm_state, &assigned_irq_data);
         if (r) {
-            perror("assign_irq: deassign");
+            perror("assign_intx: deassign");
         }
         dev->irq_requested_type = 0;
     }
@@ -943,7 +943,7 @@ static void assigned_dev_update_irq_routing(PCIDevice *dev)
     Error *err = NULL;
     int r;
 
-    r = assign_irq(assigned_dev);
+    r = assign_intx(assigned_dev);
     if (r < 0) {
         qdev_unplug(&dev->qdev, &err);
         assert(!err);
@@ -1008,7 +1008,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
         assigned_dev->intx_route.irq = -1;
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
     } else {
-        assign_irq(assigned_dev);
+        assign_intx(assigned_dev);
     }
 }
 
@@ -1141,7 +1141,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
         assigned_dev->intx_route.irq = -1;
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
     } else {
-        assign_irq(assigned_dev);
+        assign_intx(assigned_dev);
     }
 }
 
@@ -1769,8 +1769,8 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     if (r < 0)
         goto out;
 
-    /* assign irq for the device */
-    r = assign_irq(dev);
+    /* assign legacy INTx to the device */
+    r = assign_intx(dev);
     if (r < 0)
         goto assigned_out;
 
