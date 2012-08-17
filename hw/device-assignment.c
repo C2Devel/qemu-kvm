@@ -41,6 +41,7 @@
 #include "range.h"
 #include "sysemu.h"
 #include "pci.h"
+#include "msi.h"
 #include "kvm_i386.h"
 
 #define MSIX_PAGE_SIZE 0x1000
@@ -138,6 +139,8 @@ typedef struct AssignedDevice {
     } cap;
     uint8_t emulate_config_read[PCI_CONFIG_SPACE_SIZE];
     uint8_t emulate_config_write[PCI_CONFIG_SPACE_SIZE];
+    int msi_virq_nr;
+    int *msi_virq;
     int irq_entries_nr;
     struct kvm_irq_routing_entry *entry;
     MSIXTableEntry *msix_table;
@@ -702,6 +705,16 @@ static void free_dev_irq_entries(AssignedDevice *dev)
 {
     int i;
 
+    for (i = 0; i < dev->msi_virq_nr; i++) {
+        if (dev->msi_virq[i] >= 0) {
+            kvm_irqchip_release_virq(kvm_state, dev->msi_virq[i]);
+            dev->msi_virq[i] = -1;
+        }
+    }
+    g_free(dev->msi_virq);
+    dev->msi_virq = NULL;
+    dev->msi_virq_nr = 0;
+
     for (i = 0; i < dev->irq_entries_nr; i++) {
         if (dev->entry[i].type) {
             kvm_del_routing_entry(&dev->entry[i]);
@@ -973,7 +986,6 @@ static void assigned_dev_update_irq_routing(PCIDevice *dev)
 
 static void assigned_dev_update_msi(PCIDevice *pci_dev)
 {
-    struct kvm_assigned_irq assigned_irq_data;
     AssignedDevice *assigned_dev = DO_UPCAST(AssignedDevice, dev, pci_dev);
     uint8_t ctrl_byte = pci_get_byte(pci_dev->config + pci_dev->msi_cap +
                                      PCI_MSI_FLAGS);
@@ -984,12 +996,12 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
      * MSI or intends to start. */
     if (assigned_dev->assigned_irq_type == ASSIGNED_IRQ_MSI ||
         (ctrl_byte & PCI_MSI_FLAGS_ENABLE)) {
-
-        free_dev_irq_entries(assigned_dev);
         r = kvm_device_msi_deassign(kvm_state, assigned_dev->dev_id);
         /* -ENXIO means no assigned irq */
         if (r && r != -ENXIO)
             perror("assigned_dev_update_msi: deassign irq");
+
+        free_dev_irq_entries(assigned_dev);
 
         assigned_dev->assigned_irq_type = ASSIGNED_IRQ_NONE;
         pci_device_set_intx_routing_notifier(pci_dev, NULL);
@@ -997,30 +1009,22 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
 
     if (ctrl_byte & PCI_MSI_FLAGS_ENABLE) {
         uint8_t *pos = pci_dev->config + pci_dev->msi_cap;
+        MSIMessage msg;
+        int virq;
 
-        assigned_dev->entry = g_malloc0(sizeof(*(assigned_dev->entry)));
-        assigned_dev->entry->u.msi.address_lo =
-            pci_get_long(pos + PCI_MSI_ADDRESS_LO);
-        assigned_dev->entry->u.msi.address_hi = 0;
-        assigned_dev->entry->u.msi.data = pci_get_word(pos + PCI_MSI_DATA_32);
-        assigned_dev->entry->type = KVM_IRQ_ROUTING_MSI;
-        r = kvm_get_irq_route_gsi();
-        if (r < 0) {
-            perror("assigned_dev_update_msi: kvm_get_irq_route_gsi");
+        msg.address = pci_get_long(pos + PCI_MSI_ADDRESS_LO);
+        msg.data = pci_get_word(pos + PCI_MSI_DATA_32);
+        virq = kvm_irqchip_add_msi_route(kvm_state, msg);
+        if (virq < 0) {
+            perror("assigned_dev_update_msi: kvm_irqchip_add_msi_route");
             return;
         }
-        assigned_dev->entry->gsi = r;
 
-        kvm_add_routing_entry(kvm_state, assigned_dev->entry);
-        kvm_irqchip_commit_routes(kvm_state);
-	assigned_dev->irq_entries_nr = 1;
-
-        memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
-        assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
-        assigned_irq_data.guest_irq = assigned_dev->entry->gsi;
-	assigned_irq_data.flags = KVM_DEV_IRQ_HOST_MSI | KVM_DEV_IRQ_GUEST_MSI;
-        if (kvm_assign_irq(kvm_state, &assigned_irq_data) < 0) {
-            perror("assigned_dev_enable_msi: assign irq");
+        assigned_dev->msi_virq = g_malloc(sizeof(*assigned_dev->msi_virq));
+        assigned_dev->msi_virq_nr = 1;
+        assigned_dev->msi_virq[0] = virq;
+        if (kvm_device_msi_assign(kvm_state, assigned_dev->dev_id, virq) < 0) {
+            perror("assigned_dev_update_msi: kvm_device_msi_assign");
         }
 
         assigned_dev->intx_route.mode = PCI_INTX_DISABLED;

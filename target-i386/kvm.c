@@ -2143,6 +2143,12 @@ int kvm_device_intx_deassign(KVMState *s, uint32_t dev_id, bool use_host_msi)
         (use_host_msi ? KVM_DEV_IRQ_HOST_MSI : KVM_DEV_IRQ_HOST_INTX));
 }
 
+int kvm_device_msi_assign(KVMState *s, uint32_t dev_id, int virq)
+{
+    return kvm_assign_irq_internal(s, dev_id, KVM_DEV_IRQ_HOST_MSI |
+                                              KVM_DEV_IRQ_GUEST_MSI, virq);
+}
+
 int kvm_device_msi_deassign(KVMState *s, uint32_t dev_id)
 {
     return kvm_deassign_irq_internal(s, dev_id, KVM_DEV_IRQ_GUEST_MSI |
