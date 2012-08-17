@@ -33,18 +33,6 @@
 #include "kvm.h"
 
 /*!
- * \brief Notifies host kernel about a PCI device to be assigned to a guest
- *
- * Used for PCI device assignment, this function notifies the host
- * kernel about the assigning of the physical PCI device to a guest.
- *
- * \param kvm Pointer to the current kvm_context
- * \param assigned_dev Parameters, like bus, devfn number, etc
- */
-int kvm_assign_pci_device(KVMState *s,
-                          struct kvm_assigned_pci_dev *assigned_dev);
-
-/*!
  * \brief Assign IRQ for an assigned device
  *
  * Used for PCI device assignment, this function assigns IRQ numbers for
@@ -67,18 +55,6 @@ int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
 int kvm_deassign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq);
 
 int kvm_device_intx_set_mask(KVMState *s, uint32_t dev_id, bool masked);
-
-/*!
- * \brief Notifies host kernel about a PCI device to be deassigned from a guest
- *
- * Used for hot remove PCI device, this function notifies the host
- * kernel about the deassigning of the physical PCI device from a guest.
- *
- * \param kvm Pointer to the current kvm_context
- * \param assigned_dev Parameters, like bus, devfn number, etc
- */
-int kvm_deassign_pci_device(KVMState *s,
-                            struct kvm_assigned_pci_dev *assigned_dev);
 
 struct kvm_irq_routing_entry;
 

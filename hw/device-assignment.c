@@ -41,6 +41,7 @@
 #include "range.h"
 #include "sysemu.h"
 #include "pci.h"
+#include "kvm_i386.h"
 
 #define MSIX_PAGE_SIZE 0x1000
 
@@ -108,6 +109,7 @@ typedef struct {
 typedef struct AssignedDevice {
     PCIDevice dev;
     PCIHostDeviceAddress host;
+    uint32_t dev_id;
     uint32_t features;
     int intpin;
     uint8_t debug_flags;
@@ -115,9 +117,6 @@ typedef struct AssignedDevice {
     PCIDevRegions real_device;
     int run;
     PCIINTxRoute intx_route;
-    uint16_t h_segnr;
-    uint8_t h_busnr;
-    uint8_t h_devfn;
     int irq_requested_type;
     int bound;
     struct {
@@ -761,12 +760,6 @@ static void free_assigned_device(AssignedDevice *dev)
     free_dev_irq_entries(dev);
 }
 
-static uint32_t calc_assigned_dev_id(AssignedDevice *dev)
-{
-    return (uint32_t)dev->h_segnr << 16 | (uint32_t)dev->h_busnr << 8 |
-           (uint32_t)dev->h_devfn;
-}
-
 static void assign_failed_examine(AssignedDevice *dev)
 {
     char name[PATH_MAX], dir[PATH_MAX], driver[PATH_MAX] = {}, *ns;
@@ -820,24 +813,17 @@ fail:
 
 static int assign_device(AssignedDevice *dev)
 {
-    struct kvm_assigned_pci_dev assigned_dev_data;
+    uint32_t flags = KVM_DEV_ASSIGN_ENABLE_IOMMU;
     int r;
 
     /* Only pass non-zero PCI segment to capable module */
     if (!kvm_check_extension(kvm_state, KVM_CAP_PCI_SEGMENT) &&
-        dev->h_segnr) {
+        dev->host.domain) {
         fprintf(stderr, "Can't assign device inside non-zero PCI segment "
                 "as this KVM module doesn't support it.\n");
         return -ENODEV;
     }
 
-    memset(&assigned_dev_data, 0, sizeof(assigned_dev_data));
-    assigned_dev_data.assigned_dev_id = calc_assigned_dev_id(dev);
-    assigned_dev_data.segnr = dev->h_segnr;
-    assigned_dev_data.busnr = dev->h_busnr;
-    assigned_dev_data.devfn = dev->h_devfn;
-
-    assigned_dev_data.flags = KVM_DEV_ASSIGN_ENABLE_IOMMU;
     if (!kvm_check_extension(kvm_state, KVM_CAP_IOMMU)) {
         fprintf(stderr, "No IOMMU found.  Unable to assign device \"%s\"\n",
                 dev->dev.qdev.id);
@@ -846,10 +832,10 @@ static int assign_device(AssignedDevice *dev)
 
     if (dev->features & ASSIGNED_DEVICE_SHARE_INTX_MASK &&
         kvm_has_intx_set_mask()) {
-        assigned_dev_data.flags |= KVM_DEV_ASSIGN_PCI_2_3;
+        flags |= KVM_DEV_ASSIGN_PCI_2_3;
     }
 
-    r = kvm_assign_pci_device(kvm_state, &assigned_dev_data);
+    r = kvm_device_pci_assign(kvm_state, &dev->host, flags, &dev->dev_id);
     if (r < 0) {
         fprintf(stderr, "Failed to assign device \"%s\" : %s\n",
                 dev->dev.qdev.id, strerror(-r));
@@ -889,7 +875,7 @@ static int assign_irq(AssignedDevice *dev)
     }
 
     memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
-    assigned_irq_data.assigned_dev_id = calc_assigned_dev_id(dev);
+    assigned_irq_data.assigned_dev_id = dev->dev_id;
     assigned_irq_data.guest_irq = intx_route.irq;
     if (dev->irq_requested_type) {
         assigned_irq_data.flags = dev->irq_requested_type;
@@ -940,13 +926,9 @@ retry:
 
 static void deassign_device(AssignedDevice *dev)
 {
-    struct kvm_assigned_pci_dev assigned_dev_data;
     int r;
 
-    memset(&assigned_dev_data, 0, sizeof(assigned_dev_data));
-    assigned_dev_data.assigned_dev_id = calc_assigned_dev_id(dev);
-
-    r = kvm_deassign_pci_device(kvm_state, &assigned_dev_data);
+    r = kvm_device_pci_deassign(kvm_state, dev->dev_id);
     if (r < 0)
 	fprintf(stderr, "Failed to deassign device \"%s\" : %s\n",
                 dev->dev.qdev.id, strerror(-r));
@@ -977,7 +959,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
     int r;
 
     memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
-    assigned_irq_data.assigned_dev_id = calc_assigned_dev_id(assigned_dev);
+    assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
 
     /* Some guests gratuitously disable MSI even if they're not using it,
      * try to catch this by only deassigning irqs if the guest is using
@@ -1059,7 +1041,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
         return 0;
     }
 
-    msix_nr.assigned_dev_id = calc_assigned_dev_id(adev);
+    msix_nr.assigned_dev_id = adev->dev_id;
     msix_nr.entry_nr = entries_nr;
     r = kvm_assign_set_msix_nr(kvm_state, &msix_nr);
     if (r != 0) {
@@ -1121,7 +1103,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev)
     int r;
 
     memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
-    assigned_irq_data.assigned_dev_id = calc_assigned_dev_id(assigned_dev);
+    assigned_irq_data.assigned_dev_id = assigned_dev->dev_id;
 
     /* Some guests gratuitously disable MSIX even if they're not using it,
      * try to catch this by only deassigning irqs if the guest is using
@@ -1200,8 +1182,7 @@ static void assigned_dev_pci_write_config(PCIDevice *pci_dev, uint32_t address,
                             PCI_COMMAND_INTX_DISABLE);
 
         if (intx_masked != !!(old_cmd & PCI_COMMAND_INTX_DISABLE)) {
-            ret = kvm_device_intx_set_mask(kvm_state,
-                                           calc_assigned_dev_id(assigned_dev),
+            ret = kvm_device_intx_set_mask(kvm_state, assigned_dev->dev_id,
                                            intx_masked);
             if (ret) {
                 perror("assigned_dev_pci_write_config: set intx mask");
@@ -1782,9 +1763,6 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     dev->run = 0;
     dev->intx_route.mode = PCI_INTX_DISABLED;
     dev->intx_route.irq = -1;
-    dev->h_segnr = dev->host.domain;
-    dev->h_busnr = dev->host.bus;
-    dev->h_devfn = PCI_DEVFN(dev->host.slot, dev->host.function);
 
     /* assign device to guest */
     r = assign_device(dev);

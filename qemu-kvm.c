@@ -31,12 +31,6 @@
 #define ALIGN(x, y) (((x)+(y)-1) & ~((y)-1))
 
 #ifdef KVM_CAP_DEVICE_ASSIGNMENT
-int kvm_assign_pci_device(KVMState *s,
-                          struct kvm_assigned_pci_dev *assigned_dev)
-{
-    return kvm_vm_ioctl(s, KVM_ASSIGN_PCI_DEVICE, assigned_dev);
-}
-
 static int kvm_old_assign_irq(KVMState *s,
                               struct kvm_assigned_irq *assigned_irq)
 {
@@ -75,14 +69,6 @@ int kvm_assign_irq(KVMState *s, struct kvm_assigned_irq *assigned_irq)
     return kvm_old_assign_irq(s, assigned_irq);
 }
 #endif
-#endif
-
-#ifdef KVM_CAP_DEVICE_DEASSIGNMENT
-int kvm_deassign_pci_device(KVMState *s,
-                            struct kvm_assigned_pci_dev *assigned_dev)
-{
-    return kvm_vm_ioctl(s, KVM_DEASSIGN_PCI_DEVICE, assigned_dev);
-}
 #endif
 
 int kvm_del_routing_entry(struct kvm_irq_routing_entry *entry)
