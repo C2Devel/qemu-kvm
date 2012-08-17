@@ -358,10 +358,7 @@ again:
             goto again;
         }
 
-        fprintf(stderr, "%s: pread failed, ret = %zd errno = %d\n",
-                __func__, ret, errno);
-
-        exit(1);
+        hw_error("pci read failed, ret = %zd errno = %d\n", ret, errno);
     }
 
     return val;
@@ -385,10 +382,7 @@ again:
             goto again;
         }
 
-        fprintf(stderr, "%s: pwrite failed, ret = %zd errno = %d\n",
-                __func__, ret, errno);
-
-        exit(1);
+        hw_error("pci write failed, ret = %zd errno = %d\n", ret, errno);
     }
 }
 
