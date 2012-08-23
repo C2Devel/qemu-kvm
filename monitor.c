@@ -4853,7 +4853,6 @@ static void monitor_control_event(void *opaque, int event)
     switch (event) {
     case CHR_EVENT_OPENED:
         mon->mc->command_mode = 0;
-        json_message_parser_init(&mon->mc->parser, handle_qmp_command);
         data = get_qmp_greeting();
         monitor_json_emitter(mon, data);
         qobject_decref(data);
@@ -4861,6 +4860,7 @@ static void monitor_control_event(void *opaque, int event)
         break;
     case CHR_EVENT_CLOSED:
         json_message_parser_destroy(&mon->mc->parser);
+        json_message_parser_init(&mon->mc->parser, handle_qmp_command);
         mon_refcount--;
         monitor_fdsets_cleanup();
         break;
@@ -4971,6 +4971,8 @@ void monitor_init(CharDriverState *chr, int flags)
         qemu_chr_add_handlers(chr, monitor_can_read, monitor_read,
                               monitor_event, mon);
     }
+
+    json_message_parser_init(&mon->mc->parser, handle_qmp_command);
 
     QLIST_INSERT_HEAD(&mon_list, mon, entry);
     if (!default_mon || (flags & MONITOR_IS_DEFAULT))
