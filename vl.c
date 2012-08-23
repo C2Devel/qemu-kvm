@@ -63,6 +63,11 @@
 #include <linux/ppdev.h>
 #include <linux/parport.h>
 #endif
+
+#ifdef CONFIG_SECCOMP
+#include "qemu-seccomp.h"
+#endif
+
 #ifdef __sun__
 #include <sys/stat.h>
 #include <sys/ethernet.h>
@@ -765,6 +770,26 @@ static int bt_parse(const char *opt)
     return 1;
 }
 
+static int parse_sandbox(QemuOpts *opts, void *opaque)
+{
+    /* FIXME: change this to true for 1.3 */
+    if (qemu_opt_get_bool(opts, "enable", false)) {
+#ifdef CONFIG_SECCOMP
+        if (seccomp_start() < 0) {
+            qerror_report(ERROR_CLASS_GENERIC_ERROR,
+                          "failed to install seccomp syscall filter in the kernel");
+            return -1;
+        }
+#else
+        qerror_report(ERROR_CLASS_GENERIC_ERROR,
+                      "sandboxing request but seccomp is not compiled into this build");
+        return -1;
+#endif
+    }
+
+    return 0;
+}
+
 /***********************************************************/
 /* QEMU Block devices */
 
@@ -1439,13 +1464,22 @@ void qemu_unregister_reset(QEMUResetHandler *func, void *opaque)
     }
 }
 
-void qemu_system_reset(bool report)
+void qemu_devices_reset(void)
 {
     QEMUResetEntry *re, *nre;
 
     /* reset all devices */
     QTAILQ_FOREACH_SAFE(re, &reset_handlers, entry, nre) {
         re->func(re->opaque);
+    }
+}
+
+void qemu_system_reset(bool report)
+{
+    if (current_machine && current_machine->reset) {
+        current_machine->reset();
+    } else {
+        qemu_devices_reset();
     }
     if (report) {
         monitor_protocol_event(QEVENT_RESET, NULL);
@@ -2701,6 +2735,7 @@ int main(int argc, char **argv, char **envp)
                 break;
             case QEMU_OPTION_m: {
                 int64_t value;
+                uint64_t sz;
                 char *end;
 
                 value = strtosz(optarg, &end);
@@ -2708,12 +2743,12 @@ int main(int argc, char **argv, char **envp)
                     fprintf(stderr, "qemu: invalid ram size: %s\n", optarg);
                     exit(1);
                 }
-
-                if (value != (uint64_t)(ram_addr_t)value) {
+                sz = QEMU_ALIGN_UP((uint64_t)value, 8192);
+                ram_size = sz;
+                if (ram_size != sz) {
                     fprintf(stderr, "qemu: ram size too large\n");
                     exit(1);
                 }
-                ram_size = value;
                 break;
             }
             case QEMU_OPTION_mempath:
@@ -3282,12 +3317,22 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_qtest_log:
                 qtest_log = optarg;
                 break;
+            case QEMU_OPTION_sandbox:
+                opts = qemu_opts_parse(qemu_find_opts("sandbox"), optarg, 1);
+                if (!opts) {
+                    exit(0);
+                }
+                break;
             default:
                 os_parse_cmd_args(popt->index, optarg);
             }
         }
     }
     loc_set_none();
+
+    if (qemu_opts_foreach(qemu_find_opts("sandbox"), parse_sandbox, NULL, 0)) {
+        exit(1);
+    }
 
     if (machine == NULL) {
         fprintf(stderr, "No machine found.\n");
