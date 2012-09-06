@@ -15,6 +15,7 @@
 #include "qdict.h"
 #include "qstring.h"
 #include "qemu-error.h"
+#include "error.h"
 #include <stdarg.h>
 
 typedef struct QErrorStringTable {
@@ -40,6 +41,8 @@ void qerror_print(QError *qerror);
 void qerror_report_internal(const char *file, int linenr, const char *func,
                             const char *fmt, ...)
     __attribute__ ((format(printf, 4, 5)));
+void qerror_report_err(Error *err);
+QString *qerror_format(const char *fmt, QDict *error);
 #define qerror_report(fmt, ...) \
     qerror_report_internal(__FILE__, __LINE__, __func__, fmt, ## __VA_ARGS__)
 QError *qobject_to_qerror(const QObject *obj);
@@ -52,6 +55,8 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_BAD_BUS_FOR_DEVICE \
     "{ 'class': 'BadBusForDevice', 'data': { 'device': %s, 'bad_bus_type': %s } }"
 
+#define QERR_BASE_NOT_FOUND \
+    "{ 'class': 'BaseNotFound', 'data': { 'base': %s } }"
 #define QERR_BUS_NOT_FOUND \
     "{ 'class': 'BusNotFound', 'data': { 'bus': %s } }"
 
@@ -61,8 +66,14 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_COMMAND_NOT_FOUND \
     "{ 'class': 'CommandNotFound', 'data': { 'name': %s } }"
 
+#define QERR_COMMAND_DISABLED \
+    "{ 'class': 'CommandDisabled', 'data': { 'name': %s } }"
+
 #define QERR_DEVICE_ENCRYPTED \
     "{ 'class': 'DeviceEncrypted', 'data': { 'device': %s } }"
+
+#define QERR_DEVICE_HAS_NO_MEDIUM \
+    "{ 'class': 'DeviceHasNoMedium', 'data': { 'device': %s } }"
 
 #define QERR_DEVICE_INIT_FAILED \
     "{ 'class': 'DeviceInitFailed', 'data': { 'device': %s } }"
@@ -73,6 +84,9 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_DEVICE_IN_USE \
     "{ 'class': 'DeviceInUse', 'data': { 'device': %s } }"
+
+#define QERR_DEVICE_IS_READ_ONLY \
+    "{ 'class': 'DeviceIsReadOnly', 'data': { 'device': %s } }"
 
 #define QERR_DEVICE_LOCKED \
     "{ 'class': 'DeviceLocked', 'data': { 'device': %s } }"
@@ -122,8 +136,17 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_INVALID_PASSWORD \
     "{ 'class': 'InvalidPassword', 'data': {} }"
 
+#define QERR_IO_ERROR \
+    "{ 'class': 'IOError', 'data': {} }"
+
 #define QERR_JSON_PARSING \
     "{ 'class': 'JSONParsing', 'data': {} }"
+
+#define QERR_JSON_PARSE_ERROR \
+    "{ 'class': 'JSONParseError', 'data': { 'message': %s } }"
+
+#define QERR_BUFFER_OVERRUN \
+    "{ 'class': 'BufferOverrun', 'data': {} }"
 
 #define QERR_KVM_MISSING_CAP \
     "{ 'class': 'KVMMissingCap', 'data': { 'capability': %s, 'feature': %s } }"
@@ -161,6 +184,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_QMP_BAD_INPUT_OBJECT_MEMBER \
     "{ 'class': 'QMPBadInputObjectMember', 'data': { 'member': %s, 'expected': %s } }"
 
+#define QERR_QMP_EXTRA_MEMBER \
+    "{ 'class': 'QMPExtraInputObjectMember', 'data': { 'member': %s } }"
+
 #define QERR_RESET_REQUIRED \
     "{ 'class': 'ResetRequired', 'data': {} }"
 
@@ -182,7 +208,10 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_VNC_SERVER_FAILED \
     "{ 'class': 'VNCServerFailed', 'data': { 'target': %s } }"
 
-#define QERR_STREAMING_ERROR \
-    "{ 'class': 'StreamingError', 'data': { 'msg': %s } }"
+#define QERR_QGA_LOGGING_FAILED \
+    "{ 'class': 'QgaLoggingFailed', 'data': {} }"
+
+#define QERR_QGA_COMMAND_FAILED \
+    "{ 'class': 'QgaCommandFailed', 'data': { 'message': %s } }"
 
 #endif /* QERROR_H */

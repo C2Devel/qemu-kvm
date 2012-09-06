@@ -2649,12 +2649,19 @@ extern int disable_KSM;
  * it even without NPT/EPT).
  */
 #define PREFERRED_RAM_ALIGN (2*1024*1024)
+#define CONFIG_VALGRIND
+#endif
+
+#if defined(CONFIG_VALGRIND)
+static int running_on_valgrind = -1;
+#else
+#  define running_on_valgrind 0
 #endif
 
 static ram_addr_t find_ram_offset(ram_addr_t size)
 {
     RAMBlock *block, *next_block;
-    ram_addr_t offset, mingap = ULONG_MAX;
+    ram_addr_t offset = ULONG_MAX, mingap = ULONG_MAX;
 
     if (QLIST_EMPTY(&ram_list.blocks))
         return 0;
@@ -2670,10 +2677,17 @@ static ram_addr_t find_ram_offset(ram_addr_t size)
             }
         }
         if (next - end >= size && next - end < mingap) {
-            offset =  end;
+            offset = end;
             mingap = next - end;
         }
     }
+
+    if (offset == ULONG_MAX) {
+        fprintf(stderr, "Failed to find gap of requested size: %" PRIu64 "\n",
+                (uint64_t)size);
+        abort();
+    }
+
     return offset;
 }
 
@@ -2692,6 +2706,15 @@ ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
                                    ram_addr_t size, void *host)
 {
     RAMBlock *new_block, *block;
+
+#if defined(CONFIG_VALGRIND)
+    if (running_on_valgrind < 0) {
+        /* First call, test whether we are running on Valgrind.
+           This is a substitute for RUNNING_ON_VALGRIND from valgrind.h. */
+        const char *ld = getenv("LD_PRELOAD");
+        running_on_valgrind = (ld != NULL && strstr(ld, "vgpreload"));
+    }
+#endif
 
     size = TARGET_PAGE_ALIGN(size);
     new_block = qemu_mallocz(sizeof(*new_block));
@@ -2727,6 +2750,9 @@ ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
 #else
 #ifdef PREFERRED_RAM_ALIGN
 	    if (size >= PREFERRED_RAM_ALIGN)
+                if (running_on_valgrind)
+		    new_block->host = qemu_vmalloc(size);
+                else
 		    new_block->host = qemu_memalign(PREFERRED_RAM_ALIGN, size);
 	    else
 #endif 
@@ -2809,6 +2835,12 @@ void qemu_ram_free(ram_addr_t addr)
         }
     }
 
+}
+
+void qemu_flush_coalesced_mmio_buffer(void)
+{
+    if (kvm_enabled())
+        kvm_flush_coalesced_mmio_buffer();
 }
 
 #ifndef _WIN32
@@ -3754,7 +3786,7 @@ void cpu_physical_memory_unmap(void *buffer, target_phys_addr_t len,
     if (is_write) {
         cpu_physical_memory_write(bounce.addr, bounce.buffer, access_len);
     }
-    qemu_free(bounce.buffer);
+    qemu_vfree(bounce.buffer);
     bounce.buffer = NULL;
     cpu_notify_map_clients();
 }

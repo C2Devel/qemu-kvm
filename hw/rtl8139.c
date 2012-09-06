@@ -2052,12 +2052,12 @@ static int rtl8139_cplus_transmit_one(RTL8139State *s)
         DEBUG_PRINT(("RTL8139: +++ C+ mode transmission buffer allocated space %d\n", s->cplus_txbuffer_len));
     }
 
-    while (s->cplus_txbuffer && s->cplus_txbuffer_offset + txsize >= s->cplus_txbuffer_len)
+    if (s->cplus_txbuffer_offset + txsize >= s->cplus_txbuffer_len)
     {
-        s->cplus_txbuffer_len += CP_TX_BUFFER_SIZE;
-        s->cplus_txbuffer = qemu_realloc(s->cplus_txbuffer, s->cplus_txbuffer_len);
-
-        DEBUG_PRINT(("RTL8139: +++ C+ mode transmission buffer space changed to %d\n", s->cplus_txbuffer_len));
+        /* The spec didn't tell the maximum size, stick to CP_TX_BUFFER_SIZE */
+        txsize = s->cplus_txbuffer_len - s->cplus_txbuffer_offset;
+        DEBUG_PRINT(("+++ C+ mode transmission buffer overrun, truncated descriptor"
+                     "length to %d\n", txsize));
     }
 
     if (!s->cplus_txbuffer)

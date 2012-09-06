@@ -68,6 +68,7 @@ typedef struct {
         uint32_t r_baseport; /* the base guest port for I/O regions */
     } u;
     int num;            /* our index within v_addrs[] */
+    int mmio_index;     /* cpu_register_io_memory (slow mapped BARs) */
     pcibus_t e_size;    /* emulated size of region in bytes */
     pcibus_t r_size;    /* real size of region in bytes */
     PCIRegion *region;

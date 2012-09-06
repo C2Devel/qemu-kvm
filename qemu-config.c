@@ -87,10 +87,6 @@ QemuOptsList qemu_drive_opts = {
             .name = "copy-on-read",
             .type = QEMU_OPT_BOOL,
             .help = "copy read data from backing file into image file",
-        },{
-            .name = "stream",
-            .type = QEMU_OPT_BOOL,
-            .help = "copy backing file data into image file while guest runs",
         },
         { /* end if list */ }
     },

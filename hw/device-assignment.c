@@ -249,11 +249,9 @@ static void assigned_dev_iomem_map_slow(PCIDevice *pci_dev, int region_num,
     AssignedDevice *r_dev = container_of(pci_dev, AssignedDevice, dev);
     AssignedDevRegion *region = &r_dev->v_addrs[region_num];
     PCIRegion *real_region = &r_dev->real_device.regions[region_num];
-    int m;
 
     DEBUG("%s", "slow map\n");
-    m = cpu_register_io_memory(slow_bar_read, slow_bar_write, region);
-    cpu_register_physical_memory(e_phys, e_size, m);
+    cpu_register_physical_memory(e_phys, e_size, region->mmio_index);
 
     /* MSI-X MMIO page */
     if ((e_size > 0) &&
@@ -513,6 +511,9 @@ again:
     }
 }
 
+static uint32_t merge_bits(uint32_t val, uint32_t mval, uint8_t addr,
+                           int len, uint8_t pos, uint32_t mask);
+
 static uint32_t assigned_dev_pci_read_config(PCIDevice *d, uint32_t address,
                                              int len)
 {
@@ -567,6 +568,10 @@ do_log:
             val &= ~0x10;
     }
 
+    /* Use emulated multifunction header type bit */
+    val = merge_bits(val, pci_get_long(d->config + address), address,
+                     len, PCI_HEADER_TYPE, PCI_HEADER_TYPE_MULTI_FUNCTION);
+
     return val;
 }
 
@@ -597,6 +602,16 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
                         i, (unsigned long long)cur_region->base_addr,
                         cur_region->size);
                 slow_map = 1;
+
+                pci_dev->v_addrs[i].mmio_index =
+                                 cpu_register_io_memory(slow_bar_read,
+                                                        slow_bar_write,
+                                                        &pci_dev->v_addrs[i]);
+                if (pci_dev->v_addrs[i].mmio_index < 0) {
+                    fprintf(stderr, "%s: Error registering IO memory\n",
+                            __func__);
+                    return -1;
+                }
             }
 
             /* map physical memory */
@@ -612,6 +627,12 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
                 fprintf(stderr, "%s: Error: Couldn't mmap 0x%x!"
                         "\n", __func__,
                         (uint32_t) (cur_region->base_addr));
+
+                if (slow_map) {
+                    cpu_unregister_io_memory(pci_dev->v_addrs[i].mmio_index);
+                    pci_dev->v_addrs[i].mmio_index = -1;
+                }
+
                 return -1;
             }
 
@@ -636,8 +657,9 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
              * kernels return EIO.  New kernels only allow 1/2/4 byte reads
              * so should return EINVAL for a 3 byte read */
             ret = pread(pci_dev->v_addrs[i].region->resource_fd, &val, 3, 0);
-            if (ret == 3) {
-                fprintf(stderr, "I/O port resource supports 3 byte read?!\n");
+            if (ret >= 0) {
+                fprintf(stderr, "Unexpected return from I/O port read: %d\n",
+                        ret);
                 abort();
             } else if (errno != EINVAL) {
                 fprintf(stderr, "Using raw in/out ioport access (sysfs - %s)\n",
@@ -711,6 +733,13 @@ again:
         fprintf(stderr, "%s: read failed, errno = %d\n", __func__, errno);
     }
 
+    /* Restore or clear multifunction, this is always controlled by qemu */
+    if (pci_dev->dev.cap_present & QEMU_PCI_CAP_MULTIFUNCTION) {
+        pci_dev->dev.config[PCI_HEADER_TYPE] |= PCI_HEADER_TYPE_MULTI_FUNCTION;
+    } else {
+        pci_dev->dev.config[PCI_HEADER_TYPE] &= ~PCI_HEADER_TYPE_MULTI_FUNCTION;
+    }
+
     /* Clear host resource mapping info.  If we choose not to register a
      * BAR, such as might be the case with the option ROM, we can get
      * confusing, unwritable, residual addresses from the host here. */
@@ -752,6 +781,7 @@ again:
         rp->base_addr = start;
         rp->size = size;
         pci_dev->v_addrs[r].region = rp;
+        pci_dev->v_addrs[r].mmio_index = -1;
         DEBUG("region %d size %d start 0x%llx type %d resource_fd %d\n",
               r, rp->size, start, rp->type, rp->resource_fd);
     }
@@ -796,6 +826,8 @@ again:
 }
 
 static QLIST_HEAD(, AssignedDevice) devs = QLIST_HEAD_INITIALIZER(devs);
+static Notifier suspend_notifier;
+static QEMUBH *suspend_bh;
 
 #ifdef KVM_CAP_IRQ_ROUTING
 static void free_dev_irq_entries(AssignedDevice *dev)
@@ -851,6 +883,10 @@ static void free_assigned_device(AssignedDevice *dev)
                         kvm_destroy_phys_mem(kvm_context, region->e_physbase,
                                              TARGET_PAGE_ALIGN(region->e_size));
                     }
+                }
+
+                if (region->mmio_index >= 0) {
+                    cpu_unregister_io_memory(region->mmio_index);
                 }
 
                 if (region->u.r_virtbase) {
@@ -1422,8 +1458,8 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
 
     if ((pos = pci_find_cap_offset(pci_dev, PCI_CAP_ID_EXP, 0))) {
         uint8_t version, size = 0;
-        uint16_t type, devctl, lnkcap, lnksta;
-        uint32_t devcap;
+        uint16_t type, devctl, lnksta;
+        uint32_t devcap, lnkcap;
 
         version = pci_get_byte(pci_dev->config + pos + PCI_EXP_FLAGS);
         version &= PCI_EXP_FLAGS_VERS;
@@ -1474,7 +1510,7 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
         }
 
         type = pci_get_word(pci_dev->config + pos + PCI_EXP_FLAGS);
-        type = (type & PCI_EXP_FLAGS_TYPE) >> 8;
+        type = (type & PCI_EXP_FLAGS_TYPE) >> 4;
         if (type != PCI_EXP_TYPE_ENDPOINT &&
             type != PCI_EXP_TYPE_LEG_END && type != PCI_EXP_TYPE_RC_END) {
             fprintf(stderr,
@@ -1492,7 +1528,7 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
         pci_set_long(pci_dev->config + pos + PCI_EXP_DEVCAP, devcap);
 
         /* device control: clear all error reporting enable bits, leaving
-         *                 leaving only a few host values.  Note, these are
+         *                 only a few host values.  Note, these are
          *                 all writable, but not passed to hw.
          */
         devctl = pci_get_word(pci_dev->config + pos + PCI_EXP_DEVCTL);
@@ -1506,15 +1542,11 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
         pci_set_word(pci_dev->config + pos + PCI_EXP_DEVSTA, 0);
 
         /* Link capabilities, expose links and latencues, clear reporting */
-        lnkcap = pci_get_word(pci_dev->config + pos + PCI_EXP_LNKCAP);
+        lnkcap = pci_get_long(pci_dev->config + pos + PCI_EXP_LNKCAP);
         lnkcap &= (PCI_EXP_LNKCAP_SLS | PCI_EXP_LNKCAP_MLW |
                    PCI_EXP_LNKCAP_ASPMS | PCI_EXP_LNKCAP_L0SEL |
                    PCI_EXP_LNKCAP_L1EL);
-        pci_set_word(pci_dev->config + pos + PCI_EXP_LNKCAP, lnkcap);
-        pci_set_word(pci_dev->wmask + pos + PCI_EXP_LNKCAP,
-                     PCI_EXP_LNKCTL_ASPMC | PCI_EXP_LNKCTL_RCB |
-                     PCI_EXP_LNKCTL_CCC | PCI_EXP_LNKCTL_ES |
-                     PCI_EXP_LNKCTL_CLKREQ_EN | PCI_EXP_LNKCTL_HAWD);
+        pci_set_long(pci_dev->config + pos + PCI_EXP_LNKCAP, lnkcap);
 
         /* Link control, pass existing read-only copy.  Should be writable? */
 
@@ -1687,7 +1719,31 @@ static void reset_assigned_device(DeviceState *dev)
     AssignedDevice *adev = DO_UPCAST(AssignedDevice, dev, pci_dev);
     char reset_file[64];
     const char reset[] = "1";
-    int fd, ret;
+    int fd, ret, pos;
+
+    /*
+     * If a guest is reset without being shutdown, MSI/MSI-X can still
+     * be running.  We want to return the device to a known state on
+     * reset, so disable those here.  We especially do not want MSI-X
+     * enabled since it lives in MMIO space, which is about to get
+     * disabled.
+     */
+    if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSIX) {
+        if ((pos = pci_find_cap_offset(pci_dev, PCI_CAP_ID_MSIX, 0))) {
+            uint16_t ctrl = pci_get_word(pci_dev->config + pos +
+                                         PCI_MSIX_FLAGS);
+            pci_set_word(pci_dev->config + pos + PCI_MSIX_FLAGS,
+                         ctrl & ~PCI_MSIX_FLAGS_ENABLE);
+            assigned_dev_update_msix(pci_dev, pos + PCI_MSIX_FLAGS);
+        }
+    } else if (adev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSI) {
+        if ((pos = pci_find_cap_offset(pci_dev, PCI_CAP_ID_MSI, 0))) {
+            uint8_t ctrl = pci_get_byte(pci_dev->config + pos + PCI_MSI_FLAGS);
+            pci_set_byte(pci_dev->config + pos + PCI_MSI_FLAGS,
+                         ctrl & ~PCI_MSI_FLAGS_ENABLE);
+            assigned_dev_update_msi(pci_dev, pos + PCI_MSI_FLAGS);
+        }
+    }
 
     snprintf(reset_file, sizeof(reset_file),
              "/sys/bus/pci/devices/0000:%02x:%02x.%01x/reset",
@@ -1710,6 +1766,16 @@ static void reset_assigned_device(DeviceState *dev)
      * disconnected from the PCI bus. This avoids further DMA transfers.
      */
     assigned_dev_pci_write_config(pci_dev, PCI_COMMAND, 0, 2);
+}
+
+static void assigned_suspend_notify(Notifier *notifier, void *data)
+{
+    qemu_bh_schedule(suspend_bh);
+}
+
+static void assigned_suspend_bh(void *opaque)
+{
+    qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
 }
 
 static int assigned_initfn(struct PCIDevice *pci_dev)
@@ -1783,6 +1849,12 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
             goto assigned_out;
 
     assigned_dev_load_option_rom(dev);
+
+    if (QLIST_EMPTY(&devs)) {
+        suspend_notifier.notify = assigned_suspend_notify;
+        qemu_register_suspend_notifier(&suspend_notifier);
+        suspend_bh = qemu_bh_new(assigned_suspend_bh, dev);
+    }
     QLIST_INSERT_HEAD(&devs, dev, next);
 
     add_boot_device_path(dev->bootindex, &pci_dev->qdev, NULL);
@@ -1791,6 +1863,7 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     vmstate_register(&dev->dev.qdev, 0, &vmstate_assigned_device, dev);
     register_device_unmigratable(&dev->dev.qdev,
                                  vmstate_assigned_device.name, dev);
+
 
     return 0;
 
@@ -1807,6 +1880,10 @@ static int assigned_exitfn(struct PCIDevice *pci_dev)
 
     vmstate_unregister(&dev->dev.qdev, &vmstate_assigned_device, dev);
     QLIST_REMOVE(dev, next);
+    if (QLIST_EMPTY(&devs)) {
+        qemu_bh_delete(suspend_bh);
+        qemu_unregister_suspend_notifier(&suspend_notifier);
+    }
     deassign_device(dev);
     free_assigned_device(dev);
     return 0;

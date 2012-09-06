@@ -60,6 +60,8 @@ int kvm_has_vcpu_events(void);
 int kvm_put_vcpu_events(CPUState *env);
 int kvm_get_vcpu_events(CPUState *env);
 
+void kvm_flush_coalesced_mmio_buffer(void);
+
 #ifdef KVM_UPSTREAM
 
 void kvm_setup_guest_memory(void *start, size_t size);
@@ -141,7 +143,7 @@ void kvm_arch_update_guest_debug(CPUState *env, struct kvm_guest_debug *dbg);
 
 int kvm_check_extension(KVMState *s, unsigned int extension);
 
-uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
+uint32_t kvm_arch_get_supported_cpuid(KVMState *env, uint32_t function,
                                       uint32_t index, int reg);
 void kvm_cpu_synchronize_state(CPUState *env);
 

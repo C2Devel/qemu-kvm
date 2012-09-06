@@ -17,6 +17,8 @@ enum qxl_mode {
 
 #define QXL_UNDEFINED_IO UINT32_MAX
 
+#define QXL_NUM_DIRTY_RECTS 64
+
 typedef struct PCIQXLDevice {
     PCIDevice          pci;
     SimpleSpiceDisplay ssd;
@@ -47,10 +49,11 @@ typedef struct PCIQXLDevice {
         QXLSurfaceCreate surface;
         uint32_t       commands;
         uint32_t       resized;
-        int32_t        stride;
+        int32_t        qxl_stride;
+        uint32_t       abs_stride;
         uint32_t       bits_pp;
         uint32_t       bytes_pp;
-        uint8_t        *data, *flipped;
+        uint8_t        *data;
     } guest_primary;
 
     struct surfaces {
@@ -87,6 +90,12 @@ typedef struct PCIQXLDevice {
 
     /* io bar */
     uint32_t           io_base;
+
+    /* qxl_render_update state */
+    int                render_update_cookie_num;
+    int                num_dirty_rects;
+    QXLRect            dirty[QXL_NUM_DIRTY_RECTS];
+    QEMUBH            *update_area_bh;
 } PCIQXLDevice;
 
 #define PANIC_ON(x) if ((x)) {                         \
@@ -102,11 +111,7 @@ typedef struct PCIQXLDevice {
         }                                                               \
     } while (0)
 
-#if SPICE_INTERFACE_QXL_MINOR >= 1
 #define QXL_DEFAULT_REVISION QXL_REVISION_STABLE_V10
-#else
-#define QXL_DEFAULT_REVISION QXL_REVISION_STABLE_V06
-#endif
 
 /* qxl.c */
 void *qxl_phys2virt(PCIQXLDevice *qxl, QXLPHYSICAL phys, int group_id);
@@ -116,7 +121,7 @@ void qxl_spice_update_area(PCIQXLDevice *qxl, uint32_t surface_id,
                            struct QXLRect *area, struct QXLRect *dirty_rects,
                            uint32_t num_dirty_rects,
                            uint32_t clear_dirty_region,
-                           qxl_async_io async);
+                           qxl_async_io async, QXLCookie *cookie);
 void qxl_spice_loadvm_commands(PCIQXLDevice *qxl, struct QXLCommandExt *ext,
                                uint32_t count);
 void qxl_spice_oom(PCIQXLDevice *qxl);
@@ -132,12 +137,8 @@ void qxl_log_command(PCIQXLDevice *qxl, const char *ring, QXLCommandExt *ext);
 void qxl_render_resize(PCIQXLDevice *qxl);
 void qxl_render_update(PCIQXLDevice *qxl);
 void qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext);
-#if SPICE_INTERFACE_QXL_MINOR >= 1
-void qxl_spice_update_area_async(PCIQXLDevice *qxl, uint32_t surface_id,
-                                 struct QXLRect *area,
-                                 uint32_t clear_dirty_region,
-                                 int is_vga);
-#endif
+void qxl_render_update_area_done(PCIQXLDevice *qxl, QXLCookie *cookie);
+void qxl_render_update_area_bh(void *opaque);
 
 /* rhel6 only */
 int rhel6_qxl_screendump(const char *id, const char *filename);

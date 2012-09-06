@@ -178,7 +178,7 @@ void vga_hw_screen_dump(const char *filename)
     active_console = consoles[0];
     /* There is currently no way of specifying which screen we want to dump,
        so always dump the first one.  */
-    if (consoles[0]->hw_screen_dump)
+    if (consoles[0] && consoles[0]->hw_screen_dump)
         consoles[0]->hw_screen_dump(consoles[0]->hw, filename);
     active_console = previous_active_console;
 }
@@ -459,7 +459,7 @@ static void vga_putcharxy(DisplayState *ds, int x, int y, int ch,
             font_data = *font_ptr++;
             if (t_attrib->uline
                 && ((i == FONT_HEIGHT - 2) || (i == FONT_HEIGHT - 3))) {
-                font_data = 0xFFFF;
+                font_data = 0xFF;
             }
             ((uint32_t *)d)[0] = (dmask16[(font_data >> 4)] & xorcol) ^ bgcol;
             ((uint32_t *)d)[1] = (dmask16[(font_data >> 0) & 0xf] & xorcol) ^ bgcol;
@@ -472,7 +472,7 @@ static void vga_putcharxy(DisplayState *ds, int x, int y, int ch,
             font_data = *font_ptr++;
             if (t_attrib->uline
                 && ((i == FONT_HEIGHT - 2) || (i == FONT_HEIGHT - 3))) {
-                font_data = 0xFFFF;
+                font_data = 0xFF;
             }
             ((uint32_t *)d)[0] = (dmask4[(font_data >> 6)] & xorcol) ^ bgcol;
             ((uint32_t *)d)[1] = (dmask4[(font_data >> 4) & 3] & xorcol) ^ bgcol;
@@ -485,7 +485,7 @@ static void vga_putcharxy(DisplayState *ds, int x, int y, int ch,
         for(i = 0; i < FONT_HEIGHT; i++) {
             font_data = *font_ptr++;
             if (t_attrib->uline && ((i == FONT_HEIGHT - 2) || (i == FONT_HEIGHT - 3))) {
-                font_data = 0xFFFF;
+                font_data = 0xFF;
             }
             ((uint32_t *)d)[0] = (-((font_data >> 7)) & xorcol) ^ bgcol;
             ((uint32_t *)d)[1] = (-((font_data >> 6) & 1) & xorcol) ^ bgcol;
@@ -1002,16 +1002,17 @@ static void console_putchar(TextConsole *s, int ch)
                             console_clear_xy(s, x, y);
                         }
                     }
-                break;
+                    break;
                 }
+                break;
             case 'K':
                 switch (s->esc_params[0]) {
                 case 0:
-                /* clear to eol */
-                for(x = s->x; x < s->width; x++) {
+                    /* clear to eol */
+                    for(x = s->x; x < s->width; x++) {
                         console_clear_xy(s, x, s->y);
-                }
-                break;
+                    }
+                    break;
                 case 1:
                     /* clear from beginning of line */
                     for (x = 0; x <= s->x; x++) {
@@ -1023,12 +1024,12 @@ static void console_putchar(TextConsole *s, int ch)
                     for(x = 0; x < s->width; x++) {
                         console_clear_xy(s, x, s->y);
                     }
-                break;
-            }
+                    break;
+                }
                 break;
             case 'm':
-            console_handle_escape(s);
-            break;
+                console_handle_escape(s);
+                break;
             case 'n':
                 /* report cursor position */
                 /* TODO: send ESC[row;colR */
@@ -1537,6 +1538,7 @@ PixelFormat qemu_default_pixelformat(int bpp)
             pf.rbits = 8;
             pf.gbits = 8;
             pf.bbits = 8;
+            break;
         case 32:
             pf.rmask = 0x00FF0000;
             pf.gmask = 0x0000FF00;

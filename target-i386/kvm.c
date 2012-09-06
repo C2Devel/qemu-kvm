@@ -66,7 +66,7 @@ static struct kvm_cpuid2 *try_get_cpuid(KVMState *s, int max)
     return cpuid;
 }
 
-uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
+uint32_t kvm_arch_get_supported_cpuid(KVMState *s, uint32_t function,
                                       uint32_t index, int reg)
 {
     struct kvm_cpuid2 *cpuid;
@@ -74,12 +74,12 @@ uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
     uint32_t ret = 0;
     uint32_t cpuid_1_edx;
 
-    if (!kvm_check_extension(env->kvm_state, KVM_CAP_EXT_CPUID)) {
+    if (!kvm_check_extension(struct, KVM_CAP_EXT_CPUID)) {
         return -1U;
     }
 
     max = 1;
-    while ((cpuid = try_get_cpuid(env->kvm_state, max)) == NULL) {
+    while ((cpuid = try_get_cpuid(s, max)) == NULL) {
         max *= 2;
     }
 
@@ -102,7 +102,7 @@ uint32_t kvm_arch_get_supported_cpuid(CPUState *env, uint32_t function,
                     /* On Intel, kvm returns cpuid according to the Intel spec,
                      * so add missing bits according to the AMD spec:
                      */
-                    cpuid_1_edx = kvm_arch_get_supported_cpuid(env, 1, 0, R_EDX);
+                    cpuid_1_edx = kvm_arch_get_supported_cpuid(s, 1, 0, R_EDX);
                     ret |= cpuid_1_edx & 0xdfeff7ff;
                 }
                 break;
@@ -144,23 +144,24 @@ int kvm_arch_init_vcpu(CPUState *env)
         struct kvm_cpuid2 cpuid;
         struct kvm_cpuid_entry2 entries[100];
     } __attribute__((packed)) cpuid_data;
+    KVMState *s = env->kvm_state;
     uint32_t limit, i, j, cpuid_i;
     uint32_t unused;
 
     env->mp_state = KVM_MP_STATE_RUNNABLE;
 
     kvm_trim_features(&env->cpuid_features,
-        kvm_arch_get_supported_cpuid(env, 1, 0, R_EDX));
+        kvm_arch_get_supported_cpuid(s, 1, 0, R_EDX));
 
     i = env->cpuid_ext_features & CPUID_EXT_HYPERVISOR;
     kvm_trim_features(&env->cpuid_ext_features,
-        kvm_arch_get_supported_cpuid(env, 1, 0, R_ECX));
+        kvm_arch_get_supported_cpuid(s, 1, 0, R_ECX));
     env->cpuid_ext_features |= i;
 
     kvm_trim_features(&env->cpuid_ext2_features,
-        kvm_arch_get_supported_cpuid(env, 0x80000001, 0, R_EDX));
+        kvm_arch_get_supported_cpuid(s, 0x80000001, 0, R_EDX));
     kvm_trim_features(&env->cpuid_ext3_features,
-        kvm_arch_get_supported_cpuid(env, 0x80000001, 0, R_ECX));
+        kvm_arch_get_supported_cpuid(s, 0x80000001, 0, R_ECX));
 
     cpuid_i = 0;
 
@@ -1115,7 +1116,7 @@ void kvm_arch_update_guest_debug(CPUState *env, struct kvm_guest_debug *dbg)
             dbg->arch.debugreg[n] = hw_breakpoint[n].addr;
             dbg->arch.debugreg[7] |= (2 << (n * 2)) |
                 (type_code[hw_breakpoint[n].type] << (16 + n*4)) |
-                (len_code[hw_breakpoint[n].len] << (18 + n*4));
+                ((uint32_t)len_code[hw_breakpoint[n].len] << (18 + n*4));
         }
     }
 }

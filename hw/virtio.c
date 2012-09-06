@@ -29,6 +29,7 @@
  */
 
 #define wmb() __asm__ __volatile__("": : :"memory")
+#define mb()    __asm__ __volatile__("mfence":::"memory")
 
 typedef struct VRingDesc
 {
@@ -216,6 +217,10 @@ void virtio_queue_set_notification(VirtQueue *vq, int enable)
         vring_used_flags_unset_bit(vq, VRING_USED_F_NO_NOTIFY);
     } else {
         vring_used_flags_set_bit(vq, VRING_USED_F_NO_NOTIFY);
+    }
+    if (enable) {
+        /* We need to expose avail event/flags before checking avail idx. */
+        mb();
     }
 }
 
@@ -691,6 +696,8 @@ static bool vring_notify(VirtIODevice *vdev, VirtQueue *vq)
 {
     uint16_t old, new;
     bool v;
+    /* We need to expose used array entries before checking used event. */
+    mb();
     /* Always notify when queue is empty (when feature acknowledge) */
     if (((vdev->guest_features & (1 << VIRTIO_F_NOTIFY_ON_EMPTY)) &&
          !vq->inuse && vring_avail_idx(vq) == vq->last_avail_idx)) {
@@ -761,12 +768,12 @@ void virtio_save(VirtIODevice *vdev, QEMUFile *f)
     }
 }
 
-int virtio_load(VirtIODevice *vdev, QEMUFile *f)
+int virtio_load_with_features(VirtIODevice *vdev, QEMUFile *f,
+                              uint32_t extra_features)
 {
     int num, i, ret;
     uint32_t features;
-    uint32_t supported_features =
-        vdev->binding->get_features(vdev->binding_opaque);
+    uint32_t supported_features;
 
     if (vdev->binding->load_config) {
         ret = vdev->binding->load_config(vdev->binding_opaque, f);
@@ -778,6 +785,10 @@ int virtio_load(VirtIODevice *vdev, QEMUFile *f)
     qemu_get_8s(f, &vdev->isr);
     qemu_get_be16s(f, &vdev->queue_sel);
     qemu_get_be32s(f, &features);
+
+    vdev->binding->force_features(vdev->binding_opaque,
+                                  features & extra_features);
+    supported_features = vdev->binding->get_features(vdev->binding_opaque);
     if (features & ~supported_features) {
         fprintf(stderr, "Features 0x%x unsupported. Allowed features: 0x%x\n",
                 features, supported_features);
@@ -810,6 +821,11 @@ int virtio_load(VirtIODevice *vdev, QEMUFile *f)
 
     virtio_notify_vector(vdev, VIRTIO_NO_VECTOR);
     return 0;
+}
+
+int virtio_load(VirtIODevice *vdev, QEMUFile *f)
+{
+    return virtio_load_with_features(vdev, f, 0);
 }
 
 void virtio_cleanup(VirtIODevice *vdev)

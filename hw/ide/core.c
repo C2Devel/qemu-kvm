@@ -469,7 +469,7 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
     BlockErrorAction action = bdrv_get_on_error(s->bs, is_read);
 
     if (action == BLOCK_ERR_IGNORE) {
-        bdrv_mon_event(s->bs, BDRV_ACTION_IGNORE, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_IGNORE, error, is_read);
         return 0;
     }
 
@@ -477,8 +477,9 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
             || action == BLOCK_ERR_STOP_ANY) {
         s->bus->bmdma->unit = s->unit;
         s->bus->error_status = op;
-        bdrv_mon_event(s->bs, BDRV_ACTION_STOP, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_STOP, error, is_read);
         vm_stop(RUN_STATE_IO_ERROR);
+        bdrv_iostatus_set_err(s->bs, error);
     } else {
         if (op & BM_STATUS_DMA_RETRY) {
             dma_buf_commit(s, 0);
@@ -486,7 +487,7 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
         } else {
             ide_rw_error(s);
         }
-        bdrv_mon_event(s->bs, BDRV_ACTION_REPORT, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_REPORT, error, is_read);
     }
 
     return 1;
@@ -865,6 +866,18 @@ static void ide_cd_change_cb(void *opaque, bool load)
      */
     s->cdrom_changed = 1;
     s->events.new_media = true;
+    s->events.eject_request = false;
+    ide_set_irq(s->bus);
+}
+
+static void ide_cd_eject_request_cb(void *opaque, bool force)
+{
+    IDEState *s = opaque;
+
+    s->events.eject_request = true;
+    if (force) {
+        s->tray_locked = false;
+    }
     ide_set_irq(s->bus);
 }
 
@@ -1116,6 +1129,9 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
             ide_set_signature(s); /* odd, but ATA4 8.27.5.2 requires it */
             goto abort_cmd;
         }
+        if (!s->bs) {
+            goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         s->req_nb_sectors = 1;
         ide_sector_read(s);
@@ -1126,6 +1142,9 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
     case WIN_WRITE_ONCE:
     case CFA_WRITE_SECT_WO_ERASE:
     case WIN_WRITE_VERIFY:
+        if (!s->bs) {
+            goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         s->error = 0;
         s->status = SEEK_STAT | READY_STAT;
@@ -1136,8 +1155,12 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
     case WIN_MULTREAD_EXT:
 	lba48 = 1;
     case WIN_MULTREAD:
-        if (!s->mult_sectors)
+        if (!s->bs) {
             goto abort_cmd;
+        }
+        if (!s->mult_sectors) {
+            goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         s->req_nb_sectors = s->mult_sectors;
         ide_sector_read(s);
@@ -1146,8 +1169,12 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
 	lba48 = 1;
     case WIN_MULTWRITE:
     case CFA_WRITE_MULTI_WO_ERASE:
-        if (!s->mult_sectors)
+        if (!s->bs) {
             goto abort_cmd;
+        }
+        if (!s->mult_sectors) {
+            goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         s->error = 0;
         s->status = SEEK_STAT | READY_STAT;
@@ -1162,8 +1189,9 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
 	lba48 = 1;
     case WIN_READDMA:
     case WIN_READDMA_ONCE:
-        if (!s->bs)
+        if (!s->bs) {
             goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         ide_sector_read_dma(s);
         break;
@@ -1171,8 +1199,9 @@ void ide_exec_cmd(IDEBus *bus, uint32_t val)
 	lba48 = 1;
     case WIN_WRITEDMA:
     case WIN_WRITEDMA_ONCE:
-        if (!s->bs)
+        if (!s->bs) {
             goto abort_cmd;
+        }
 	ide_cmd_lba48_transform(s, lba48);
         ide_sector_write_dma(s);
         s->media_changed = 1;
@@ -1819,6 +1848,7 @@ static bool ide_cd_is_medium_locked(void *opaque)
 
 static const BlockDevOps ide_cd_block_ops = {
     .change_media_cb = ide_cd_change_cb,
+    .eject_request_cb = ide_cd_eject_request_cb,
     .is_tray_open = ide_cd_is_tray_open,
     .is_medium_locked = ide_cd_is_medium_locked,
 };
@@ -1858,6 +1888,10 @@ int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version)
         bdrv_set_dev_ops(bs, &ide_cd_block_ops, s);
         s->bs->buffer_alignment = 2048;
     } else {
+        if (!bdrv_is_inserted(s->bs)) {
+            error_report("Device needs media, but drive is empty");
+            return -1;
+        }
         if (bdrv_is_read_only(bs)) {
             error_report("Can't use a read-only drive");
             return -1;
@@ -1876,6 +1910,7 @@ int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version)
         pstrcpy(s->version, sizeof(s->version), QEMU_VERSION);
     }
     ide_reset(s);
+    bdrv_iostatus_enable(bs);
     return 0;
 }
 
@@ -1989,8 +2024,7 @@ static int ide_drive_pio_post_load(void *opaque, int version_id)
 {
     IDEState *s = opaque;
 
-    if (s->end_transfer_fn_idx < 0 ||
-        s->end_transfer_fn_idx > ARRAY_SIZE(transfer_end_table)) {
+    if (s->end_transfer_fn_idx >= ARRAY_SIZE(transfer_end_table)) {
         return -EINVAL;
     }
     s->end_transfer_func = transfer_end_table[s->end_transfer_fn_idx];
@@ -2024,15 +2058,6 @@ static bool ide_drive_pio_state_needed(void *opaque)
 
     return ((s->status & DRQ_STAT) != 0)
         || (s->bus->error_status & BM_STATUS_PIO_RETRY);
-}
-
-static int ide_tray_state_post_load(void *opaque, int version_id)
-{
-    IDEState *s = opaque;
-
-    bdrv_eject(s->bs, s->tray_open);
-    bdrv_lock_medium(s->bs, s->tray_locked);
-    return 0;
 }
 
 static bool ide_tray_state_needed(void *opaque)
@@ -2074,7 +2099,6 @@ static const VMStateDescription vmstate_ide_tray_state = {
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .post_load = ide_tray_state_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_BOOL(tray_open, IDEState),
         VMSTATE_BOOL(tray_locked, IDEState),

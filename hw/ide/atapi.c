@@ -526,9 +526,14 @@ static unsigned int event_status_media(IDEState *s,
 
     /* Event notification descriptor */
     event_code = MEC_NO_CHANGE;
-    if (media_status != MS_TRAY_OPEN && s->events.new_media) {
-        event_code = MEC_NEW_MEDIA;
-        s->events.new_media = false;
+    if (media_status != MS_TRAY_OPEN) {
+        if (s->events.new_media) {
+            event_code = MEC_NEW_MEDIA;
+            s->events.new_media = false;
+        } else if (s->events.eject_request) {
+            event_code = MEC_EJECT_REQUESTED;
+            s->events.eject_request = false;
+        }
     }
 
     buf[4] = event_code;
@@ -913,8 +918,11 @@ static void cmd_start_stop_unit(IDEState *s, uint8_t* buf)
             ide_atapi_cmd_error(s, sense, ASC_MEDIA_REMOVAL_PREVENTED);
             return;
         }
-        bdrv_eject(s->bs, !start);
-        s->tray_open = !start;
+
+        if (s->tray_open != !start) {
+            bdrv_eject(s->bs, !start);
+            s->tray_open = !start;
+        }
     }
 
     ide_atapi_cmd_ok(s);

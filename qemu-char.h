@@ -77,6 +77,7 @@ struct CharDriverState {
     /* Are we in a blocked state? */
     bool write_blocked;
     int avail_connections;
+    int opened;
     QTAILQ_ENTRY(CharDriverState) next;
 };
 
@@ -99,6 +100,7 @@ int qemu_chr_write(CharDriverState *s, const uint8_t *buf, int len);
 void qemu_chr_send_event(CharDriverState *s, int event);
 void qemu_chr_add_handlers(CharDriverState *s, const QemuChrHandlers *handlers,
                            void *opaque);
+void qemu_chr_event(CharDriverState *s, int event);
 int qemu_chr_ioctl(CharDriverState *s, int cmd, void *arg);
 void qemu_chr_generic_open(CharDriverState *s);
 int qemu_chr_can_read(CharDriverState *s);

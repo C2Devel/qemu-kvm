@@ -922,6 +922,8 @@ void post_kvm_run(kvm_context_t kvm, CPUState *env)
     pthread_mutex_lock(&qemu_mutex);
     kvm_arch_post_run(env, env->kvm_run);
     cpu_single_env = env;
+
+    kvm_flush_coalesced_mmio_buffer();
 }
 
 int pre_kvm_run(kvm_context_t kvm, CPUState *env)
@@ -965,6 +967,30 @@ static int kvm_handle_internal_error(kvm_context_t kvm,
     return 1;
 }
 
+void kvm_flush_coalesced_mmio_buffer(void)
+{
+#if defined(KVM_CAP_COALESCED_MMIO)
+    if (kvm_state->coalesced_flush_in_progress) {
+        return;
+    }
+
+    kvm_state->coalesced_flush_in_progress = true;
+
+    if (kvm_state->coalesced_mmio) {
+        struct kvm_coalesced_mmio_ring *ring = kvm_state->coalesced_mmio_ring;
+        while (ring->first != ring->last) {
+            cpu_physical_memory_rw(ring->coalesced_mmio[ring->first].phys_addr,
+                           &ring->coalesced_mmio[ring->first].data[0],
+                           ring->coalesced_mmio[ring->first].len, 1);
+            smp_wmb();
+            ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
+        }
+    }
+
+    kvm_state->coalesced_flush_in_progress = false;
+#endif
+}
+
 int kvm_run(CPUState *env)
 {
     int r;
@@ -996,20 +1022,6 @@ int kvm_run(CPUState *env)
     }
 
     post_kvm_run(kvm, env);
-
-#if defined(KVM_CAP_COALESCED_MMIO)
-    if (kvm_state->coalesced_mmio) {
-        struct kvm_coalesced_mmio_ring *ring =
-            (void *) run + kvm_state->coalesced_mmio * PAGE_SIZE;
-        while (ring->first != ring->last) {
-            cpu_physical_memory_rw(ring->coalesced_mmio[ring->first].phys_addr,
-                           &ring->coalesced_mmio[ring->first].data[0],
-                           ring->coalesced_mmio[ring->first].len, 1);
-            smp_wmb();
-            ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
-        }
-    }
-#endif
 
 #if !defined(__s390__)
     if (r == -1) {
@@ -1137,6 +1149,7 @@ int kvm_init_coalesced_mmio(kvm_context_t kvm)
         return 0;
     }
 #endif
+    kvm_state->coalesced_mmio_ring = NULL;
     return r;
 }
 
@@ -2023,6 +2036,12 @@ static void *ap_main_loop(void *_env)
     pthread_mutex_lock(&qemu_mutex);
     cpu_single_env = env;
 
+#ifdef KVM_CAP_COALESCED_MMIO
+    if (kvm_state->coalesced_mmio && !kvm_state->coalesced_mmio_ring)
+        kvm_state->coalesced_mmio_ring = (void *) env->kvm_run +
+           kvm_state->coalesced_mmio * PAGE_SIZE;
+#endif
+
     kvm_arch_init_vcpu(env);
 
     kvm_arch_load_regs(env);
@@ -2223,7 +2242,9 @@ int kvm_main_loop(void)
 
     while (1) {
         main_loop_wait(1000);
-        if (qemu_shutdown_requested()) {
+        if (qemu_suspend_requested()) {
+            qemu_system_suspend();
+        } else if (qemu_shutdown_requested()) {
             qemu_kill_report();
             monitor_protocol_event(QEVENT_SHUTDOWN, NULL);
             if (qemu_no_shutdown()) {

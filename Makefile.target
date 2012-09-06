@@ -1,16 +1,20 @@
 # -*- Mode: makefile -*-
 
-# This needs to be defined before rules.mak
 GENERATED_HEADERS = config-target.h config-devices.h
 
 include ../config-host.mak
 include config-devices.mak
 include config-target.mak
 include $(SRC_PATH)/rules.mak
+ifneq ($(HWDIR),)
+include $(HWDIR)/config.mak
+endif
 
 TARGET_PATH=$(SRC_PATH)/target-$(TARGET_BASE_ARCH)
 VPATH=$(SRC_PATH):$(TARGET_PATH):$(SRC_PATH)/hw
 QEMU_CFLAGS+= -I.. -I$(TARGET_PATH) -DNEED_CPU_H
+
+include $(SRC_PATH)/Makefile.objs
 
 ifdef CONFIG_USER_ONLY
 # user emulator name
@@ -71,6 +75,9 @@ libobj-$(CONFIG_CPU_EMULATION) += tcg/tcg.o
 libobj-$(CONFIG_SOFTFLOAT) += fpu/softfloat.o
 libobj-$(CONFIG_NOSOFTFLOAT) += fpu/softfloat-native.o
 libobj-y += op_helper.o helper.o
+ifeq ($(TARGET_BASE_ARCH), i386)
+libobj-y += cpuid.o
+endif
 libobj-$(CONFIG_NEED_MMU) += mmu.o
 
 libobj-$(CONFIG_KVM) += kvm-tpr-opt.o
@@ -94,9 +101,9 @@ libobj-$(CONFIG_S390_DIS) += s390-dis.o
 libobj-$(CONFIG_SH4_DIS) += sh4-dis.o
 libobj-$(CONFIG_SPARC_DIS) += sparc-dis.o
 
-# libqemu
+$(libobj-y): $(GENERATED_HEADERS)
 
-libqemu.a: $(libobj-y)
+# libqemu
 
 translate.o: translate.c cpu.h
 
@@ -138,7 +145,10 @@ obj-arm-y += arm-semi.o
 
 obj-m68k-y += m68k-sim.o m68k-semi.o
 
-ARLIBS=../libuser/libuser.a libqemu.a
+$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y): $(GENERATED_HEADERS)
+
+obj-y += $(addprefix ../libuser/, $(user-obj-y))
+obj-y += $(libobj-y)
 
 endif #CONFIG_LINUX_USER
 
@@ -160,7 +170,10 @@ obj-y = main.o commpage.o machload.o mmap.o signal.o syscall.o thunk.o \
 
 obj-i386-y += ioport-user.o
 
-ARLIBS=../libuser/libuser.a libqemu.a
+$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y): $(GENERATED_HEADERS)
+
+obj-y += $(addprefix ../libuser/, $(user-obj-y))
+obj-y += $(libobj-y)
 
 endif #CONFIG_DARWIN_USER
 
@@ -177,7 +190,10 @@ obj-y = main.o bsdload.o elfload.o mmap.o signal.o strace.o syscall.o \
 
 obj-i386-y += ioport-user.o
 
-ARLIBS=../libuser/libuser.a libqemu.a
+$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y): $(GENERATED_HEADERS)
+
+obj-y += $(addprefix ../libuser/, $(user-obj-y))
+obj-y += $(libobj-y)
 
 endif #CONFIG_BSD_USER
 
@@ -185,11 +201,11 @@ endif #CONFIG_BSD_USER
 # System emulator target
 ifdef CONFIG_SOFTMMU
 
-obj-y = vl.o async.o monitor.o pci.o pci_host.o pcie_host.o machine.o gdbstub.o balloon.o
+obj-y = vl.o monitor.o pci.o pci_host.o pcie_host.o machine.o gdbstub.o balloon.o
 # virtio has to be here due to weird dependency between PCI and virtio-net.
 # need to fix this properly
 obj-y += virtio-blk.o virtio-balloon.o virtio-net.o virtio-pci.o virtio-serial-bus.o
-obj-y += event_notifier.o
+obj-y += virtio-scsi.o event_notifier.o
 obj-y += vhost_net.o
 obj-$(CONFIG_VHOST_NET) += vhost.o
 obj-$(CONFIG_KVM) += kvm.o kvm-all.o
@@ -213,6 +229,7 @@ adlib.o fmopl.o: QEMU_CFLAGS += -DBUILD_Y8950=0
 
 QEMU_CFLAGS += $(VNC_TLS_CFLAGS)
 QEMU_CFLAGS += $(VNC_SASL_CFLAGS)
+QEMU_CFLAGS += $(GLIB_CFLAGS)
 
 # xen backend driver support
 obj-$(CONFIG_XEN) += xen_machine_pv.o xen_domainbuild.o
@@ -238,6 +255,7 @@ obj-i386-y += extboot.o
 obj-i386-y += ne2000-isa.o
 obj-i386-y += testdev.o
 obj-i386-y += kvmclock.o
+obj-i386-y += debugcon.o
 
 obj-i386-$(CONFIG_KVM_PIT) += i8254-kvm.o
 obj-i386-$(CONFIG_KVM_DEVICE_ASSIGNMENT) += device-assignment.o
@@ -363,11 +381,15 @@ main.o vl.o: QEMU_CFLAGS+=$(GPROF_CFLAGS)
 
 vl.o: QEMU_CFLAGS+=$(SDL_CFLAGS)
 
-vl.o: qemu-options.h
+vl.o: qemu-options.def
 
 monitor.o: qemu-monitor.h
 
-ARLIBS=../libqemu_common.a libqemu.a $(HWLIB)
+$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y): $(GENERATED_HEADERS)
+
+obj-y += $(addprefix ../, $(common-obj-y))
+obj-y += $(libobj-y)
+obj-y += $(addprefix $(HWDIR)/, $(hw-obj-y))
 
 endif # CONFIG_SOFTMMU
 
@@ -382,14 +404,14 @@ endif # CONFIG_LINUX_USER
 obj-y += $(addprefix ../, $(trace-obj-y))
 obj-$(CONFIG_GDBSTUB_XML) += gdbstub-xml.o
 
-$(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y) $(ARLIBS)
+$(QEMU_PROG): $(obj-y) $(obj-$(TARGET_BASE_ARCH)-y)
 	$(call LINK,$(obj-y) $(obj-$(TARGET_BASE_ARCH)-y))
 
 
 gdbstub-xml.c: $(TARGET_XML_FILES) feature_to_c.sh
 	$(call quiet-command,rm -f $@ && $(SHELL) $(SRC_PATH)/feature_to_c.sh $@ $(TARGET_XML_FILES),"  GEN   $(TARGET_DIR)$@")
 
-qemu-options.h: $(SRC_PATH)/qemu-options.hx
+qemu-options.def: $(SRC_PATH)/qemu-options.hx
 	$(call quiet-command,sh $(SRC_PATH)/hxtool -h < $< > $@,"  GEN   $(TARGET_DIR)$@")
 
 qemu-monitor.h: $(SRC_PATH)/qemu-monitor.hx
@@ -398,7 +420,7 @@ qemu-monitor.h: $(SRC_PATH)/qemu-monitor.hx
 clean:
 	rm -f *.o *.a *~ $(PROGS) nwfpe/*.o fpu/*.o
 	rm -f *.d */*.d tcg/*.o ide/*.o
-	rm -f qemu-options.h qemu-monitor.h gdbstub-xml.c
+	rm -f qemu-options.def qemu-monitor.h gdbstub-xml.c
 ifdef CONFIG_SYSTEMTAP_TRACE
 	rm -f *.stp
 endif

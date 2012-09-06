@@ -36,6 +36,10 @@ static ssize_t flush_buf(VirtIOSerialPort *port, const uint8_t *buf, size_t len)
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
     ssize_t ret;
 
+    if (!vcon->chr) {
+        /* If there's no backend, we can just say we consumed all data. */
+        return len;
+    }
     ret = qemu_chr_write(vcon->chr, buf, len);
     if (ret < 0 && ret != -EAGAIN) {
         /*
@@ -59,6 +63,9 @@ static void guest_open(VirtIOSerialPort *port)
 {
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
 
+    if (!vcon->chr) {
+        return;
+    }
     return qemu_chr_guest_open(vcon->chr);
 }
 
@@ -67,6 +74,9 @@ static void guest_close(VirtIOSerialPort *port)
 {
     VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
 
+    if (!vcon->chr) {
+        return;
+    }
     return qemu_chr_guest_close(vcon->chr);
 }
 
@@ -113,11 +123,17 @@ static const QemuChrHandlers chr_handlers_no_flow_control = {
     .fd_event = chr_event,
 };
 
-static int generic_port_init(VirtConsole *vcon, VirtIOSerialDevice *dev)
+static int virtconsole_initfn(VirtIOSerialPort *port)
 {
     static const QemuChrHandlers *handlers;
+    VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
+    VirtIOSerialPortInfo *info = DO_UPCAST(VirtIOSerialPortInfo, qdev,
+                                           vcon->port.dev.info);
 
-    vcon->port.info = dev->info;
+    if (port->id == 0 && !info->is_console) {
+        error_report("Port number 0 on virtio-serial devices reserved for virtconsole devices for backward compatibility.");
+        return -1;
+    }
 
     if (vcon->chr) {
         handlers = &chr_handlers;
@@ -125,34 +141,6 @@ static int generic_port_init(VirtConsole *vcon, VirtIOSerialDevice *dev)
             handlers = &chr_handlers_no_flow_control;
         }
         qemu_chr_add_handlers(vcon->chr, handlers, vcon);
-        vcon->port.info->have_data = flush_buf;
-        vcon->port.info->guest_open = guest_open;
-        vcon->port.info->guest_close = guest_close;
-    }
-    return 0;
-}
-
-/* Virtio Console Ports */
-static int virtconsole_initfn(VirtIOSerialDevice *dev)
-{
-    VirtIOSerialPort *port = DO_UPCAST(VirtIOSerialPort, dev, &dev->qdev);
-    VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
-
-    port->is_console = true;
-    return generic_port_init(vcon, dev);
-}
-
-static int virtconsole_exitfn(VirtIOSerialDevice *dev)
-{
-    VirtIOSerialPort *port = DO_UPCAST(VirtIOSerialPort, dev, &dev->qdev);
-    VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
-
-    if (vcon->chr) {
-	/*
-	 * Instead of closing the chardev, free it so it can be used
-	 * for other purposes.
-	 */
-        qemu_chr_add_handlers(vcon->chr, NULL, NULL);
     }
 
     return 0;
@@ -161,13 +149,13 @@ static int virtconsole_exitfn(VirtIOSerialDevice *dev)
 static VirtIOSerialPortInfo virtconsole_info = {
     .qdev.name     = "virtconsole",
     .qdev.size     = sizeof(VirtConsole),
+    .is_console    = true,
     .init          = virtconsole_initfn,
-    .exit          = virtconsole_exitfn,
+    .have_data     = flush_buf,
+    .guest_open    = guest_open,
+    .guest_close   = guest_close,
     .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT8("is_console", VirtConsole, port.is_console, 1),
-        DEFINE_PROP_UINT32("nr", VirtConsole, port.id, VIRTIO_CONSOLE_BAD_ID),
         DEFINE_PROP_CHR("chardev", VirtConsole, chr),
-        DEFINE_PROP_STRING("name", VirtConsole, port.name),
         DEFINE_PROP_END_OF_LIST(),
     },
 };
@@ -178,32 +166,15 @@ static void virtconsole_register(void)
 }
 device_init(virtconsole_register)
 
-/* Generic Virtio Serial Ports */
-static int virtserialport_initfn(VirtIOSerialDevice *dev)
-{
-    VirtIOSerialPort *port = DO_UPCAST(VirtIOSerialPort, dev, &dev->qdev);
-    VirtConsole *vcon = DO_UPCAST(VirtConsole, port, port);
-
-    if (port->id == 0) {
-        /*
-         * Disallow a generic port at id 0, that's reserved for
-         * console ports.
-         */
-        error_report("Port number 0 on virtio-serial devices reserved for virtconsole devices for backward compatibility.");
-        return -1;
-    }
-    return generic_port_init(vcon, dev);
-}
-
 static VirtIOSerialPortInfo virtserialport_info = {
     .qdev.name     = "virtserialport",
     .qdev.size     = sizeof(VirtConsole),
-    .init          = virtserialport_initfn,
-    .exit          = virtconsole_exitfn,
+    .init          = virtconsole_initfn,
+    .have_data     = flush_buf,
+    .guest_open    = guest_open,
+    .guest_close   = guest_close,
     .qdev.props = (Property[]) {
-        DEFINE_PROP_UINT32("nr", VirtConsole, port.id, VIRTIO_CONSOLE_BAD_ID),
         DEFINE_PROP_CHR("chardev", VirtConsole, chr),
-        DEFINE_PROP_STRING("name", VirtConsole, port.name),
         DEFINE_PROP_END_OF_LIST(),
     },
 };

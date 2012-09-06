@@ -300,7 +300,7 @@ static int vdi_check(BlockDriverState *bs, BdrvCheckResult *res)
     uint32_t *bmap;
     logout("\n");
 
-    bmap = qemu_malloc(s->header.blocks_in_image * sizeof(uint32_t));
+    bmap = g_malloc(s->header.blocks_in_image * sizeof(uint32_t));
     memset(bmap, 0xff, s->header.blocks_in_image * sizeof(uint32_t));
 
     /* Check block map and value of blocks_allocated. */
@@ -330,7 +330,7 @@ static int vdi_check(BlockDriverState *bs, BdrvCheckResult *res)
         res->corruptions++;
     }
 
-    qemu_free(bmap);
+    g_free(bmap);
 
     return 0;
 }
@@ -432,7 +432,7 @@ static int vdi_open(BlockDriverState *bs, int flags)
 
     bmap_size = header.blocks_in_image * sizeof(uint32_t);
     bmap_size = (bmap_size + SECTOR_SIZE - 1) / SECTOR_SIZE;
-    s->bmap = qemu_malloc(bmap_size * SECTOR_SIZE);
+    s->bmap = g_malloc(bmap_size * SECTOR_SIZE);
     if (bdrv_read(bs->file, s->bmap_sector, (uint8_t *)s->bmap, bmap_size) < 0) {
         goto fail_free_bmap;
     }
@@ -440,14 +440,14 @@ static int vdi_open(BlockDriverState *bs, int flags)
     return 0;
 
  fail_free_bmap:
-    qemu_free(s->bmap);
+    g_free(s->bmap);
 
  fail:
     return -1;
 }
 
-static int vdi_is_allocated(BlockDriverState *bs, int64_t sector_num,
-                             int nb_sectors, int *pnum)
+static int coroutine_fn vdi_co_is_allocated(BlockDriverState *bs,
+        int64_t sector_num, int nb_sectors, int *pnum)
 {
     /* TODO: Check for too large sector_num (in bdrv_is_allocated or here). */
     BDRVVdiState *s = (BDRVVdiState *)bs->opaque;
@@ -466,7 +466,7 @@ static int vdi_is_allocated(BlockDriverState *bs, int64_t sector_num,
 static void vdi_aio_cancel(BlockDriverAIOCB *blockacb)
 {
     /* TODO: This code is untested. How can I get it executed? */
-    VdiAIOCB *acb = (VdiAIOCB *)blockacb;
+    VdiAIOCB *acb = container_of(blockacb, VdiAIOCB, common);
     logout("\n");
     if (acb->hd_aiocb) {
         bdrv_aio_cancel(acb->hd_aiocb);
@@ -671,7 +671,7 @@ static void vdi_aio_write_cb(void *opaque, int ret)
             uint64_t offset;
             uint32_t bmap_first;
             uint32_t bmap_last;
-            qemu_free(acb->block_buffer);
+            g_free(acb->block_buffer);
             acb->block_buffer = NULL;
             bmap_first = acb->bmap_first;
             bmap_last = acb->bmap_last;
@@ -726,7 +726,7 @@ static void vdi_aio_write_cb(void *opaque, int ret)
                  (uint64_t)bmap_entry * s->block_sectors;
         block = acb->block_buffer;
         if (block == NULL) {
-            block = qemu_mallocz(s->block_size);
+            block = g_malloc0(s->block_size);
             acb->block_buffer = block;
             acb->bmap_first = block_index;
             assert(!acb->header_modified);
@@ -854,7 +854,7 @@ static int vdi_create(const char *filename, QEMUOptionParameter *options)
         result = -errno;
     }
 
-    bmap = (uint32_t *)qemu_mallocz(bmap_size);
+    bmap = (uint32_t *)g_malloc0(bmap_size);
     for (i = 0; i < blocks; i++) {
         if (image_type == VDI_TYPE_STATIC) {
             bmap[i] = i;
@@ -865,7 +865,7 @@ static int vdi_create(const char *filename, QEMUOptionParameter *options)
     if (write(fd, bmap, bmap_size) < 0) {
         result = -errno;
     }
-    qemu_free(bmap);
+    g_free(bmap);
     if (image_type == VDI_TYPE_STATIC) {
         if (ftruncate(fd, sizeof(header) + bmap_size + blocks * block_size)) {
             result = -errno;
@@ -883,10 +883,10 @@ static void vdi_close(BlockDriverState *bs)
 {
 }
 
-static int vdi_flush(BlockDriverState *bs)
+static coroutine_fn int vdi_co_flush(BlockDriverState *bs)
 {
     logout("\n");
-    return bdrv_flush(bs->file);
+    return bdrv_co_flush(bs->file);
 }
 
 
@@ -922,8 +922,8 @@ static BlockDriver bdrv_vdi = {
     .bdrv_open = vdi_open,
     .bdrv_close = vdi_close,
     .bdrv_create = vdi_create,
-    .bdrv_flush = vdi_flush,
-    .bdrv_is_allocated = vdi_is_allocated,
+    .bdrv_co_flush = vdi_co_flush,
+    .bdrv_co_is_allocated = vdi_co_is_allocated,
     .bdrv_make_empty = vdi_make_empty,
 
     .bdrv_aio_readv = vdi_aio_readv,

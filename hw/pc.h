@@ -97,11 +97,11 @@ void i8042_mm_init(qemu_irq kbd_irq, qemu_irq mouse_irq,
 /* mc146818rtc.c */
 
 typedef struct RTCState RTCState;
+extern RTCState *rtc_state;
 
 RTCState *rtc_init(int base_year);
 void rtc_set_memory(RTCState *s, int addr, int val);
 void rtc_set_date(RTCState *s, const struct tm *tm);
-void cmos_set_s3_resume(void);
 
 /* pc.c */
 extern int fd_bootchk;
@@ -178,4 +178,5 @@ void extboot_init(BlockDriverState *bs, int cmd);
 
 int cpu_is_bsp(CPUState *env);
 
+void disable_cpuid_leaf10(void);
 #endif

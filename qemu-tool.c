@@ -56,19 +56,6 @@ void monitor_print_filename(Monitor *mon, const char *filename)
 {
 }
 
-void async_context_push(void)
-{
-}
-
-void async_context_pop(void)
-{
-}
-
-int get_async_context_id(void)
-{
-    return 0;
-}
-
 void monitor_protocol_event(MonitorEvent event, QObject *data)
 {
 }
@@ -89,36 +76,6 @@ void qemu_del_timer(QEMUTimer *ts)
 
 void qemu_mod_timer(QEMUTimer *ts, int64_t expire_time)
 {
-}
-
-QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque)
-{
-    QEMUBH *bh;
-
-    bh = qemu_malloc(sizeof(*bh));
-    bh->cb = cb;
-    bh->opaque = opaque;
-
-    return bh;
-}
-
-int qemu_bh_poll(void)
-{
-    return 0;
-}
-
-void qemu_bh_schedule(QEMUBH *bh)
-{
-    bh->cb(bh->opaque);
-}
-
-void qemu_bh_cancel(QEMUBH *bh)
-{
-}
-
-void qemu_bh_delete(QEMUBH *bh)
-{
-    qemu_free(bh);
 }
 
 int qemu_set_fd_handler2(int fd,
@@ -144,4 +101,8 @@ int64_t qemu_get_clock(QEMUClock *clock)
 int64_t get_clock(void)
 {
 	return 0;
+}
+
+void qemu_notify_event(void)
+{
 }

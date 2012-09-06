@@ -775,7 +775,7 @@ int qemu_find_nic_model(NICInfo *nd, const char * const *models,
             return i;
     }
 
-    error_report("qemu: Unsupported NIC model: %s", nd->model);
+    error_report("Unsupported NIC model: %s", nd->model);
     return -1;
 }
 
@@ -1303,7 +1303,7 @@ int do_set_link(Monitor *mon, const QDict *qdict, QObject **ret_data)
     VLANState *vlan;
     VLANClientState *vc = NULL;
     const char *name = qdict_get_str(qdict, "name");
-    int up = qdict_get_bool(qdict, "up");
+    int up = qdict_get_try_bool_or_int(qdict, "up", 0);
 
     QTAILQ_FOREACH(vlan, &vlans, next) {
         QTAILQ_FOREACH(vc, &vlan->clients, next) {
@@ -1363,9 +1363,10 @@ void net_check_clients(void)
 {
     VLANState *vlan;
     VLANClientState *vc;
-    int has_nic, has_host_dev;
 
     QTAILQ_FOREACH(vlan, &vlans, next) {
+        int has_nic = 0, has_host_dev = 0;
+
         QTAILQ_FOREACH(vc, &vlan->clients, next) {
             switch (vc->info->type) {
             case NET_CLIENT_TYPE_NIC:

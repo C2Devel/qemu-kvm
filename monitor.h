@@ -18,6 +18,10 @@ extern Monitor *default_mon;
 /* Red Hat Monitor's prefix (reversed fully qualified domain) */
 #define RFQDN_REDHAT "__com.redhat_"
 
+/* flags for monitor commands */
+#define MONITOR_CMD_ASYNC       0x0001
+#define MONITOR_CMD_USER_ONLY   0x0002
+
 /* QMP events */
 typedef enum MonitorEvent {
     QEVENT_SHUTDOWN,
@@ -34,9 +38,13 @@ typedef enum MonitorEvent {
     QEVENT_SPICE_CONNECTED,
     QEVENT_SPICE_INITIALIZED,
     QEVENT_SPICE_DISCONNECTED,
+    QEVENT_DEVICE_TRAY_MOVED,
+    QEVENT_BLOCK_JOB_COMPLETED,
+    QEVENT_BLOCK_JOB_CANCELLED,
     QEVENT_RH_SPICE_INITIALIZED,
     QEVENT_RH_SPICE_DISCONNECTED,
-    QEVENT_BLOCK_JOB_COMPLETED,
+    QEVENT_SUSPEND,
+    QEVENT_WAKEUP,
     QEVENT_INCOMING_FINISHED,
     QEVENT_MAX,
 } MonitorEvent;

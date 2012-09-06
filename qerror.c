@@ -49,6 +49,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Device '%(device)' can't go on a %(bad_bus_type) bus",
     },
     {
+        .error_fmt = QERR_BASE_NOT_FOUND,
+        .desc      = "Base '%(base)' not found",
+    },
+    {
         .error_fmt = QERR_BUS_NOT_FOUND,
         .desc      = "Bus '%(bus)' not found",
     },
@@ -61,8 +65,16 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "The command %(name) has not been found",
     },
     {
+        .error_fmt = QERR_COMMAND_DISABLED,
+        .desc      = "The command %(name) has been disabled for this instance",
+    },
+    {
         .error_fmt = QERR_DEVICE_ENCRYPTED,
         .desc      = "Device '%(device)' is encrypted",
+    },
+    {
+        .error_fmt = QERR_DEVICE_HAS_NO_MEDIUM,
+        .desc      = "Device '%(device)' has no medium",
     },
     {
         .error_fmt = QERR_DEVICE_INIT_FAILED,
@@ -75,6 +87,10 @@ static const QErrorStringTable qerror_table[] = {
     {
         .error_fmt = QERR_DEVICE_IN_USE,
         .desc      = "Device '%(device)' is in use",
+    },
+    {
+        .error_fmt = QERR_DEVICE_IS_READ_ONLY,
+        .desc      = "Device '%(device)' is read only",
     },
     {
         .error_fmt = QERR_DEVICE_LOCKED,
@@ -141,8 +157,17 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Password incorrect",
     },
     {
+        .error_fmt = QERR_IO_ERROR,
+        .desc      = "An IO error has occurred",
+    },
+    {
         .error_fmt = QERR_JSON_PARSING,
         .desc      = "Invalid JSON syntax",
+    },
+    {
+        .error_fmt = QERR_JSON_PARSE_ERROR,
+        .desc      = "JSON parse error, %(message)",
+
     },
     {
         .error_fmt = QERR_KVM_MISSING_CAP,
@@ -162,7 +187,7 @@ static const QErrorStringTable qerror_table[] = {
     },
     {
         .error_fmt = QERR_NOT_SUPPORTED,
-        .desc      = "Operation is not supported",
+        .desc      = "Not supported",
     },
     {
         .error_fmt = QERR_OPEN_FILE_FAILED,
@@ -191,6 +216,10 @@ static const QErrorStringTable qerror_table[] = {
     {
         .error_fmt = QERR_QMP_BAD_INPUT_OBJECT_MEMBER,
         .desc      = "QMP input object member '%(member)' expects '%(expected)'",
+    },
+    {
+        .error_fmt = QERR_QMP_EXTRA_MEMBER,
+        .desc      = "QMP input object member '%(member)' is unexpected",
     },
     {
         .error_fmt = QERR_RESET_REQUIRED,
@@ -222,8 +251,12 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Could not start VNC server on %(target)",
     },
     {
-        .error_fmt = QERR_STREAMING_ERROR,
-        .desc      = "An error occurred during streaming: %(msg)",
+        .error_fmt = QERR_QGA_LOGGING_FAILED,
+        .desc      = "Guest agent failed to log non-optional log statement",
+    },
+    {
+        .error_fmt = QERR_QGA_COMMAND_FAILED,
+        .desc      = "Guest agent command failed, error was '%(message)'",
     },
     {}
 };
@@ -340,12 +373,14 @@ QError *qerror_from_info(const char *file, int linenr, const char *func,
     return qerr;
 }
 
-static void parse_error(const QError *qerror, int c)
+static void parse_error(const QErrorStringTable *entry, int c)
 {
-    qerror_abort(qerror, "expected '%c' in '%s'", c, qerror->entry->desc);
+    fprintf(stderr, "expected '%c' in '%s'", c, entry->desc);
+    abort();
 }
 
-static const char *append_field(QString *outstr, const QError *qerror,
+static const char *append_field(QDict *error, QString *outstr,
+                                const QErrorStringTable *entry,
                                 const char *start)
 {
     QObject *obj;
@@ -354,23 +389,23 @@ static const char *append_field(QString *outstr, const QError *qerror,
     const char *end, *key;
 
     if (*start != '%')
-        parse_error(qerror, '%');
+        parse_error(entry, '%');
     start++;
     if (*start != '(')
-        parse_error(qerror, '(');
+        parse_error(entry, '(');
     start++;
 
     end = strchr(start, ')');
     if (!end)
-        parse_error(qerror, ')');
+        parse_error(entry, ')');
 
     key_qs = qstring_from_substr(start, 0, end - start - 1);
     key = qstring_get_str(key_qs);
 
-    qdict = qobject_to_qdict(qdict_get(qerror->error, "data"));
+    qdict = qobject_to_qdict(qdict_get(error, "data"));
     obj = qdict_get(qdict, key);
     if (!obj) {
-        qerror_abort(qerror, "key '%s' not found in QDict", key);
+        abort();
     }
 
     switch (qobject_type(obj)) {
@@ -381,39 +416,58 @@ static const char *append_field(QString *outstr, const QError *qerror,
             qstring_append_int(outstr, qdict_get_int(qdict, key));
             break;
         default:
-            qerror_abort(qerror, "invalid type '%c'", qobject_type(obj));
+            abort();
     }
 
     QDECREF(key_qs);
     return ++end;
 }
 
-/**
- * qerror_human(): Format QError data into human-readable string.
- *
- * Formats according to member 'desc' of the specified QError object.
- */
-QString *qerror_human(const QError *qerror)
+static QString *qerror_format_desc(QDict *error,
+                                   const QErrorStringTable *entry)
 {
-    const char *p;
     QString *qstring;
+    const char *p;
 
-    assert(qerror->entry != NULL);
+    assert(entry != NULL);
 
     qstring = qstring_new();
 
-    for (p = qerror->entry->desc; *p != '\0';) {
+    for (p = entry->desc; *p != '\0';) {
         if (*p != '%') {
             qstring_append_chr(qstring, *p++);
         } else if (*(p + 1) == '%') {
             qstring_append_chr(qstring, '%');
             p += 2;
         } else {
-            p = append_field(qstring, qerror, p);
+            p = append_field(error, qstring, entry, p);
         }
     }
 
     return qstring;
+}
+
+QString *qerror_format(const char *fmt, QDict *error)
+{
+    const QErrorStringTable *entry = NULL;
+    int i;
+
+    for (i = 0; qerror_table[i].error_fmt; i++) {
+        if (strcmp(qerror_table[i].error_fmt, fmt) == 0) {
+            entry = &qerror_table[i];
+            break;
+        }
+    }
+
+    return qerror_format_desc(error, entry);
+}
+
+/**
+ * qerror_human(): Format QError data into human-readable string.
+ */
+QString *qerror_human(const QError *qerror)
+{
+    return qerror_format_desc(qerror->error, qerror->entry);
 }
 
 /**
@@ -447,6 +501,39 @@ void qerror_report_internal(const char *file, int linenr, const char *func,
     } else {
         qerror_print(qerror);
         QDECREF(qerror);
+    }
+}
+
+/* Evil... */
+struct Error
+{
+    QDict *obj;
+    const char *fmt;
+    char *msg;
+};
+
+void qerror_report_err(Error *err)
+{
+    QError *qerr;
+    int i;
+
+    qerr = qerror_new();
+    loc_save(&qerr->loc);
+    QINCREF(err->obj);
+    qerr->error = err->obj;
+
+    for (i = 0; qerror_table[i].error_fmt; i++) {
+        if (strcmp(qerror_table[i].error_fmt, err->fmt) == 0) {
+            qerr->entry = &qerror_table[i];
+            break;
+        }
+    }
+
+    if (monitor_cur_is_qmp()) {
+        monitor_set_error(cur_mon, qerr);
+    } else {
+        qerror_print(qerr);
+        QDECREF(qerr);
     }
 }
 

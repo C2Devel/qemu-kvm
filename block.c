@@ -28,6 +28,7 @@
 #include "block_int.h"
 #include "module.h"
 #include "qemu-objects.h"
+#include "qemu-coroutine.h"
 
 #ifdef CONFIG_BSD
 #include <sys/types.h>
@@ -43,6 +44,13 @@
 #include <windows.h>
 #endif
 
+#define NOT_DONE 0x7fffffff /* used while emulated sync operation in progress */
+
+typedef enum {
+    BDRV_REQ_COPY_ON_READ = 0x1,
+    BDRV_REQ_ZERO_WRITE   = 0x2,
+} BdrvRequestFlags;
+
 static void bdrv_dev_change_media_cb(BlockDriverState *bs, bool load);
 static BlockDriverAIOCB *bdrv_aio_readv_em(BlockDriverState *bs,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
@@ -50,14 +58,26 @@ static BlockDriverAIOCB *bdrv_aio_readv_em(BlockDriverState *bs,
 static BlockDriverAIOCB *bdrv_aio_writev_em(BlockDriverState *bs,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
         BlockDriverCompletionFunc *cb, void *opaque);
-static BlockDriverAIOCB *bdrv_aio_flush_em(BlockDriverState *bs,
-        BlockDriverCompletionFunc *cb, void *opaque);
-static BlockDriverAIOCB *bdrv_aio_noop_em(BlockDriverState *bs,
-        BlockDriverCompletionFunc *cb, void *opaque);
-static int bdrv_read_em(BlockDriverState *bs, int64_t sector_num,
-                        uint8_t *buf, int nb_sectors);
-static int bdrv_write_em(BlockDriverState *bs, int64_t sector_num,
-                         const uint8_t *buf, int nb_sectors);
+static int coroutine_fn bdrv_co_readv_em(BlockDriverState *bs,
+                                         int64_t sector_num, int nb_sectors,
+                                         QEMUIOVector *iov);
+static int coroutine_fn bdrv_co_writev_em(BlockDriverState *bs,
+                                         int64_t sector_num, int nb_sectors,
+                                         QEMUIOVector *iov);
+static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors, QEMUIOVector *qiov,
+    BdrvRequestFlags flags);
+static int coroutine_fn bdrv_co_do_writev(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors, QEMUIOVector *qiov,
+    BdrvRequestFlags flags);
+static BlockDriverAIOCB *bdrv_co_aio_rw_vector(BlockDriverState *bs,
+                                               int64_t sector_num,
+                                               QEMUIOVector *qiov,
+                                               int nb_sectors,
+                                               BlockDriverCompletionFunc *cb,
+                                               void *opaque,
+                                               bool is_write);
+static void coroutine_fn bdrv_co_do_rw(void *opaque);
 
 static QTAILQ_HEAD(, BlockDriverState) bdrv_states =
     QTAILQ_HEAD_INITIALIZER(bdrv_states);
@@ -71,23 +91,54 @@ static BlockDriverState *bs_snapshots;
 /* If non-zero, use only whitelisted block drivers */
 static int use_bdrv_whitelist;
 
-int path_is_absolute(const char *path)
+#ifdef _WIN32
+static int is_windows_drive_prefix(const char *filename)
+{
+    return (((filename[0] >= 'a' && filename[0] <= 'z') ||
+             (filename[0] >= 'A' && filename[0] <= 'Z')) &&
+            filename[1] == ':');
+}
+
+int is_windows_drive(const char *filename)
+{
+    if (is_windows_drive_prefix(filename) &&
+        filename[2] == '\0')
+        return 1;
+    if (strstart(filename, "\\\\.\\", NULL) ||
+        strstart(filename, "//./", NULL))
+        return 1;
+    return 0;
+}
+#endif
+
+/* check if the path starts with "<protocol>:" */
+int path_has_protocol(const char *path)
 {
     const char *p;
+
+#ifdef _WIN32
+    if (is_windows_drive(path) ||
+        is_windows_drive_prefix(path)) {
+        return 0;
+    }
+    p = path + strcspn(path, ":/\\");
+#else
+    p = path + strcspn(path, ":/");
+#endif
+
+    return *p == ':';
+}
+
+int path_is_absolute(const char *path)
+{
 #ifdef _WIN32
     /* specific case for names like: "\\.\d:" */
-    if (*path == '/' || *path == '\\')
+    if (is_windows_drive(path) || is_windows_drive_prefix(path)) {
         return 1;
-#endif
-    p = strchr(path, ':');
-    if (p)
-        p++;
-    else
-        p = path;
-#ifdef _WIN32
-    return (*p == '/' || *p == '\\');
+    }
+    return (*path == '/' || *path == '\\');
 #else
-    return (*p == '/');
+    return (*path == '/');
 #endif
 }
 
@@ -137,18 +188,20 @@ void path_combine(char *dest, int dest_size,
 
 void bdrv_register(BlockDriver *bdrv)
 {
-    if (!bdrv->bdrv_aio_readv) {
-        /* add AIO emulation layer */
-        bdrv->bdrv_aio_readv = bdrv_aio_readv_em;
-        bdrv->bdrv_aio_writev = bdrv_aio_writev_em;
-    } else if (!bdrv->bdrv_read) {
-        /* add synchronous IO emulation layer */
-        bdrv->bdrv_read = bdrv_read_em;
-        bdrv->bdrv_write = bdrv_write_em;
-    }
+    /* Block drivers without coroutine functions need emulation */
+    if (!bdrv->bdrv_co_readv) {
+        bdrv->bdrv_co_readv = bdrv_co_readv_em;
+        bdrv->bdrv_co_writev = bdrv_co_writev_em;
 
-    if (!bdrv->bdrv_aio_flush)
-        bdrv->bdrv_aio_flush = bdrv_aio_flush_em;
+        /* bdrv_co_readv_em()/brdv_co_writev_em() work in terms of aio, so if
+         * the block driver lacks aio we need to emulate that too.
+         */
+        if (!bdrv->bdrv_aio_readv) {
+            /* add AIO emulation layer */
+            bdrv->bdrv_aio_readv = bdrv_aio_readv_em;
+            bdrv->bdrv_aio_writev = bdrv_aio_writev_em;
+        }
+    }
 
     QLIST_INSERT_HEAD(&bdrv_drivers, bdrv, list);
 }
@@ -158,11 +211,12 @@ BlockDriverState *bdrv_new(const char *device_name)
 {
     BlockDriverState *bs;
 
-    bs = qemu_mallocz(sizeof(BlockDriverState));
+    bs = g_malloc0(sizeof(BlockDriverState));
     pstrcpy(bs->device_name, sizeof(bs->device_name), device_name);
     if (device_name[0] != '\0') {
         QTAILQ_INSERT_TAIL(&bdrv_states, bs, list);
     }
+    bdrv_iostatus_disable(bs);
     return bs;
 }
 
@@ -245,26 +299,6 @@ void get_tmp_filename(char *filename, int size)
 }
 #endif
 
-#ifdef _WIN32
-static int is_windows_drive_prefix(const char *filename)
-{
-    return (((filename[0] >= 'a' && filename[0] <= 'z') ||
-             (filename[0] >= 'A' && filename[0] <= 'Z')) &&
-            filename[1] == ':');
-}
-
-int is_windows_drive(const char *filename)
-{
-    if (is_windows_drive_prefix(filename) &&
-        filename[2] == '\0')
-        return 1;
-    if (strstart(filename, "\\\\.\\", NULL) ||
-        strstart(filename, "//./", NULL))
-        return 1;
-    return 0;
-}
-#endif
-
 /*
  * Detect host devices. By convention, /dev/cdrom[N] is always
  * recognized as a host CDROM.
@@ -308,15 +342,11 @@ BlockDriver *bdrv_find_protocol(const char *filename)
         return drv1;
     }
 
-#ifdef _WIN32
-    if (is_windows_drive(filename) ||
-        is_windows_drive_prefix(filename))
-        return bdrv_find_format("file");
-#endif
-    p = strchr(filename, ':');
-    if (!p) {
+    if (!path_has_protocol(filename)) {
         return bdrv_find_format("file");
     }
+    p = strchr(filename, ':');
+    assert(p != NULL);
     len = p - filename;
     if (len > sizeof(protocol) - 1)
         len = sizeof(protocol) - 1;
@@ -387,6 +417,10 @@ static int refresh_total_sectors(BlockDriverState *bs, int64_t hint)
 {
     BlockDriver *drv = bs->drv;
 
+    /* Do not attempt drv->bdrv_getlength() on scsi-generic devices */
+    if (bs->sg)
+        return 0;
+
     /* query actual device if possible, otherwise just trust the hint */
     if (drv->bdrv_getlength) {
         int64_t length = drv->bdrv_getlength(bs);
@@ -398,6 +432,22 @@ static int refresh_total_sectors(BlockDriverState *bs, int64_t hint)
 
     bs->total_sectors = hint;
     return 0;
+}
+
+/**
+ * The copy-on-read flag is actually a reference count so multiple users may
+ * use the feature without worrying about clobbering its previous state.
+ * Copy-on-read stays enabled until all users have called to disable it.
+ */
+void bdrv_enable_copy_on_read(BlockDriverState *bs)
+{
+    bs->copy_on_read++;
+}
+
+void bdrv_disable_copy_on_read(BlockDriverState *bs)
+{
+    assert(bs->copy_on_read > 0);
+    bs->copy_on_read--;
 }
 
 /*
@@ -418,9 +468,9 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     /* buffer_alignment defaulted to 512, drivers can change this value */
     bs->buffer_alignment = 512;
 
-    bs->copy_on_read = 0;
-    if (flags & BDRV_O_RDWR) {
-        bs->copy_on_read = !!(flags & BDRV_O_COPY_ON_READ);
+    assert(bs->copy_on_read == 0); /* bdrv_new() and bdrv_close() make it so */
+    if ((flags & BDRV_O_RDWR) && (flags & BDRV_O_COPY_ON_READ)) {
+        bdrv_enable_copy_on_read(bs);
     }
 
     pstrcpy(bs->filename, sizeof(bs->filename), filename);
@@ -430,7 +480,7 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     }
 
     bs->drv = drv;
-    bs->opaque = qemu_mallocz(drv->instance_size);
+    bs->opaque = g_malloc0(drv->instance_size);
 
     /*
      * Yes, BDRV_O_NOCACHE aka O_DIRECT means we have to present a
@@ -487,7 +537,7 @@ free_and_fail:
         bdrv_delete(bs->file);
         bs->file = NULL;
     }
-    qemu_free(bs->opaque);
+    g_free(bs->opaque);
     bs->opaque = NULL;
     bs->drv = NULL;
     return ret;
@@ -525,6 +575,7 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
               BlockDriver *drv)
 {
     int ret;
+    char tmp_filename[PATH_MAX];
 
     if (flags & BDRV_O_SNAPSHOT) {
         BlockDriverState *bs1;
@@ -532,7 +583,6 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
         int is_protocol = 0;
         BlockDriver *bdrv_qcow2;
         QEMUOptionParameter *options;
-        char tmp_filename[PATH_MAX];
         char backing_filename[PATH_MAX];
 
         /* if snapshot, we create a temporary backing file and open it
@@ -603,10 +653,18 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
         BlockDriver *back_drv = NULL;
 
         bs->backing_hd = bdrv_new("");
-        path_combine(backing_filename, sizeof(backing_filename),
-                     filename, bs->backing_file);
-        if (bs->backing_format[0] != '\0')
+
+        if (path_has_protocol(bs->backing_file)) {
+            pstrcpy(backing_filename, sizeof(backing_filename),
+                    bs->backing_file);
+        } else {
+            path_combine(backing_filename, sizeof(backing_filename),
+                         filename, bs->backing_file);
+        }
+
+        if (bs->backing_format[0] != '\0') {
             back_drv = bdrv_find_format(bs->backing_format);
+        }
 
         /* backing files always opened read-only */
         back_flags =
@@ -641,14 +699,20 @@ unlink_and_fail:
 void bdrv_close(BlockDriverState *bs)
 {
     if (bs->drv) {
+        if (bs->job) {
+            block_job_cancel_sync(bs->job);
+        }
+        bdrv_drain_all();
+
         if (bs == bs_snapshots) {
             bs_snapshots = NULL;
         }
         if (bs->backing_hd) {
             bdrv_delete(bs->backing_hd);
+            bs->backing_hd = NULL;
         }
         bs->drv->bdrv_close(bs);
-        qemu_free(bs->opaque);
+        g_free(bs->opaque);
 #ifdef _WIN32
         if (bs->is_temporary) {
             unlink(bs->filename);
@@ -656,6 +720,9 @@ void bdrv_close(BlockDriverState *bs)
 #endif
         bs->opaque = NULL;
         bs->drv = NULL;
+        bs->copy_on_read = 0;
+        bs->backing_file[0] = '\0';
+        bs->backing_format[0] = '\0';
 
         if (bs->file != NULL) {
             bdrv_close(bs->file);
@@ -674,6 +741,24 @@ void bdrv_close_all(void)
     }
 }
 
+/*
+ * Wait for pending requests to complete across all BlockDriverStates
+ *
+ * This function does not flush data to disk, use bdrv_flush_all() for that
+ * after calling this function.
+ */
+void bdrv_drain_all(void)
+{
+    BlockDriverState *bs;
+
+    qemu_aio_flush();
+
+    /* If requests are still pending there is a bug somewhere */
+    QTAILQ_FOREACH(bs, &bdrv_states, list) {
+        assert(QLIST_EMPTY(&bs->tracked_requests));
+    }
+}
+
 /* make a BlockDriverState anonymous by removing from bdrv_state list.
    Also, NULL terminate the device_name to prevent double remove */
 void bdrv_make_anon(BlockDriverState *bs)
@@ -684,9 +769,95 @@ void bdrv_make_anon(BlockDriverState *bs)
     bs->device_name[0] = '\0';
 }
 
+/*
+ * Add new bs contents at the top of an image chain while the chain is
+ * live, while keeping required fields on the top layer.
+ *
+ * This will modify the BlockDriverState fields, and swap contents
+ * between bs_new and bs_top. Both bs_new and bs_top are modified.
+ *
+ * bs_new is required to be anonymous.
+ *
+ * This function does not create any image files.
+ */
+void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top)
+{
+    BlockDriverState tmp;
+
+    /* bs_new must be anonymous */
+    assert(bs_new->device_name[0] == '\0');
+
+    tmp = *bs_new;
+
+    /* there are some fields that need to stay on the top layer: */
+    tmp.open_flags        = bs_top->open_flags;
+
+    /* dev info */
+    tmp.dev_ops           = bs_top->dev_ops;
+    tmp.dev_opaque        = bs_top->dev_opaque;
+    tmp.dev               = bs_top->dev;
+    tmp.buffer_alignment  = bs_top->buffer_alignment;
+    tmp.copy_on_read      = bs_top->copy_on_read;
+
+    /* geometry */
+    tmp.cyls              = bs_top->cyls;
+    tmp.heads             = bs_top->heads;
+    tmp.secs              = bs_top->secs;
+    tmp.translation       = bs_top->translation;
+
+    /* r/w error */
+    tmp.on_read_error     = bs_top->on_read_error;
+    tmp.on_write_error    = bs_top->on_write_error;
+
+    /* i/o status */
+    tmp.iostatus          = bs_top->iostatus;
+
+    /* dirty bitmap */
+    tmp.dirty_bitmap      = bs_top->dirty_bitmap;
+    tmp.dirty_count       = bs_top->dirty_count;
+    assert(bs_new->dirty_bitmap == NULL);
+
+    /* job */
+    tmp.in_use            = bs_top->in_use;
+    tmp.job               = bs_top->job;
+    assert(bs_new->job == NULL);
+
+    /* keep the same entry in bdrv_states */
+    pstrcpy(tmp.device_name, sizeof(tmp.device_name), bs_top->device_name);
+    tmp.list = bs_top->list;
+
+    /* The contents of 'tmp' will become bs_top, as we are
+     * swapping bs_new and bs_top contents. */
+    tmp.backing_hd = bs_new;
+    pstrcpy(tmp.backing_file, sizeof(tmp.backing_file), bs_top->filename);
+    bdrv_get_format(bs_top, tmp.backing_format, sizeof(tmp.backing_format));
+
+    /* swap contents of the fixed new bs and the current top */
+    *bs_new = *bs_top;
+    *bs_top = tmp;
+
+    /* device_name[] was carried over from the old bs_top.  bs_new
+     * shouldn't be in bdrv_states, so we need to make device_name[]
+     * reflect the anonymity of bs_new
+     */
+    bs_new->device_name[0] = '\0';
+
+    /* clear the copied fields in the new backing file */
+    bdrv_detach_dev(bs_new, bs_new->dev);
+
+    bs_new->job                = NULL;
+    bs_new->in_use             = 0;
+    bs_new->dirty_bitmap       = NULL;
+    bs_new->dirty_count        = 0;
+
+    bdrv_iostatus_disable(bs_new);
+}
+
 void bdrv_delete(BlockDriverState *bs)
 {
     assert(!bs->dev);
+    assert(!bs->job);
+    assert(!bs->in_use);
 
     /* remove from list, if necessary */
     bdrv_make_anon(bs);
@@ -697,7 +868,7 @@ void bdrv_delete(BlockDriverState *bs)
     }
 
     assert(bs != bs_snapshots);
-    qemu_free(bs);
+    g_free(bs);
 }
 
 int bdrv_attach_dev(BlockDriverState *bs, void *dev)
@@ -707,6 +878,7 @@ int bdrv_attach_dev(BlockDriverState *bs, void *dev)
         return -EBUSY;
     }
     bs->dev = dev;
+    bdrv_iostatus_reset(bs);
     return 0;
 }
 
@@ -743,16 +915,114 @@ void bdrv_set_dev_ops(BlockDriverState *bs, const BlockDevOps *ops,
     }
 }
 
+#define BDRV_REASON_KEY RFQDN_REDHAT "reason"
+
+/* RHEL6 vendor extension */
+static void bdrv_put_rhel6_reason(QDict *event, int error)
+{
+    const char *reason;
+
+    switch (error) {
+    case ENOSPC:
+        reason = "enospc";
+        break;
+    case EPERM:
+        reason = "eperm";
+        break;
+    case EIO:
+        reason = "eio";
+        break;
+    default:
+        reason = "eother";
+        break;
+    }
+
+    qdict_put(event, BDRV_REASON_KEY, qstring_from_str(reason));
+}
+
+#define BDRV_DEBUG_KEY  RFQDN_REDHAT "debug_info"
+
+/* RHEL6 vendor extension */
+static void bdrv_put_rhel6_debug_info(QDict *event, int error)
+{
+    QObject *info;
+
+    info = qobject_from_jsonf("{ 'errno': %d, 'message': %s }", error,
+                               strerror(error));
+    qdict_put_obj(event, BDRV_DEBUG_KEY, info);
+}
+
+void bdrv_emit_qmp_error_event(const BlockDriverState *bdrv,
+                    BlockQMPEventAction action, int error, int is_read)
+{
+    QObject *data;
+    const char *action_str;
+
+    switch (action) {
+    case BDRV_ACTION_REPORT:
+        action_str = "report";
+        break;
+    case BDRV_ACTION_IGNORE:
+        action_str = "ignore";
+        break;
+    case BDRV_ACTION_STOP:
+        action_str = "stop";
+        break;
+    default:
+        abort();
+    }
+
+    fprintf(stderr, "block I/O error in device '%s': %s (%d)\n",
+                     bdrv->device_name, strerror(error), error);
+
+    data = qobject_from_jsonf("{ 'device': %s, 'action': %s, 'operation': %s }",
+                              bdrv->device_name,
+                              action_str,
+                              is_read ? "read" : "write");
+    bdrv_put_rhel6_reason(qobject_to_qdict(data), error);
+    bdrv_put_rhel6_debug_info(qobject_to_qdict(data), error);
+    monitor_protocol_event(QEVENT_BLOCK_IO_ERROR, data);
+
+    qobject_decref(data);
+}
+
+static void bdrv_emit_qmp_eject_event(BlockDriverState *bs, bool ejected)
+{
+    QObject *data;
+
+    data = qobject_from_jsonf("{ 'device': %s, 'tray-open': %i }",
+                              bdrv_get_device_name(bs), ejected);
+    monitor_protocol_event(QEVENT_DEVICE_TRAY_MOVED, data);
+
+    qobject_decref(data);
+}
+
 static void bdrv_dev_change_media_cb(BlockDriverState *bs, bool load)
 {
     if (bs->dev_ops && bs->dev_ops->change_media_cb) {
+        bool tray_was_closed = !bdrv_dev_is_tray_open(bs);
         bs->dev_ops->change_media_cb(bs->dev_opaque, load);
+        if (tray_was_closed) {
+            /* tray open */
+            bdrv_emit_qmp_eject_event(bs, true);
+        }
+        if (load) {
+            /* tray close */
+            bdrv_emit_qmp_eject_event(bs, false);
+        }
     }
 }
 
 bool bdrv_dev_has_removable_media(BlockDriverState *bs)
 {
     return !bs->dev || (bs->dev_ops && bs->dev_ops->change_media_cb);
+}
+
+void bdrv_dev_eject_request(BlockDriverState *bs, bool force)
+{
+    if (bs->dev_ops && bs->dev_ops->eject_request_cb) {
+        bs->dev_ops->eject_request_cb(bs->dev_opaque, force);
+    }
 }
 
 bool bdrv_dev_is_tray_open(BlockDriverState *bs)
@@ -820,6 +1090,10 @@ int bdrv_commit(BlockDriverState *bs)
         return -EACCES;
     }
 
+    if (bdrv_in_use(bs) || bdrv_in_use(bs->backing_hd)) {
+        return -EBUSY;
+    }
+
     backing_drv = bs->backing_hd->drv;
     ro = bs->backing_hd->read_only;
     strncpy(filename, bs->backing_hd->filename, sizeof(filename));
@@ -851,10 +1125,10 @@ int bdrv_commit(BlockDriverState *bs)
     }
 
     total_sectors = bdrv_getlength(bs) >> BDRV_SECTOR_BITS;
-    buf = qemu_malloc(COMMIT_BUF_SECTORS * BDRV_SECTOR_SIZE);
+    buf = g_malloc(COMMIT_BUF_SECTORS * BDRV_SECTOR_SIZE);
 
     for (sector = 0; sector < total_sectors; sector += n) {
-        if (drv->bdrv_is_allocated(bs, sector, COMMIT_BUF_SECTORS, &n)) {
+        if (bdrv_is_allocated(bs, sector, COMMIT_BUF_SECTORS, &n)) {
 
             if (bdrv_read(bs, sector, buf, n) != 0) {
                 ret = -EIO;
@@ -881,7 +1155,7 @@ int bdrv_commit(BlockDriverState *bs)
         bdrv_flush(bs->backing_hd);
 
 ro_cleanup:
-    qemu_free(buf);
+    g_free(buf);
 
     if (ro) {
         /* re-open as RO */
@@ -901,6 +1175,118 @@ ro_cleanup:
     }
 
     return ret;
+}
+
+struct BdrvTrackedRequest {
+    BlockDriverState *bs;
+    int64_t sector_num;
+    int nb_sectors;
+    bool is_write;
+    QLIST_ENTRY(BdrvTrackedRequest) list;
+    Coroutine *co; /* owner, used for deadlock detection */
+    CoQueue wait_queue; /* coroutines blocked on this request */
+};
+
+/**
+ * Remove an active request from the tracked requests list
+ *
+ * This function should be called when a tracked request is completing.
+ */
+static void tracked_request_end(BdrvTrackedRequest *req)
+{
+    QLIST_REMOVE(req, list);
+    qemu_co_queue_restart_all(&req->wait_queue);
+}
+
+/**
+ * Add an active request to the tracked requests list
+ */
+static void tracked_request_begin(BdrvTrackedRequest *req,
+                                  BlockDriverState *bs,
+                                  int64_t sector_num,
+                                  int nb_sectors, bool is_write)
+{
+    *req = (BdrvTrackedRequest){
+        .bs = bs,
+        .sector_num = sector_num,
+        .nb_sectors = nb_sectors,
+        .is_write = is_write,
+        .co = qemu_coroutine_self(),
+    };
+
+    qemu_co_queue_init(&req->wait_queue);
+
+    QLIST_INSERT_HEAD(&bs->tracked_requests, req, list);
+}
+
+/**
+ * Round a region to cluster boundaries
+ */
+static void round_to_clusters(BlockDriverState *bs,
+                              int64_t sector_num, int nb_sectors,
+                              int64_t *cluster_sector_num,
+                              int *cluster_nb_sectors)
+{
+    BlockDriverInfo bdi;
+
+    if (bdrv_get_info(bs, &bdi) < 0 || bdi.cluster_size == 0) {
+        *cluster_sector_num = sector_num;
+        *cluster_nb_sectors = nb_sectors;
+    } else {
+        int64_t c = bdi.cluster_size / BDRV_SECTOR_SIZE;
+        *cluster_sector_num = QEMU_ALIGN_DOWN(sector_num, c);
+        *cluster_nb_sectors = QEMU_ALIGN_UP(sector_num - *cluster_sector_num +
+                                            nb_sectors, c);
+    }
+}
+
+static bool tracked_request_overlaps(BdrvTrackedRequest *req,
+                                     int64_t sector_num, int nb_sectors) {
+    /*        aaaa   bbbb */
+    if (sector_num >= req->sector_num + req->nb_sectors) {
+        return false;
+    }
+    /* bbbb   aaaa        */
+    if (req->sector_num >= sector_num + nb_sectors) {
+        return false;
+    }
+    return true;
+}
+
+static void coroutine_fn wait_for_overlapping_requests(BlockDriverState *bs,
+        int64_t sector_num, int nb_sectors)
+{
+    BdrvTrackedRequest *req;
+    int64_t cluster_sector_num;
+    int cluster_nb_sectors;
+    bool retry;
+
+    /* If we touch the same cluster it counts as an overlap.  This guarantees
+     * that allocating writes will be serialized and not race with each other
+     * for the same cluster.  For example, in copy-on-read it ensures that the
+     * CoR read and write operations are atomic and guest writes cannot
+     * interleave between them.
+     */
+    round_to_clusters(bs, sector_num, nb_sectors,
+                      &cluster_sector_num, &cluster_nb_sectors);
+
+    do {
+        retry = false;
+        QLIST_FOREACH(req, &bs->tracked_requests, list) {
+            if (tracked_request_overlaps(req, cluster_sector_num,
+                                         cluster_nb_sectors)) {
+                /* Hitting this means there was a reentrant request, for
+                 * example, a block driver issuing nested requests.  This must
+                 * never happen since it means deadlock.
+                 */
+                assert(qemu_coroutine_self() != req->co);
+
+                qemu_co_queue_wait(&req->wait_queue);
+                retry = true;
+                break;
+            }
+        }
+    } while (retry);
 }
 
 /*
@@ -948,22 +1334,76 @@ static int bdrv_check_byte_request(BlockDriverState *bs, int64_t offset,
 static int bdrv_check_request(BlockDriverState *bs, int64_t sector_num,
                               int nb_sectors)
 {
-    return bdrv_check_byte_request(bs, sector_num * 512, nb_sectors * 512);
+    return bdrv_check_byte_request(bs, sector_num * BDRV_SECTOR_SIZE,
+                                   nb_sectors * BDRV_SECTOR_SIZE);
+}
+
+typedef struct RwCo {
+    BlockDriverState *bs;
+    int64_t sector_num;
+    int nb_sectors;
+    QEMUIOVector *qiov;
+    bool is_write;
+    int ret;
+} RwCo;
+
+static void coroutine_fn bdrv_rw_co_entry(void *opaque)
+{
+    RwCo *rwco = opaque;
+
+    if (!rwco->is_write) {
+        rwco->ret = bdrv_co_do_readv(rwco->bs, rwco->sector_num,
+                                     rwco->nb_sectors, rwco->qiov, 0);
+    } else {
+        rwco->ret = bdrv_co_do_writev(rwco->bs, rwco->sector_num,
+                                      rwco->nb_sectors, rwco->qiov, 0);
+    }
+}
+
+/*
+ * Process a synchronous request using coroutines
+ */
+static int bdrv_rw_co(BlockDriverState *bs, int64_t sector_num, uint8_t *buf,
+                      int nb_sectors, bool is_write)
+{
+    QEMUIOVector qiov;
+    struct iovec iov = {
+        .iov_base = (void *)buf,
+        .iov_len = nb_sectors * BDRV_SECTOR_SIZE,
+    };
+    Coroutine *co;
+    RwCo rwco = {
+        .bs = bs,
+        .sector_num = sector_num,
+        .nb_sectors = nb_sectors,
+        .qiov = &qiov,
+        .is_write = is_write,
+        .ret = NOT_DONE,
+    };
+
+    qemu_iovec_init_external(&qiov, &iov, 1);
+
+    if (qemu_in_coroutine()) {
+        /* Fast-path if already in coroutine context */
+        bdrv_rw_co_entry(&rwco);
+    } else {
+        co = qemu_coroutine_create(bdrv_rw_co_entry);
+        qemu_coroutine_enter(co, &rwco);
+        while (rwco.ret == NOT_DONE) {
+            qemu_aio_wait();
+        }
+    }
+    return rwco.ret;
 }
 
 /* return < 0 if error. See bdrv_write() for the return codes */
 int bdrv_read(BlockDriverState *bs, int64_t sector_num,
               uint8_t *buf, int nb_sectors)
 {
-    BlockDriver *drv = bs->drv;
-
-    if (!drv)
-        return -ENOMEDIUM;
-    if (bdrv_check_request(bs, sector_num, nb_sectors))
-        return -EIO;
-
-    return drv->bdrv_read(bs, sector_num, buf, nb_sectors);
+    return bdrv_rw_co(bs, sector_num, buf, nb_sectors, false);
 }
+
+#define BITS_PER_LONG  (sizeof(unsigned long) * 8)
 
 static void set_dirty_bitmap(BlockDriverState *bs, int64_t sector_num,
                              int nb_sectors, int dirty)
@@ -975,13 +1415,19 @@ static void set_dirty_bitmap(BlockDriverState *bs, int64_t sector_num,
     end = (sector_num + nb_sectors - 1) / BDRV_SECTORS_PER_DIRTY_CHUNK;
 
     for (; start <= end; start++) {
-        idx = start / (sizeof(unsigned long) * 8);
-        bit = start % (sizeof(unsigned long) * 8);
+        idx = start / BITS_PER_LONG;
+        bit = start % BITS_PER_LONG;
         val = bs->dirty_bitmap[idx];
         if (dirty) {
-            val |= 1 << bit;
+            if (!(val & (1UL << bit))) {
+                bs->dirty_count++;
+                val |= 1UL << bit;
+            }
         } else {
-            val &= ~(1 << bit);
+            if (val & (1UL << bit)) {
+                bs->dirty_count--;
+                val &= ~(1UL << bit);
+            }
         }
         bs->dirty_bitmap[idx] = val;
     }
@@ -996,23 +1442,7 @@ static void set_dirty_bitmap(BlockDriverState *bs, int64_t sector_num,
 int bdrv_write(BlockDriverState *bs, int64_t sector_num,
                const uint8_t *buf, int nb_sectors)
 {
-    BlockDriver *drv = bs->drv;
-    if (!bs->drv)
-        return -ENOMEDIUM;
-    if (bs->read_only)
-        return -EACCES;
-    if (bdrv_check_request(bs, sector_num, nb_sectors))
-        return -EIO;
-
-    if (bs->dirty_bitmap) {
-        set_dirty_bitmap(bs, sector_num, nb_sectors, 1);
-    }
-
-    if (bs->wr_highest_sector < sector_num + nb_sectors - 1) {
-        bs->wr_highest_sector = sector_num + nb_sectors - 1;
-    }
-
-    return drv->bdrv_write(bs, sector_num, buf, nb_sectors);
+    return bdrv_rw_co(bs, sector_num, (uint8_t *)buf, nb_sectors, true);
 }
 
 int bdrv_pread(BlockDriverState *bs, int64_t offset,
@@ -1133,17 +1563,229 @@ int bdrv_pwrite_sync(BlockDriverState *bs, int64_t offset,
     return 0;
 }
 
-/*
- * Writes to the file and ensures that no writes are reordered across this
- * request (acts as a barrier)
- *
- * Returns 0 on success, -errno in error cases.
- */
-int bdrv_write_sync(BlockDriverState *bs, int64_t sector_num,
-    const uint8_t *buf, int nb_sectors)
+static int coroutine_fn bdrv_co_do_copy_on_readv(BlockDriverState *bs,
+        int64_t sector_num, int nb_sectors, QEMUIOVector *qiov)
 {
-    return bdrv_pwrite_sync(bs, BDRV_SECTOR_SIZE * sector_num,
-        buf, BDRV_SECTOR_SIZE * nb_sectors);
+    /* Perform I/O through a temporary buffer so that users who scribble over
+     * their read buffer while the operation is in progress do not end up
+     * modifying the image file.  This is critical for zero-copy guest I/O
+     * where anything might happen inside guest memory.
+     */
+    void *bounce_buffer;
+
+    BlockDriver *drv = bs->drv;
+    struct iovec iov;
+    QEMUIOVector bounce_qiov;
+    int64_t cluster_sector_num;
+    int cluster_nb_sectors;
+    size_t skip_bytes;
+    int ret;
+
+    /* Cover entire cluster so no additional backing file I/O is required when
+     * allocating cluster in the image file.
+     */
+    round_to_clusters(bs, sector_num, nb_sectors,
+                      &cluster_sector_num, &cluster_nb_sectors);
+
+    trace_bdrv_co_do_copy_on_readv(bs, sector_num, nb_sectors,
+                                   cluster_sector_num, cluster_nb_sectors);
+
+    iov.iov_len = cluster_nb_sectors * BDRV_SECTOR_SIZE;
+    iov.iov_base = bounce_buffer = qemu_blockalign(bs, iov.iov_len);
+    qemu_iovec_init_external(&bounce_qiov, &iov, 1);
+
+    ret = drv->bdrv_co_readv(bs, cluster_sector_num, cluster_nb_sectors,
+                             &bounce_qiov);
+    if (ret < 0) {
+        goto err;
+    }
+
+    if (drv->bdrv_co_write_zeroes &&
+        buffer_is_zero(bounce_buffer, iov.iov_len)) {
+        ret = drv->bdrv_co_write_zeroes(bs, cluster_sector_num,
+                                        cluster_nb_sectors);
+    } else {
+        ret = drv->bdrv_co_writev(bs, cluster_sector_num, cluster_nb_sectors,
+                                  &bounce_qiov);
+    }
+
+    if (ret < 0) {
+        /* It might be okay to ignore write errors for guest requests.  If this
+         * is a deliberate copy-on-read then we don't want to ignore the error.
+         * Simply report it in all cases.
+         */
+        goto err;
+    }
+
+    skip_bytes = (sector_num - cluster_sector_num) * BDRV_SECTOR_SIZE;
+    qemu_iovec_from_buffer(qiov, bounce_buffer + skip_bytes,
+                           nb_sectors * BDRV_SECTOR_SIZE);
+
+err:
+    qemu_vfree(bounce_buffer);
+    return ret;
+}
+
+/*
+ * Handle a read request in coroutine context
+ */
+static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors, QEMUIOVector *qiov,
+    BdrvRequestFlags flags)
+{
+    BlockDriver *drv = bs->drv;
+    BdrvTrackedRequest req;
+    int ret;
+
+    if (!drv) {
+        return -ENOMEDIUM;
+    }
+    if (bdrv_check_request(bs, sector_num, nb_sectors)) {
+        return -EIO;
+    }
+
+    if (bs->copy_on_read) {
+        flags |= BDRV_REQ_COPY_ON_READ;
+    }
+    if (flags & BDRV_REQ_COPY_ON_READ) {
+        bs->copy_on_read_in_flight++;
+    }
+
+    if (bs->copy_on_read_in_flight) {
+        wait_for_overlapping_requests(bs, sector_num, nb_sectors);
+    }
+
+    tracked_request_begin(&req, bs, sector_num, nb_sectors, false);
+
+    if (flags & BDRV_REQ_COPY_ON_READ) {
+        int pnum;
+
+        ret = bdrv_co_is_allocated(bs, sector_num, nb_sectors, &pnum);
+        if (ret < 0) {
+            goto out;
+        }
+
+        if (!ret || pnum != nb_sectors) {
+            ret = bdrv_co_do_copy_on_readv(bs, sector_num, nb_sectors, qiov);
+            goto out;
+        }
+    }
+
+    ret = drv->bdrv_co_readv(bs, sector_num, nb_sectors, qiov);
+
+out:
+    tracked_request_end(&req);
+
+    if (flags & BDRV_REQ_COPY_ON_READ) {
+        bs->copy_on_read_in_flight--;
+    }
+
+    return ret;
+}
+
+int coroutine_fn bdrv_co_readv(BlockDriverState *bs, int64_t sector_num,
+    int nb_sectors, QEMUIOVector *qiov)
+{
+    trace_bdrv_co_readv(bs, sector_num, nb_sectors);
+
+    return bdrv_co_do_readv(bs, sector_num, nb_sectors, qiov, 0);
+}
+
+int coroutine_fn bdrv_co_copy_on_readv(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors, QEMUIOVector *qiov)
+{
+    trace_bdrv_co_copy_on_readv(bs, sector_num, nb_sectors);
+
+    return bdrv_co_do_readv(bs, sector_num, nb_sectors, qiov,
+                            BDRV_REQ_COPY_ON_READ);
+}
+
+static int coroutine_fn bdrv_co_do_write_zeroes(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors)
+{
+    BlockDriver *drv = bs->drv;
+    QEMUIOVector qiov;
+    struct iovec iov;
+    int ret;
+
+    /* First try the efficient write zeroes operation */
+    if (drv->bdrv_co_write_zeroes) {
+        return drv->bdrv_co_write_zeroes(bs, sector_num, nb_sectors);
+    }
+
+    /* Fall back to bounce buffer if write zeroes is unsupported */
+    iov.iov_len  = nb_sectors * BDRV_SECTOR_SIZE;
+    iov.iov_base = qemu_blockalign(bs, iov.iov_len);
+    memset(iov.iov_base, 0, iov.iov_len);
+    qemu_iovec_init_external(&qiov, &iov, 1);
+
+    ret = drv->bdrv_co_writev(bs, sector_num, nb_sectors, &qiov);
+
+    qemu_vfree(iov.iov_base);
+    return ret;
+}
+
+/*
+ * Handle a write request in coroutine context
+ */
+static int coroutine_fn bdrv_co_do_writev(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors, QEMUIOVector *qiov,
+    BdrvRequestFlags flags)
+{
+    BlockDriver *drv = bs->drv;
+    BdrvTrackedRequest req;
+    int ret;
+
+    if (!bs->drv) {
+        return -ENOMEDIUM;
+    }
+    if (bs->read_only) {
+        return -EACCES;
+    }
+    if (bdrv_check_request(bs, sector_num, nb_sectors)) {
+        return -EIO;
+    }
+
+    if (bs->copy_on_read_in_flight) {
+        wait_for_overlapping_requests(bs, sector_num, nb_sectors);
+    }
+
+    tracked_request_begin(&req, bs, sector_num, nb_sectors, true);
+
+    if (flags & BDRV_REQ_ZERO_WRITE) {
+        ret = bdrv_co_do_write_zeroes(bs, sector_num, nb_sectors);
+    } else {
+        ret = drv->bdrv_co_writev(bs, sector_num, nb_sectors, qiov);
+    }
+
+    if (bs->dirty_bitmap) {
+        bdrv_set_dirty(bs, sector_num, nb_sectors);
+    }
+
+    if (bs->wr_highest_sector < sector_num + nb_sectors - 1) {
+        bs->wr_highest_sector = sector_num + nb_sectors - 1;
+    }
+
+    tracked_request_end(&req);
+
+    return ret;
+}
+
+int coroutine_fn bdrv_co_writev(BlockDriverState *bs, int64_t sector_num,
+    int nb_sectors, QEMUIOVector *qiov)
+{
+    trace_bdrv_co_writev(bs, sector_num, nb_sectors);
+
+    return bdrv_co_do_writev(bs, sector_num, nb_sectors, qiov, 0);
+}
+
+int coroutine_fn bdrv_co_write_zeroes(BlockDriverState *bs,
+                                      int64_t sector_num, int nb_sectors)
+{
+    trace_bdrv_co_write_zeroes(bs, sector_num, nb_sectors);
+
+    return bdrv_co_do_writev(bs, sector_num, nb_sectors, NULL,
+                             BDRV_REQ_ZERO_WRITE);
 }
 
 /**
@@ -1215,7 +1857,7 @@ struct partition {
 static int guess_disk_lchs(BlockDriverState *bs,
                            int *pcylinders, int *pheads, int *psectors)
 {
-    uint8_t buf[512];
+    uint8_t buf[BDRV_SECTOR_SIZE];
     int ret, i, heads, sectors, cylinders;
     struct partition *p;
     uint32_t nr_sects;
@@ -1472,29 +2114,6 @@ const char *bdrv_get_device_name(BlockDriverState *bs)
     return bs->device_name;
 }
 
-int bdrv_flush(BlockDriverState *bs)
-{
-    if (bs->open_flags & BDRV_O_NO_FLUSH) {
-        return 0;
-    }
-
-    if (bs->drv && bs->drv->bdrv_flush) {
-        return bs->drv->bdrv_flush(bs);
-    }
-
-    /*
-     * Some block drivers always operate in either writethrough or unsafe mode
-     * and don't support bdrv_flush therefore. Usually qemu doesn't know how
-     * the server works (because the behaviour is hardcoded or depends on
-     * server-side configuration), so we can't ensure that everything is safe
-     * on disk. Returning an error doesn't work because that would break guests
-     * even if the server operates in writethrough mode.
-     *
-     * Let's hope the user knows what he's doing.
-     */
-    return 0;
-}
-
 void bdrv_flush_all(void)
 {
     BlockDriverState *bs;
@@ -1517,113 +2136,87 @@ int bdrv_has_zero_init(BlockDriverState *bs)
     return 1;
 }
 
-int bdrv_discard(BlockDriverState *bs, int64_t sector_num, int nb_sectors)
-{
-    if (!bs->drv) {
-        return -ENOMEDIUM;
-    }
-    if (!bs->drv->bdrv_discard) {
-        return 0;
-    }
-    return bs->drv->bdrv_discard(bs, sector_num, nb_sectors);
-}
+typedef struct BdrvCoIsAllocatedData {
+    BlockDriverState *bs;
+    int64_t sector_num;
+    int nb_sectors;
+    int *pnum;
+    int ret;
+    bool done;
+} BdrvCoIsAllocatedData;
 
 /*
  * Returns true iff the specified sector is present in the disk image. Drivers
  * not implementing the functionality are assumed to not support backing files,
  * hence all their sectors are reported as allocated.
  *
+ * If 'sector_num' is beyond the end of the disk image the return value is 0
+ * and 'pnum' is set to 0.
+ *
  * 'pnum' is set to the number of sectors (including and immediately following
  * the specified sector) that are known to be in the same
  * allocated/unallocated state.
  *
- * 'nb_sectors' is the max value 'pnum' should be set to.
+ * 'nb_sectors' is the max value 'pnum' should be set to.  If nb_sectors goes
+ * beyond the end of the disk image it will be clamped.
  */
-int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
-	int *pnum)
+int coroutine_fn bdrv_co_is_allocated(BlockDriverState *bs, int64_t sector_num,
+                                      int nb_sectors, int *pnum)
 {
     int64_t n;
-    if (!bs->drv->bdrv_is_allocated) {
-        if (sector_num >= bs->total_sectors) {
-            *pnum = 0;
-            return 0;
-        }
-        n = bs->total_sectors - sector_num;
-        *pnum = (n < nb_sectors) ? (n) : (nb_sectors);
+
+    if (sector_num >= bs->total_sectors) {
+        *pnum = 0;
+        return 0;
+    }
+
+    n = bs->total_sectors - sector_num;
+    if (n < nb_sectors) {
+        nb_sectors = n;
+    }
+
+    if (!bs->drv->bdrv_co_is_allocated) {
+        *pnum = nb_sectors;
         return 1;
     }
-    return bs->drv->bdrv_is_allocated(bs, sector_num, nb_sectors, pnum);
+
+    return bs->drv->bdrv_co_is_allocated(bs, sector_num, nb_sectors, pnum);
 }
 
-#define BDRV_REASON_KEY RFQDN_REDHAT "reason"
-
-/* RHEL6 vendor extension */
-static void bdrv_put_rhel6_reason(QDict *event, int error)
+/* Coroutine wrapper for bdrv_is_allocated() */
+static void coroutine_fn bdrv_is_allocated_co_entry(void *opaque)
 {
-    const char *reason;
+    BdrvCoIsAllocatedData *data = opaque;
+    BlockDriverState *bs = data->bs;
 
-    switch (error) {
-    case ENOSPC:
-        reason = "enospc";
-        break;
-    case EPERM:
-        reason = "eperm";
-        break;
-    case EIO:
-        reason = "eio";
-        break;
-    default:
-        reason = "eother";
-        break;
+    data->ret = bdrv_co_is_allocated(bs, data->sector_num, data->nb_sectors,
+                                     data->pnum);
+    data->done = true;
+}
+
+/*
+ * Synchronous wrapper around bdrv_co_is_allocated().
+ *
+ * See bdrv_co_is_allocated() for details.
+ */
+int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
+                      int *pnum)
+{
+    Coroutine *co;
+    BdrvCoIsAllocatedData data = {
+        .bs = bs,
+        .sector_num = sector_num,
+        .nb_sectors = nb_sectors,
+        .pnum = pnum,
+        .done = false,
+    };
+
+    co = qemu_coroutine_create(bdrv_is_allocated_co_entry);
+    qemu_coroutine_enter(co, &data);
+    while (!data.done) {
+        qemu_aio_wait();
     }
-
-    qdict_put(event, BDRV_REASON_KEY, qstring_from_str(reason));
-}
-
-#define BDRV_DEBUG_KEY  RFQDN_REDHAT "debug_info"
-
-/* RHEL6 vendor extension */
-static void bdrv_put_rhel6_debug_info(QDict *event, int error)
-{
-    QObject *info;
-
-    info = qobject_from_jsonf("{ 'errno': %d, 'message': %s }", error,
-                               strerror(error));
-    qdict_put_obj(event, BDRV_DEBUG_KEY, info);
-}
-
-void bdrv_mon_event(const BlockDriverState *bdrv,
-                    BlockMonEventAction action, int error, int is_read)
-{
-    QObject *data;
-    const char *action_str;
-
-    switch (action) {
-    case BDRV_ACTION_REPORT:
-        action_str = "report";
-        break;
-    case BDRV_ACTION_IGNORE:
-        action_str = "ignore";
-        break;
-    case BDRV_ACTION_STOP:
-        action_str = "stop";
-        break;
-    default:
-        abort();
-    }
-
-    fprintf(stderr, "block I/O error in device '%s': %s (%d)\n",
-                     bdrv->device_name, strerror(error), error);
-
-    data = qobject_from_jsonf("{ 'device': %s, 'action': %s, 'operation': %s }",
-                              bdrv->device_name,
-                              action_str,
-                              is_read ? "read" : "write");
-    bdrv_put_rhel6_reason(qobject_to_qdict(data), error);
-    bdrv_put_rhel6_debug_info(qobject_to_qdict(data), error);
-    monitor_protocol_event(QEVENT_BLOCK_IO_ERROR, data);
-
-    qobject_decref(data);
+    return data.ret;
 }
 
 static void bdrv_print_dict(QObject *obj, void *opaque)
@@ -1642,6 +2235,11 @@ static void bdrv_print_dict(QObject *obj, void *opaque)
         monitor_printf(mon, " tray-open=%d",
                        qdict_get_bool(bs_dict, "tray-open"));
     }
+
+    if (qdict_haskey(bs_dict, "io-status")) {
+        monitor_printf(mon, " io-status=%s", qdict_get_str(bs_dict, "io-status"));
+    }
+
     if (qdict_haskey(bs_dict, "inserted")) {
         QDict *qdict = qobject_to_qdict(qdict_get(bs_dict, "inserted"));
 
@@ -1667,6 +2265,12 @@ void bdrv_info_print(Monitor *mon, const QObject *data)
     qlist_iter(qobject_to_qlist(data), bdrv_print_dict, mon);
 }
 
+static const char *const io_status_name[BDRV_IOS_MAX] = {
+    [BDRV_IOS_OK] = "ok",
+    [BDRV_IOS_FAILED] = "failed",
+    [BDRV_IOS_ENOSPC] = "nospace",
+};
+
 void bdrv_info(Monitor *mon, QObject **ret_data)
 {
     QList *bs_list;
@@ -1689,6 +2293,12 @@ void bdrv_info(Monitor *mon, QObject **ret_data)
             qdict_put(bs_dict, "tray-open",
                       qbool_from_int(bdrv_dev_is_tray_open(bs)));
         }
+
+        if (bdrv_iostatus_is_enabled(bs)) {
+            qdict_put(bs_dict, "io-status",
+                      qstring_from_str(io_status_name[bs->iostatus]));
+        }
+
         if (bs->drv) {
             QObject *obj;
 
@@ -1764,7 +2374,7 @@ static QObject* bdrv_info_stats_bs(BlockDriverState *bs)
                              bs->nr_bytes[BDRV_ACCT_WRITE],
                              bs->nr_ops[BDRV_ACCT_READ],
                              bs->nr_ops[BDRV_ACCT_WRITE],
-                             bs->wr_highest_sector * 512,
+                             bs->wr_highest_sector * (long)BDRV_SECTOR_SIZE,
                              bs->nr_ops[BDRV_ACCT_FLUSH],
                              bs->total_time_ns[BDRV_ACCT_WRITE],
                              bs->total_time_ns[BDRV_ACCT_READ],
@@ -1812,11 +2422,7 @@ const char *bdrv_get_encrypted_filename(BlockDriverState *bs)
 void bdrv_get_backing_filename(BlockDriverState *bs,
                                char *filename, int filename_size)
 {
-    if (!bs->backing_file) {
-        pstrcpy(filename, filename_size, "");
-    } else {
-        pstrcpy(filename, filename_size, bs->backing_file);
-    }
+    pstrcpy(filename, filename_size, bs->backing_file);
 }
 
 int bdrv_write_compressed(BlockDriverState *bs, int64_t sector_num,
@@ -1830,9 +2436,7 @@ int bdrv_write_compressed(BlockDriverState *bs, int64_t sector_num,
     if (bdrv_check_request(bs, sector_num, nb_sectors))
         return -EIO;
 
-    if (bs->dirty_bitmap) {
-        set_dirty_bitmap(bs, sector_num, nb_sectors, 1);
-    }
+    assert(!bs->dirty_bitmap);
 
     return drv->bdrv_write_compressed(bs, sector_num, buf, nb_sectors);
 }
@@ -1969,6 +2573,24 @@ int bdrv_snapshot_list(BlockDriverState *bs,
     return drv->bdrv_snapshot_list(bs, psn_info);
 }
 
+BlockDriverState *bdrv_find_backing_image(BlockDriverState *bs,
+        const char *backing_file)
+{
+    if (!bs->drv) {
+        return NULL;
+    }
+
+    if (bs->backing_hd) {
+        if (strcmp(bs->backing_file, backing_file) == 0) {
+            return bs->backing_hd;
+        } else {
+            return bdrv_find_backing_image(bs->backing_hd, backing_file);
+        }
+    }
+
+    return NULL;
+}
+
 #define NB_SUFFIXES 4
 
 char *get_human_readable_size(char *buf, int buf_size, int64_t size)
@@ -2049,87 +2671,22 @@ BlockDriverAIOCB *bdrv_aio_readv(BlockDriverState *bs, int64_t sector_num,
                                  QEMUIOVector *qiov, int nb_sectors,
                                  BlockDriverCompletionFunc *cb, void *opaque)
 {
-    BlockDriver *drv = bs->drv;
-
     trace_bdrv_aio_readv(bs, sector_num, nb_sectors, opaque);
 
-    if (!drv)
-        return NULL;
-    if (bdrv_check_request(bs, sector_num, nb_sectors))
-        return NULL;
-
-    return drv->bdrv_aio_readv(bs, sector_num, qiov, nb_sectors, cb, opaque);
+    return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors,
+                                 cb, opaque, false);
 }
 
 BlockDriverAIOCB *bdrv_aio_writev(BlockDriverState *bs, int64_t sector_num,
                                   QEMUIOVector *qiov, int nb_sectors,
                                   BlockDriverCompletionFunc *cb, void *opaque)
 {
-    BlockDriver *drv = bs->drv;
-    BlockDriverAIOCB *ret;
-
     trace_bdrv_aio_writev(bs, sector_num, nb_sectors, opaque);
 
-    if (!drv)
-        return NULL;
-    if (bs->read_only)
-        return NULL;
-    if (bdrv_check_request(bs, sector_num, nb_sectors))
-        return NULL;
-
-    if (bs->dirty_bitmap) {
-        set_dirty_bitmap(bs, sector_num, nb_sectors, 1);
-    }
-
-    ret = drv->bdrv_aio_writev(bs, sector_num, qiov, nb_sectors,
-                               cb, opaque);
-
-    if (ret) {
-        if (bs->wr_highest_sector < sector_num + nb_sectors - 1) {
-            bs->wr_highest_sector = sector_num + nb_sectors - 1;
-        }
-    }
-
-    return ret;
+    return bdrv_co_aio_rw_vector(bs, sector_num, qiov, nb_sectors,
+                                 cb, opaque, true);
 }
 
-/**
- * Attempt to copy unallocated sectors from backing file.
- *
- * @sector_num - the first sector to start from
- * @cb - completion callback
- * @opaque - data to pass completion callback
- *
- * Returns NULL if the image format not support the operation, the image is
- * read-only, or no image is open.
- *
- * The intention of this function is for a user to execute it once with a
- * sector_num of 0 and then upon receiving a completion callback, to remember
- * the number of sectors copied, and then to call this function again with
- * an offset adjusted by the number of sectors previously copied.
- *
- * This allows a user to progressive stream in an image at a pace that makes
- * sense.  In general, this function tries to do the smallest amount of I/O
- * possible to do some useful work.
- *
- * This function only really makes sense in combination with a block format
- * that supports copy on read and has it enabled.  If copy on read is not
- * enabled, a block format driver may return NULL.
- *
- * If an I/O error occurs the completion callback is invoked with -errno in the
- * nb_sectors argument.
- */
-BlockDriverAIOCB *bdrv_aio_copy_backing(BlockDriverState *bs,
-                                        int64_t sector_num,
-                                        BlockDriverCopyBackingCB *cb,
-                                        void *opaque)
-{
-    if (!bs->drv || bs->read_only || !bs->drv->bdrv_aio_copy_backing) {
-        return NULL;
-    }
-
-    return bs->drv->bdrv_aio_copy_backing(bs, sector_num, cb, opaque);
-}
 
 typedef struct MultiwriteCB {
     int error;
@@ -2152,8 +2709,8 @@ static void multiwrite_user_cb(MultiwriteCB *mcb)
         if (mcb->callbacks[i].free_qiov) {
             qemu_iovec_destroy(mcb->callbacks[i].free_qiov);
         }
-        qemu_free(mcb->callbacks[i].free_qiov);
-        qemu_free(mcb->callbacks[i].free_buf);
+        g_free(mcb->callbacks[i].free_qiov);
+        qemu_vfree(mcb->callbacks[i].free_buf);
     }
 }
 
@@ -2170,7 +2727,7 @@ static void multiwrite_cb(void *opaque, int ret)
     mcb->num_requests--;
     if (mcb->num_requests == 0) {
         multiwrite_user_cb(mcb);
-        qemu_free(mcb);
+        g_free(mcb);
     }
 }
 
@@ -2230,7 +2787,7 @@ static int multiwrite_merge(BlockDriverState *bs, BlockRequest *reqs,
 
         if (merge) {
             size_t size;
-            QEMUIOVector *qiov = qemu_mallocz(sizeof(*qiov));
+            QEMUIOVector *qiov = g_malloc0(sizeof(*qiov));
             qemu_iovec_init(qiov,
                 reqs[outidx].qiov->niov + reqs[i].qiov->niov + 1);
 
@@ -2299,7 +2856,7 @@ int bdrv_aio_multiwrite(BlockDriverState *bs, BlockRequest *reqs, int num_reqs)
     }
 
     // Create MultiwriteCB structure
-    mcb = qemu_mallocz(sizeof(*mcb) + num_reqs * sizeof(*mcb->callbacks));
+    mcb = g_malloc0(sizeof(*mcb) + num_reqs * sizeof(*mcb->callbacks));
     mcb->num_requests = 0;
     mcb->num_callbacks = num_reqs;
 
@@ -2364,22 +2921,8 @@ fail:
     for (i = 0; i < mcb->num_callbacks; i++) {
         reqs[i].error = -EIO;
     }
-    qemu_free(mcb);
+    g_free(mcb);
     return -1;
-}
-
-BlockDriverAIOCB *bdrv_aio_flush(BlockDriverState *bs,
-        BlockDriverCompletionFunc *cb, void *opaque)
-{
-    BlockDriver *drv = bs->drv;
-
-    if (bs->open_flags & BDRV_O_NO_FLUSH) {
-        return bdrv_aio_noop_em(bs, cb, opaque);
-    }
-
-    if (!drv)
-        return NULL;
-    return drv->bdrv_aio_flush(bs, cb, opaque);
 }
 
 void bdrv_aio_cancel(BlockDriverAIOCB *acb)
@@ -2403,7 +2946,8 @@ typedef struct BlockDriverAIOCBSync {
 
 static void bdrv_aio_cancel_em(BlockDriverAIOCB *blockacb)
 {
-    BlockDriverAIOCBSync *acb = (BlockDriverAIOCBSync *)blockacb;
+    BlockDriverAIOCBSync *acb =
+        container_of(blockacb, BlockDriverAIOCBSync, common);
     qemu_bh_delete(acb->bh);
     acb->bh = NULL;
     qemu_aio_release(acb);
@@ -2448,9 +2992,9 @@ static BlockDriverAIOCB *bdrv_aio_rw_vector(BlockDriverState *bs,
 
     if (is_write) {
         qemu_iovec_to_buffer(acb->qiov, acb->bounce);
-        acb->ret = bdrv_write(bs, sector_num, acb->bounce, nb_sectors);
+        acb->ret = bs->drv->bdrv_write(bs, sector_num, acb->bounce, nb_sectors);
     } else {
-        acb->ret = bdrv_read(bs, sector_num, acb->bounce, nb_sectors);
+        acb->ret = bs->drv->bdrv_read(bs, sector_num, acb->bounce, nb_sectors);
     }
 
     qemu_bh_schedule(acb->bh);
@@ -2472,112 +3016,125 @@ static BlockDriverAIOCB *bdrv_aio_writev_em(BlockDriverState *bs,
     return bdrv_aio_rw_vector(bs, sector_num, qiov, nb_sectors, cb, opaque, 1);
 }
 
-static BlockDriverAIOCB *bdrv_aio_flush_em(BlockDriverState *bs,
-        BlockDriverCompletionFunc *cb, void *opaque)
+
+typedef struct BlockDriverAIOCBCoroutine {
+    BlockDriverAIOCB common;
+    BlockRequest req;
+    bool is_write;
+    QEMUBH* bh;
+} BlockDriverAIOCBCoroutine;
+
+static void bdrv_aio_co_cancel_em(BlockDriverAIOCB *blockacb)
 {
-    BlockDriverAIOCBSync *acb;
+    qemu_aio_flush();
+}
 
-    acb = qemu_aio_get(&bdrv_em_aio_pool, bs, cb, opaque);
-    acb->is_write = 1; /* don't bounce in the completion hadler */
-    acb->qiov = NULL;
-    acb->bounce = NULL;
-    acb->ret = 0;
+static AIOPool bdrv_em_co_aio_pool = {
+    .aiocb_size         = sizeof(BlockDriverAIOCBCoroutine),
+    .cancel             = bdrv_aio_co_cancel_em,
+};
 
-    if (!acb->bh)
-        acb->bh = qemu_bh_new(bdrv_aio_bh_cb, acb);
+static void bdrv_co_em_bh(void *opaque)
+{
+    BlockDriverAIOCBCoroutine *acb = opaque;
 
-    bdrv_flush(bs);
+    acb->common.cb(acb->common.opaque, acb->req.error);
+    qemu_bh_delete(acb->bh);
+    qemu_aio_release(acb);
+}
+
+/* Invoke bdrv_co_do_readv/bdrv_co_do_writev */
+static void coroutine_fn bdrv_co_do_rw(void *opaque)
+{
+    BlockDriverAIOCBCoroutine *acb = opaque;
+    BlockDriverState *bs = acb->common.bs;
+
+    if (!acb->is_write) {
+        acb->req.error = bdrv_co_do_readv(bs, acb->req.sector,
+            acb->req.nb_sectors, acb->req.qiov, 0);
+    } else {
+        acb->req.error = bdrv_co_do_writev(bs, acb->req.sector,
+            acb->req.nb_sectors, acb->req.qiov, 0);
+    }
+
+    acb->bh = qemu_bh_new(bdrv_co_em_bh, acb);
     qemu_bh_schedule(acb->bh);
+}
+
+static BlockDriverAIOCB *bdrv_co_aio_rw_vector(BlockDriverState *bs,
+                                               int64_t sector_num,
+                                               QEMUIOVector *qiov,
+                                               int nb_sectors,
+                                               BlockDriverCompletionFunc *cb,
+                                               void *opaque,
+                                               bool is_write)
+{
+    Coroutine *co;
+    BlockDriverAIOCBCoroutine *acb;
+
+    acb = qemu_aio_get(&bdrv_em_co_aio_pool, bs, cb, opaque);
+    acb->req.sector = sector_num;
+    acb->req.nb_sectors = nb_sectors;
+    acb->req.qiov = qiov;
+    acb->is_write = is_write;
+
+    co = qemu_coroutine_create(bdrv_co_do_rw);
+    qemu_coroutine_enter(co, acb);
+
     return &acb->common;
 }
 
-static BlockDriverAIOCB *bdrv_aio_noop_em(BlockDriverState *bs,
+static void coroutine_fn bdrv_aio_flush_co_entry(void *opaque)
+{
+    BlockDriverAIOCBCoroutine *acb = opaque;
+    BlockDriverState *bs = acb->common.bs;
+
+    acb->req.error = bdrv_co_flush(bs);
+    acb->bh = qemu_bh_new(bdrv_co_em_bh, acb);
+    qemu_bh_schedule(acb->bh);
+}
+
+BlockDriverAIOCB *bdrv_aio_flush(BlockDriverState *bs,
         BlockDriverCompletionFunc *cb, void *opaque)
 {
-    BlockDriverAIOCBSync *acb;
+    trace_bdrv_aio_flush(bs, opaque);
 
-    acb = qemu_aio_get(&bdrv_em_aio_pool, bs, cb, opaque);
-    acb->is_write = 1; /* don't bounce in the completion handler */
-    acb->qiov = NULL;
-    acb->bounce = NULL;
-    acb->ret = 0;
+    Coroutine *co;
+    BlockDriverAIOCBCoroutine *acb;
 
-    if (!acb->bh) {
-        acb->bh = qemu_bh_new(bdrv_aio_bh_cb, acb);
-    }
+    acb = qemu_aio_get(&bdrv_em_co_aio_pool, bs, cb, opaque);
+    co = qemu_coroutine_create(bdrv_aio_flush_co_entry);
+    qemu_coroutine_enter(co, acb);
 
-    qemu_bh_schedule(acb->bh);
     return &acb->common;
 }
 
-/**************************************************************/
-/* sync block device emulation */
-
-static void bdrv_rw_em_cb(void *opaque, int ret)
+static void coroutine_fn bdrv_aio_discard_co_entry(void *opaque)
 {
-    *(int *)opaque = ret;
+    BlockDriverAIOCBCoroutine *acb = opaque;
+    BlockDriverState *bs = acb->common.bs;
+
+    acb->req.error = bdrv_co_discard(bs, acb->req.sector, acb->req.nb_sectors);
+    acb->bh = qemu_bh_new(bdrv_co_em_bh, acb);
+    qemu_bh_schedule(acb->bh);
 }
 
-#define NOT_DONE 0x7fffffff
-
-static int bdrv_read_em(BlockDriverState *bs, int64_t sector_num,
-                        uint8_t *buf, int nb_sectors)
+BlockDriverAIOCB *bdrv_aio_discard(BlockDriverState *bs,
+        int64_t sector_num, int nb_sectors,
+        BlockDriverCompletionFunc *cb, void *opaque)
 {
-    int async_ret;
-    BlockDriverAIOCB *acb;
-    struct iovec iov;
-    QEMUIOVector qiov;
+    Coroutine *co;
+    BlockDriverAIOCBCoroutine *acb;
 
-    async_context_push();
+    trace_bdrv_aio_discard(bs, sector_num, nb_sectors, opaque);
 
-    async_ret = NOT_DONE;
-    iov.iov_base = (void *)buf;
-    iov.iov_len = nb_sectors * 512;
-    qemu_iovec_init_external(&qiov, &iov, 1);
-    acb = bdrv_aio_readv(bs, sector_num, &qiov, nb_sectors,
-        bdrv_rw_em_cb, &async_ret);
-    if (acb == NULL) {
-        async_ret = -1;
-        goto fail;
-    }
+    acb = qemu_aio_get(&bdrv_em_co_aio_pool, bs, cb, opaque);
+    acb->req.sector = sector_num;
+    acb->req.nb_sectors = nb_sectors;
+    co = qemu_coroutine_create(bdrv_aio_discard_co_entry);
+    qemu_coroutine_enter(co, acb);
 
-    while (async_ret == NOT_DONE) {
-        qemu_aio_wait();
-    }
-
-
-fail:
-    async_context_pop();
-    return async_ret;
-}
-
-static int bdrv_write_em(BlockDriverState *bs, int64_t sector_num,
-                         const uint8_t *buf, int nb_sectors)
-{
-    int async_ret;
-    BlockDriverAIOCB *acb;
-    struct iovec iov;
-    QEMUIOVector qiov;
-
-    async_context_push();
-
-    async_ret = NOT_DONE;
-    iov.iov_base = (void *)buf;
-    iov.iov_len = nb_sectors * 512;
-    qemu_iovec_init_external(&qiov, &iov, 1);
-    acb = bdrv_aio_writev(bs, sector_num, &qiov, nb_sectors,
-        bdrv_rw_em_cb, &async_ret);
-    if (acb == NULL) {
-        async_ret = -1;
-        goto fail;
-    }
-    while (async_ret == NOT_DONE) {
-        qemu_aio_wait();
-    }
-
-fail:
-    async_context_pop();
-    return async_ret;
+    return &acb->common;
 }
 
 void bdrv_init(void)
@@ -2600,7 +3157,7 @@ void *qemu_aio_get(AIOPool *pool, BlockDriverState *bs,
         acb = pool->free_aiocb;
         pool->free_aiocb = acb->next;
     } else {
-        acb = qemu_mallocz(pool->aiocb_size);
+        acb = g_malloc0(pool->aiocb_size);
         acb->pool = pool;
     }
     acb->bs = bs;
@@ -2615,6 +3172,189 @@ void qemu_aio_release(void *p)
     AIOPool *pool = acb->pool;
     acb->next = pool->free_aiocb;
     pool->free_aiocb = acb;
+}
+
+/**************************************************************/
+/* Coroutine block device emulation */
+
+typedef struct CoroutineIOCompletion {
+    Coroutine *coroutine;
+    int ret;
+} CoroutineIOCompletion;
+
+static void bdrv_co_io_em_complete(void *opaque, int ret)
+{
+    CoroutineIOCompletion *co = opaque;
+
+    co->ret = ret;
+    qemu_coroutine_enter(co->coroutine, NULL);
+}
+
+static int coroutine_fn bdrv_co_io_em(BlockDriverState *bs, int64_t sector_num,
+                                      int nb_sectors, QEMUIOVector *iov,
+                                      bool is_write)
+{
+    CoroutineIOCompletion co = {
+        .coroutine = qemu_coroutine_self(),
+    };
+    BlockDriverAIOCB *acb;
+
+    if (is_write) {
+        acb = bs->drv->bdrv_aio_writev(bs, sector_num, iov, nb_sectors,
+                                       bdrv_co_io_em_complete, &co);
+    } else {
+        acb = bs->drv->bdrv_aio_readv(bs, sector_num, iov, nb_sectors,
+                                      bdrv_co_io_em_complete, &co);
+    }
+
+    trace_bdrv_co_io_em(bs, sector_num, nb_sectors, is_write, acb);
+    if (!acb) {
+        return -EIO;
+    }
+    qemu_coroutine_yield();
+
+    return co.ret;
+}
+
+static int coroutine_fn bdrv_co_readv_em(BlockDriverState *bs,
+                                         int64_t sector_num, int nb_sectors,
+                                         QEMUIOVector *iov)
+{
+    return bdrv_co_io_em(bs, sector_num, nb_sectors, iov, false);
+}
+
+static int coroutine_fn bdrv_co_writev_em(BlockDriverState *bs,
+                                         int64_t sector_num, int nb_sectors,
+                                         QEMUIOVector *iov)
+{
+    return bdrv_co_io_em(bs, sector_num, nb_sectors, iov, true);
+}
+
+static void coroutine_fn bdrv_flush_co_entry(void *opaque)
+{
+    RwCo *rwco = opaque;
+
+    rwco->ret = bdrv_co_flush(rwco->bs);
+}
+
+int coroutine_fn bdrv_co_flush(BlockDriverState *bs)
+{
+    if (bs->open_flags & BDRV_O_NO_FLUSH) {
+        return 0;
+    } else if (!bs->drv) {
+        return 0;
+    } else if (bs->drv->bdrv_co_flush) {
+        return bs->drv->bdrv_co_flush(bs);
+    } else if (bs->drv->bdrv_aio_flush) {
+        BlockDriverAIOCB *acb;
+        CoroutineIOCompletion co = {
+            .coroutine = qemu_coroutine_self(),
+        };
+
+        acb = bs->drv->bdrv_aio_flush(bs, bdrv_co_io_em_complete, &co);
+        if (acb == NULL) {
+            return -EIO;
+        } else {
+            qemu_coroutine_yield();
+            return co.ret;
+        }
+    } else {
+        /*
+         * Some block drivers always operate in either writethrough or unsafe
+         * mode and don't support bdrv_flush therefore. Usually qemu doesn't
+         * know how the server works (because the behaviour is hardcoded or
+         * depends on server-side configuration), so we can't ensure that
+         * everything is safe on disk. Returning an error doesn't work because
+         * that would break guests even if the server operates in writethrough
+         * mode.
+         *
+         * Let's hope the user knows what he's doing.
+         */
+        return 0;
+    }
+}
+
+int bdrv_flush(BlockDriverState *bs)
+{
+    Coroutine *co;
+    RwCo rwco = {
+        .bs = bs,
+        .ret = NOT_DONE,
+    };
+
+    if (qemu_in_coroutine()) {
+        /* Fast-path if already in coroutine context */
+        bdrv_flush_co_entry(&rwco);
+    } else {
+        co = qemu_coroutine_create(bdrv_flush_co_entry);
+        qemu_coroutine_enter(co, &rwco);
+        while (rwco.ret == NOT_DONE) {
+            qemu_aio_wait();
+        }
+    }
+
+    return rwco.ret;
+}
+
+static void coroutine_fn bdrv_discard_co_entry(void *opaque)
+{
+    RwCo *rwco = opaque;
+
+    rwco->ret = bdrv_co_discard(rwco->bs, rwco->sector_num, rwco->nb_sectors);
+}
+
+int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
+                                 int nb_sectors)
+{
+    if (!bs->drv) {
+        return -ENOMEDIUM;
+    } else if (bdrv_check_request(bs, sector_num, nb_sectors)) {
+        return -EIO;
+    } else if (bs->read_only) {
+        return -EROFS;
+    } else if (bs->drv->bdrv_co_discard) {
+        return bs->drv->bdrv_co_discard(bs, sector_num, nb_sectors);
+    } else if (bs->drv->bdrv_aio_discard) {
+        BlockDriverAIOCB *acb;
+        CoroutineIOCompletion co = {
+            .coroutine = qemu_coroutine_self(),
+        };
+
+        acb = bs->drv->bdrv_aio_discard(bs, sector_num, nb_sectors,
+                                        bdrv_co_io_em_complete, &co);
+        if (acb == NULL) {
+            return -EIO;
+        } else {
+            qemu_coroutine_yield();
+            return co.ret;
+        }
+    } else {
+        return 0;
+    }
+}
+
+int bdrv_discard(BlockDriverState *bs, int64_t sector_num, int nb_sectors)
+{
+    Coroutine *co;
+    RwCo rwco = {
+        .bs = bs,
+        .sector_num = sector_num,
+        .nb_sectors = nb_sectors,
+        .ret = NOT_DONE,
+    };
+
+    if (qemu_in_coroutine()) {
+        /* Fast-path if already in coroutine context */
+        bdrv_discard_co_entry(&rwco);
+    } else {
+        co = qemu_coroutine_create(bdrv_discard_co_entry);
+        qemu_coroutine_enter(co, &rwco);
+        while (rwco.ret == NOT_DONE) {
+            qemu_aio_wait();
+        }
+    }
+
+    return rwco.ret;
 }
 
 /**************************************************************/
@@ -2651,12 +3391,16 @@ int bdrv_media_changed(BlockDriverState *bs)
 /**
  * If eject_flag is TRUE, eject the media. Otherwise, close the tray
  */
-void bdrv_eject(BlockDriverState *bs, int eject_flag)
+void bdrv_eject(BlockDriverState *bs, bool eject_flag)
 {
     BlockDriver *drv = bs->drv;
 
     if (drv && drv->bdrv_eject) {
         drv->bdrv_eject(bs, eject_flag);
+    }
+
+    if (bs->device_name[0] != '\0') {
+        bdrv_emit_qmp_eject_event(bs, eject_flag);
     }
 }
 
@@ -2708,17 +3452,18 @@ void bdrv_set_dirty_tracking(BlockDriverState *bs, int enable)
 {
     int64_t bitmap_size;
 
+    bs->dirty_count = 0;
     if (enable) {
         if (!bs->dirty_bitmap) {
             bitmap_size = (bdrv_getlength(bs) >> BDRV_SECTOR_BITS) +
-                    BDRV_SECTORS_PER_DIRTY_CHUNK * 8 - 1;
-            bitmap_size /= BDRV_SECTORS_PER_DIRTY_CHUNK * 8;
+                    BDRV_SECTORS_PER_DIRTY_CHUNK * BITS_PER_LONG - 1;
+            bitmap_size /= BDRV_SECTORS_PER_DIRTY_CHUNK * BITS_PER_LONG;
 
-            bs->dirty_bitmap = qemu_mallocz(bitmap_size);
+            bs->dirty_bitmap = g_new0(unsigned long, bitmap_size);
         }
     } else {
         if (bs->dirty_bitmap) {
-            qemu_free(bs->dirty_bitmap);
+            g_free(bs->dirty_bitmap);
             bs->dirty_bitmap = NULL;
         }
     }
@@ -2730,17 +3475,101 @@ int bdrv_get_dirty(BlockDriverState *bs, int64_t sector)
 
     if (bs->dirty_bitmap &&
         (sector << BDRV_SECTOR_BITS) < bdrv_getlength(bs)) {
-        return bs->dirty_bitmap[chunk / (sizeof(unsigned long) * 8)] &
-            (1 << (chunk % (sizeof(unsigned long) * 8)));
+        return !!(bs->dirty_bitmap[chunk / BITS_PER_LONG] &
+            (1UL << (chunk % BITS_PER_LONG)));
     } else {
         return 0;
     }
+}
+
+int64_t bdrv_get_next_dirty(BlockDriverState *bs, int64_t sector)
+{
+    int64_t chunk;
+    int bit, elem;
+
+    /* Avoid an infinite loop.  */
+    assert(bs->dirty_count > 0);
+
+    sector = (sector | (BDRV_SECTORS_PER_DIRTY_CHUNK - 1)) + 1;
+    chunk = sector / (int64_t)BDRV_SECTORS_PER_DIRTY_CHUNK;
+
+    QEMU_BUILD_BUG_ON(sizeof(bs->dirty_bitmap[0]) * 8 != BITS_PER_LONG);
+    elem = chunk / BITS_PER_LONG;
+    bit = chunk % BITS_PER_LONG;
+    for (;;) {
+        if (sector >= bs->total_sectors) {
+            sector = 0;
+            bit = elem = 0;
+        }
+        if (bit == 0 && bs->dirty_bitmap[elem] == 0) {
+            sector += BDRV_SECTORS_PER_DIRTY_CHUNK * BITS_PER_LONG;
+            elem++;
+        } else {
+            if (bs->dirty_bitmap[elem] & (1UL << bit)) {
+                return sector;
+            }
+            sector += BDRV_SECTORS_PER_DIRTY_CHUNK;
+            if (++bit == BITS_PER_LONG) {
+                bit = 0;
+                elem++;
+            }
+        }
+    }
+}
+
+void bdrv_set_dirty(BlockDriverState *bs, int64_t cur_sector,
+                    int nr_sectors)
+{
+    set_dirty_bitmap(bs, cur_sector, nr_sectors, 1);
 }
 
 void bdrv_reset_dirty(BlockDriverState *bs, int64_t cur_sector,
                       int nr_sectors)
 {
     set_dirty_bitmap(bs, cur_sector, nr_sectors, 0);
+}
+
+int64_t bdrv_get_dirty_count(BlockDriverState *bs)
+{
+    return bs->dirty_count;
+}
+
+void bdrv_iostatus_enable(BlockDriverState *bs)
+{
+    bs->iostatus = BDRV_IOS_OK;
+}
+
+/* The I/O status is only enabled if the drive explicitly
+ * enables it _and_ the VM is configured to stop on errors */
+bool bdrv_iostatus_is_enabled(const BlockDriverState *bs)
+{
+    return (bs->iostatus != BDRV_IOS_INVAL &&
+           (bs->on_write_error == BLOCK_ERR_STOP_ENOSPC ||
+            bs->on_write_error == BLOCK_ERR_STOP_ANY    ||
+            bs->on_read_error == BLOCK_ERR_STOP_ANY));
+}
+
+void bdrv_iostatus_disable(BlockDriverState *bs)
+{
+    bs->iostatus = BDRV_IOS_INVAL;
+}
+
+void bdrv_iostatus_reset(BlockDriverState *bs)
+{
+    if (bdrv_iostatus_is_enabled(bs)) {
+        bs->iostatus = BDRV_IOS_OK;
+    }
+}
+
+/* XXX: Today this is set by device models because it makes the implementation
+   quite simple. However, the block layer knows about the error, so it's
+   possible to implement this without device models being involved */
+void bdrv_iostatus_set_err(BlockDriverState *bs, int error)
+{
+    if (bdrv_iostatus_is_enabled(bs) && bs->iostatus == BDRV_IOS_OK) {
+        assert(error >= 0);
+        bs->iostatus = error == ENOSPC ? BDRV_IOS_ENOSPC : BDRV_IOS_FAILED;
+    }
 }
 
 void
@@ -2866,16 +3695,16 @@ int bdrv_img_create(const char *filename, const char *fmt,
     if (get_option_parameter(param, BLOCK_OPT_SIZE)->value.n == -1) {
         if (backing_file && backing_file->value.s) {
             uint64_t size;
-            const char *fmt = NULL;
             char buf[32];
+            int back_flags;
 
-            if (backing_fmt && backing_fmt->value.s) {
-                fmt = backing_fmt->value.s;
-            }
+            /* backing files always opened read-only */
+            back_flags =
+                flags & ~(BDRV_O_RDWR | BDRV_O_SNAPSHOT | BDRV_O_NO_BACKING);
 
             bs = bdrv_new("");
 
-            ret = bdrv_open(bs, backing_file->value.s, flags, backing_drv);
+            ret = bdrv_open(bs, backing_file->value.s, back_flags, backing_drv);
             if (ret < 0) {
                 error_report("Could not open '%s'", backing_file->value.s);
                 goto out;
@@ -2920,4 +3749,123 @@ out:
     }
 
     return ret;
+}
+
+void *block_job_create(const BlockJobType *job_type, BlockDriverState *bs,
+                       int64_t speed, BlockDriverCompletionFunc *cb, 
+                       void *opaque)
+{
+    BlockJob *job;
+
+    if (bs->job || bdrv_in_use(bs)) {
+        return NULL;
+    }
+    bdrv_set_in_use(bs, 1);
+
+    job = g_malloc0(job_type->instance_size);
+    job->job_type      = job_type;
+    job->bs            = bs;
+    job->cb            = cb;
+    job->opaque        = opaque;
+    job->busy          = true;
+    bs->job = job;
+
+    /* Only set speed when necessary to avoid NotSupported error */
+    if (speed != 0) {
+        if (block_job_set_speed(job, speed) < 0) {
+            bs->job = NULL;
+            g_free(job);
+            bdrv_set_in_use(bs, 0);
+            return NULL;
+        }
+    }
+    return job;
+}
+
+void block_job_complete(BlockJob *job, int ret)
+{
+    BlockDriverState *bs = job->bs;
+
+    assert(bs->job == job);
+    job->cb(job->opaque, ret);
+    bs->job = NULL;
+    g_free(job);
+    bdrv_set_in_use(bs, 0);
+}
+
+int block_job_set_speed(BlockJob *job, int64_t speed)
+{
+    int rc;
+
+    if (!job->job_type->set_speed) {
+        return -ENOTSUP;
+    }
+    rc = job->job_type->set_speed(job, speed);
+    if (rc == 0) {
+        job->speed = speed;
+    }
+    return rc;
+}
+
+void block_job_cancel(BlockJob *job)
+{
+    job->cancelled = true;
+    if (job->co && !job->busy) {
+        qemu_coroutine_enter(job->co, NULL);
+    }
+}
+
+bool block_job_is_cancelled(BlockJob *job)
+{
+    return job->cancelled;
+}
+
+struct BlockCancelData {
+    BlockJob *job;
+    BlockDriverCompletionFunc *cb;
+    void *opaque;
+    bool cancelled;
+    int ret;
+};
+
+static void block_job_cancel_cb(void *opaque, int ret)
+{
+    struct BlockCancelData *data = opaque;
+
+    data->cancelled = block_job_is_cancelled(data->job);
+    data->ret = ret;
+    data->cb(data->opaque, ret);
+}
+
+int block_job_cancel_sync(BlockJob *job)
+{
+    struct BlockCancelData data;
+    BlockDriverState *bs = job->bs;
+
+    assert(bs->job == job);
+
+    /* Set up our own callback to store the result and chain to
+     * the original callback.
+     */
+    data.job = job;
+    data.cb = job->cb;
+    data.opaque = job->opaque;
+    data.ret = -EINPROGRESS;
+    job->cb = block_job_cancel_cb;
+    job->opaque = &data;
+    block_job_cancel(job);
+    while (data.ret == -EINPROGRESS) {
+        qemu_aio_wait();
+    }
+    return (data.cancelled && data.ret == 0) ? -ECANCELED : data.ret;
+}
+
+void block_job_sleep(BlockJob *job, QEMUClock *clock, int64_t ticks)
+{
+    /* Check cancellation *before* setting busy = false, too!  */
+    if (!block_job_is_cancelled(job)) {
+        job->busy = false;
+        co_sleep(clock, ticks);
+        job->busy = true;
+    }
 }

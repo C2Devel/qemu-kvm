@@ -1,4 +1,5 @@
 -include ../config-host.mak
+-include $(SRC_PATH)/Makefile.objs
 -include $(SRC_PATH)/rules.mak
 
 # TODO: duplicate from Makefile, to be removed once Makefile.objs lands.
@@ -11,8 +12,10 @@ QEMU_OBJS=$(addprefix ../, $(oslib-obj-y) $(trace-obj-y) qemu-malloc.o qemu-thre
 
 QEMU_CFLAGS+=-I../
 
+QEMU_CFLAGS+=$(GLIB_CFLAGS)
+
 vscclient: $(libcacard-y) $(QEMU_OBJS) vscclient.o
-	$(call quiet-command,$(CC) $(libcacard_libs) -lrt -o $@ $^,"  LINK  $(TARGET_DIR)$@")
+	$(call quiet-command,$(CC) $(libcacard_libs) $(LIBS) -lrt -o $@ $^,"  LINK  $(TARGET_DIR)$@")
 
 all: vscclient
 

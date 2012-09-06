@@ -40,6 +40,9 @@
 #define PCI_EJ_BASE 0xae08
 #define PCI_RMV_BASE 0xae0c
 
+#define PIIX4_PCI_HOTPLUG_STATUS 2
+#define PIIX4_CPU_HOTPLUG_STATUS 4
+
 struct gpe_regs {
     uint16_t sts; /* status */
     uint16_t en;  /* enabled */
@@ -73,6 +76,7 @@ typedef struct PIIX4PMState {
 
     uint32_t smb_io_base;
     Notifier machine_ready;
+    Notifier wakeup;
 
     /* for pci hotplug */
     struct gpe_regs gpe;
@@ -81,7 +85,9 @@ typedef struct PIIX4PMState {
 } PIIX4PMState;
 
 #define RSM_STS (1 << 15)
+#define RTC_STS (1 << 10)
 #define PWRBTN_STS (1 << 8)
+#define TMROF_STS (1 << 0)
 #define RTC_EN (1 << 10)
 #define PWRBTN_EN (1 << 8)
 #define GBL_EN (1 << 5)
@@ -114,8 +120,7 @@ static uint32_t get_pmtmr(PIIX4PMState *s)
 static int get_pmsts(PIIX4PMState *s)
 {
     int64_t d;
-    int pmsts;
-    pmsts = s->pmsts;
+
     d = muldiv64(qemu_get_clock(vm_clock), PM_FREQ, get_ticks_per_sec());
     if (d >= s->tmr_overflow_time)
         s->pmsts |= TMROF_EN;
@@ -129,7 +134,10 @@ static void pm_update_sci(PIIX4PMState *s)
 
     pmsts = get_pmsts(s);
     sci_level = (((pmsts & s->pmen) &
-                  (RTC_EN | PWRBTN_EN | GBL_EN | TMROF_EN)) != 0);
+                  (RTC_EN | PWRBTN_EN | GBL_EN | TMROF_EN)) != 0) ||
+        (((s->gpe.sts & s->gpe.en) &
+          (PIIX4_CPU_HOTPLUG_STATUS | PIIX4_PCI_HOTPLUG_STATUS)) != 0);
+
     qemu_set_irq(s->irq, sci_level);
     /* schedule a timer interruption if needed */
     if ((s->pmen & TMROF_EN) && !(pmsts & TMROF_EN)) {
@@ -143,7 +151,29 @@ static void pm_update_sci(PIIX4PMState *s)
 static void pm_tmr_timer(void *opaque)
 {
     PIIX4PMState *s = opaque;
+    qemu_system_wakeup_request(QEMU_WAKEUP_REASON_PMTIMER);
     pm_update_sci(s);
+}
+
+static void acpi_notify_wakeup(Notifier *notifier, void *data)
+{
+    PIIX4PMState *s = container_of(notifier, PIIX4PMState, wakeup);
+    WakeupReason *reason = data;
+
+    switch (*reason) {
+    case QEMU_WAKEUP_REASON_RTC:
+        s->pmsts |= (RSM_STS | RTC_STS);
+        break;
+    case QEMU_WAKEUP_REASON_PMTIMER:
+        s->pmsts |= (RSM_STS | TMROF_STS);
+        break;
+    case QEMU_WAKEUP_REASON_OTHER:
+    default:
+        /* RSM_STS should be set on resume. Pretend that resume
+           was caused by power button */
+        s->pmsts |= (RSM_STS | PWRBTN_STS);
+        break;
+    }
 }
 
 static void pm_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
@@ -168,6 +198,8 @@ static void pm_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
         break;
     case 0x02:
         s->pmen = val;
+        qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_RTC, val & RTC_EN);
+        qemu_system_wakeup_enable(QEMU_WAKEUP_REASON_PMTIMER, val & TMROF_EN);
         pm_update_sci(s);
         break;
     case 0x04:
@@ -182,13 +214,8 @@ static void pm_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
                     qemu_system_shutdown_request();
                     break;
                 case 1:
-                    /* RSM_STS should be set on resume. Pretend that resume
-                       was caused by power button */
-                    s->pmsts |= (RSM_STS | PWRBTN_STS);
-                    qemu_system_reset_request();
-#if defined(TARGET_I386)
-                    cmos_set_s3_resume();
-#endif
+                    qemu_system_suspend_request();
+                    break;
                 default:
                     break;
                 }
@@ -232,8 +259,8 @@ static uint32_t pm_ioport_readw(void *opaque, uint32_t addr)
 static void pm_ioport_writel(void *opaque, uint32_t addr, uint32_t val)
 {
     //    PIIX4PMState *s = opaque;
-    addr &= 0x3f;
 #ifdef DEBUG
+    addr &= 0x3f;
     printf("PM writel port=0x%04x val=0x%08x\n", addr, val);
 #endif
 }
@@ -531,7 +558,7 @@ static void piix4_update_hotplug(PIIX4PMState *s)
 
     s->pci0_hotplug_enable = ~0;
 
-    QLIST_FOREACH_SAFE(qdev, &bus->children, sibling, next) {
+    QTAILQ_FOREACH_SAFE(qdev, &bus->children, sibling, next) {
         PCIDeviceInfo *info = container_of(qdev->info, PCIDeviceInfo, qdev);
         PCIDevice *pdev = DO_UPCAST(PCIDevice, qdev, qdev);
         int slot = PCI_SLOT(pdev->devfn);
@@ -573,7 +600,7 @@ static void piix4_powerdown(void *opaque, int irq, int power_failing)
 #endif
 }
 
-static void piix4_pm_machine_ready(struct Notifier* n)
+static void piix4_pm_machine_ready(struct Notifier* n, void *data)
 {
     PIIX4PMState *s = container_of(n, PIIX4PMState, machine_ready);
     uint8_t *pci_conf;
@@ -641,6 +668,8 @@ static int piix4_pm_initfn(PCIDevice *dev)
     s->smbus = i2c_init_bus(NULL, "i2c");
     s->machine_ready.notify = piix4_pm_machine_ready;
     qemu_add_machine_init_done_notifier(&s->machine_ready);
+    s->wakeup.notify = acpi_notify_wakeup;
+    qemu_register_wakeup_notifier(&s->wakeup);
     qemu_register_reset(piix4_reset, s);
 
     return 0;
@@ -756,7 +785,9 @@ static void gpe_writeb(void *opaque, uint32_t addr, uint32_t val)
             break;
         default:
             break;
-   }
+    }
+
+    pm_update_sci(pm_state);
 
 #if defined(DEBUG)
     printf("gpe write %x <== %d\n", addr, val);
@@ -817,7 +848,7 @@ static void pciej_write(void *opaque, uint32_t addr, uint32_t val)
     PCIDeviceInfo *info;
     int slot = ffs(val) - 1;
 
-    QLIST_FOREACH_SAFE(qdev, &bus->children, sibling, next) {
+    QTAILQ_FOREACH_SAFE(qdev, &bus->children, sibling, next) {
         dev = DO_UPCAST(PCIDevice, qdev, qdev);
         info = container_of(qdev->info, PCIDeviceInfo, qdev);
         if (PCI_SLOT(dev->devfn) == slot && !info->no_hotplug) {
@@ -877,27 +908,47 @@ void piix4_acpi_system_hot_add_init(PCIBus *bus, const char *cpu_model)
     pci_bus_hotplug(bus, piix4_device_hotplug);
 }
 
+static int acpi_online_cpu_count(void)
+{
+    int i, j, online_cpu_count = 0;
+    struct gpe_regs *gpe = &pm_state->gpe;
+
+    /* count plugged in cpus in cpus_sts bitmap */
+    for (i = 0; i < sizeof(gpe->cpus_sts); ++i) {
+        for (j = 0; j < 8; ++j)
+            if ((gpe->cpus_sts[i] >> j) & 1)
+                ++online_cpu_count;
+    }
+    return online_cpu_count;
+}
+
 #if defined(TARGET_I386)
 static void enable_processor(struct gpe_regs *g, int cpu)
 {
-    g->sts |= 4;
-    g->cpus_sts[cpu/8] |= (1 << (cpu%8));
+    g->sts |= PIIX4_CPU_HOTPLUG_STATUS;
+    g->cpus_sts[cpu / 8] |= (1 << (cpu % 8));
 }
 
 static void disable_processor(struct gpe_regs *g, int cpu)
 {
-    g->sts |= 4;
-    g->cpus_sts[cpu/8] &= ~(1 << (cpu%8));
+    g->sts |= PIIX4_CPU_HOTPLUG_STATUS;
+    g->cpus_sts[cpu / 8] &= ~(1 << (cpu % 8));
 }
 
-void qemu_system_cpu_hot_add(int cpu, int state)
+void qemu_system_cpu_hot_add(int cpu, int state, Monitor *mon)
 {
     CPUState *env;
+
+    if ((cpu < 1) || (cpu > max_cpus - 1)) {
+        monitor_printf(mon, "cpu id[%d] must be in range [1..%d]\n",
+            cpu, max_cpus - 1);
+        return;
+    }
 
     if (state && !qemu_get_cpu(cpu)) {
         env = pc_new_cpu(model);
         if (!env) {
-            fprintf(stderr, "cpu %d creation failed\n", cpu);
+            monitor_printf(mon, "cpu %d creation failed\n", cpu);
             return;
         }
         env->cpuid_apic_id = cpu;
@@ -907,22 +958,23 @@ void qemu_system_cpu_hot_add(int cpu, int state)
         enable_processor(&pm_state->gpe, cpu);
     else
         disable_processor(&pm_state->gpe, cpu);
-    if (pm_state->gpe.en & 4) {
-        qemu_set_irq(pm_state->irq, 1);
-        qemu_set_irq(pm_state->irq, 0);
-    }
+
+    /* update number of cpus in cmos, to allow BIOS see it on reboot */
+    rtc_set_memory(rtc_state, 0x5f, acpi_online_cpu_count() - 1);
+
+    pm_update_sci(pm_state);
 }
 #endif
 
 static void enable_device(struct pci_status *p, struct gpe_regs *g, int slot)
 {
-    g->sts |= 2;
+    g->sts |= PIIX4_PCI_HOTPLUG_STATUS;
     p->up |= (1 << slot);
 }
 
 static void disable_device(struct pci_status *p, struct gpe_regs *g, int slot)
 {
-    g->sts |= 2;
+    g->sts |= PIIX4_PCI_HOTPLUG_STATUS;
     p->down |= (1 << slot);
 }
 
@@ -936,10 +988,9 @@ static int piix4_device_hotplug(PCIDevice *dev, int state)
         enable_device(&pm_state->pci0_status, &pm_state->gpe, slot);
     else
         disable_device(&pm_state->pci0_status, &pm_state->gpe, slot);
-    if (pm_state->gpe.en & 2) {
-        qemu_set_irq(pm_state->irq, 1);
-        qemu_set_irq(pm_state->irq, 0);
-    }
+
+    pm_update_sci(pm_state);
+
     return 0;
 }
 

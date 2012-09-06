@@ -61,6 +61,7 @@ typedef struct virtio_net_conf
     uint32_t txtimer;
     int32_t txburst;
     char *tx;
+    bool macvtap_rhel620_compat;
 } virtio_net_conf;
 
 /* Maximum packet size we can receive from tap device: header + 64k */
