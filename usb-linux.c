@@ -34,6 +34,7 @@
 #include "qemu-timer.h"
 #include "monitor.h"
 #include "sysemu.h"
+#include "trace.h"
 
 #include <dirent.h>
 #include <sys/ioctl.h>
@@ -42,6 +43,7 @@
 #include <linux/usbdevice_fs.h>
 #include <linux/version.h>
 #include "hw/usb.h"
+#include "hw/usb-desc.h"
 
 /* We redefine it to avoid version problems */
 struct usb_ctrltransfer {
@@ -116,10 +118,12 @@ typedef struct USBHostDevice {
     USBDevice dev;
     int       fd;
     int       hub_fd;
+    int       hub_port;
 
     uint8_t   descr[8192];
     int       descr_len;
     int       configuration;
+    int       altsetting[16];
     int       ninterfaces;
     int       closing;
     uint32_t  iso_urb_count;
@@ -147,6 +151,25 @@ static void usb_host_auto_check(void *unused);
 static int usb_host_read_file(char *line, size_t line_size,
                             const char *device_file, const char *device_name);
 static int usb_linux_update_endp_table(USBHostDevice *s);
+
+static int usb_host_do_reset(USBHostDevice *dev)
+{
+    struct timeval s, e;
+    uint32_t usecs;
+    int ret;
+
+    gettimeofday(&s, NULL);
+    ret = ioctl(dev->fd, USBDEVFS_RESET);
+    gettimeofday(&e, NULL);
+    usecs = (e.tv_sec  - s.tv_sec) * 1000000;
+    usecs += e.tv_usec - s.tv_usec;
+    if (usecs > 1000000) {
+        /* more than a second, something is fishy, broken usb device? */
+        fprintf(stderr, "husb: device %d:%d reset took %d.%06d seconds\n",
+                dev->bus_num, dev->addr, usecs / 1000000, usecs % 1000000);
+    }
+    return ret;
+}
 
 static struct endp_data *get_endp(USBHostDevice *s, int pid, int ep)
 {
@@ -242,9 +265,8 @@ static int get_iso_buffer_used(USBHostDevice *s, int pid, int ep)
 }
 
 static void set_max_packet_size(USBHostDevice *s, int pid, int ep,
-                                uint8_t *descriptor)
+                                int raw)
 {
-    int raw = descriptor[4] + (descriptor[5] << 8);
     int size, microframes;
 
     size = raw & 0x7ff;
@@ -366,8 +388,12 @@ static void async_complete(void *opaque)
 		p->len = USB_RET_STALL;
                 break;
 
+            case -EOVERFLOW:
+                p->len = USB_RET_BABBLE;
+                break;
+
             default:
-                p->len = USB_RET_NAK;
+                p->len = USB_RET_IOERROR;
                 break;
             }
 
@@ -408,7 +434,7 @@ static int usb_host_claim_port(USBHostDevice *s)
 {
 #ifdef USBDEVFS_CLAIM_PORT
     char *h, hub_name[64], line[1024];
-    int hub_addr, portnr, ret;
+    int hub_addr, ret;
 
     snprintf(hub_name, sizeof(hub_name), "%d-%s",
              s->match.bus_num, s->match.port);
@@ -416,13 +442,13 @@ static int usb_host_claim_port(USBHostDevice *s)
     /* try strip off last ".$portnr" to get hub */
     h = strrchr(hub_name, '.');
     if (h != NULL) {
-        portnr = atoi(h+1);
+        s->hub_port = atoi(h+1);
         *h = '\0';
     } else {
         /* no dot in there -> it is the root hub */
         snprintf(hub_name, sizeof(hub_name), "usb%d",
                  s->match.bus_num);
-        portnr = atoi(s->match.port);
+        s->hub_port = atoi(s->match.port);
     }
 
     if (!usb_host_read_file(line, sizeof(line), "devnum",
@@ -443,7 +469,7 @@ static int usb_host_claim_port(USBHostDevice *s)
         return -1;
     }
 
-    ret = ioctl(s->hub_fd, USBDEVFS_CLAIM_PORT, &portnr);
+    ret = ioctl(s->hub_fd, USBDEVFS_CLAIM_PORT, &s->hub_port);
     if (ret < 0) {
         close(s->hub_fd);
         s->hub_fd = -1;
@@ -453,6 +479,18 @@ static int usb_host_claim_port(USBHostDevice *s)
 #else
     return -1;
 #endif
+}
+
+static void usb_host_release_port(USBHostDevice *s)
+{
+    if (s->hub_fd == -1) {
+        return;
+    }
+#ifdef USBDEVFS_RELEASE_PORT
+    ioctl(s->hub_fd, USBDEVFS_RELEASE_PORT, &s->hub_port);
+#endif
+    close(s->hub_fd);
+    s->hub_fd = -1;
 }
 
 static int usb_host_disconnect_ifaces(USBHostDevice *dev, int nb_interfaces)
@@ -602,7 +640,7 @@ static void usb_host_handle_reset(USBDevice *dev)
 
     DPRINTF("husb: reset device %u.%u\n", s->bus_num, s->addr);
 
-    ioctl(s->fd, USBDEVFS_RESET);
+    usb_host_do_reset(s);;
 
     usb_host_claim_interfaces(s, 0);
     usb_linux_update_endp_table(s);
@@ -612,10 +650,8 @@ static void usb_host_handle_destroy(USBDevice *dev)
 {
     USBHostDevice *s = (USBHostDevice *)dev;
 
+    usb_host_release_port(s);
     usb_host_close(s);
-    if (s->hub_fd != -1) {
-        close(s->hub_fd);
-    }
     QTAILQ_REMOVE(&hostdevs, s, next);
     qemu_remove_exit_notifier(&s->exit);
 }
@@ -695,8 +731,10 @@ static int urb_status_to_usb_ret(int status)
     switch (status) {
     case -EPIPE:
         return USB_RET_STALL;
+    case -EOVERFLOW:
+        return USB_RET_BABBLE;
     default:
-        return USB_RET_NAK;
+        return USB_RET_IOERROR;
     }
 }
 
@@ -730,7 +768,7 @@ static int usb_host_handle_iso_data(USBHostDevice *s, USBPacket *p, int in)
             /* Check the frame fits */
             } else if (aurb[i].urb.iso_frame_desc[j].actual_length > p->len) {
                 printf("husb: received iso data is larger then packet\n");
-                len = USB_RET_NAK;
+                len = USB_RET_BABBLE;
             /* All good copy data over */
             } else {
                 len = aurb[i].urb.iso_frame_desc[j].actual_length;
@@ -950,6 +988,7 @@ static int usb_host_set_interface(USBHostDevice *s, int iface, int alt)
     if (ret < 0)
         return ctrl_error();
 
+    s->altsetting[iface] = alt;
     usb_linux_update_endp_table(s);
     return 0;
 }
@@ -1029,144 +1068,139 @@ static int usb_host_handle_control(USBDevice *dev, USBPacket *p,
     return USB_RET_ASYNC;
 }
 
-static uint8_t usb_linux_get_alt_setting(USBHostDevice *s,
-    uint8_t configuration, uint8_t interface)
-{
-    uint8_t alt_setting;
-    struct usb_ctrltransfer ct;
-    int ret;
-
-    if (usb_fs_type == USB_FS_SYS) {
-        char device_name[64], line[1024];
-        int alt_setting;
-
-        sprintf(device_name, "%d-%s:%d.%d", s->bus_num, s->port,
-                (int)configuration, (int)interface);
-
-        if (!usb_host_read_file(line, sizeof(line), "bAlternateSetting",
-                                device_name)) {
-            goto usbdevfs;
-        }
-        if (sscanf(line, "%d", &alt_setting) != 1) {
-            goto usbdevfs;
-        }
-        return alt_setting;
-    }
-
-usbdevfs:
-    ct.bRequestType = USB_DIR_IN | USB_RECIP_INTERFACE;
-    ct.bRequest = USB_REQ_GET_INTERFACE;
-    ct.wValue = 0;
-    ct.wIndex = interface;
-    ct.wLength = 1;
-    ct.data = &alt_setting;
-    ct.timeout = 50;
-    ret = ioctl(s->fd, USBDEVFS_CONTROL, &ct);
-    if (ret < 0) {
-        /* Assume alt 0 on error */
-        return 0;
-    }
-
-    return alt_setting;
-}
-
 /* returns 1 on problem encountered or 0 for success */
 static int usb_linux_update_endp_table(USBHostDevice *s)
 {
-    uint8_t *descriptors;
-    uint8_t devep, type, alt_interface;
-    int interface, length, i, ep, pid;
+    static const char *tname[] = {
+        [USB_ENDPOINT_XFER_CONTROL] = "control",
+        [USB_ENDPOINT_XFER_ISOC]    = "isoc",
+        [USB_ENDPOINT_XFER_BULK]    = "bulk",
+        [USB_ENDPOINT_XFER_INT]     = "int",
+    };
+    uint8_t devep, type;
+    uint16_t mps, v, p;
+    int ep, pid;
+    unsigned int i, configuration = -1, interface = -1, altsetting = -1;
     struct endp_data *epd;
+    USBDescriptor *d;
+    bool active = false;
 
     for (i = 0; i < MAX_ENDPOINTS; i++) {
         s->ep_in[i].type = INVALID_EP_TYPE;
         s->ep_out[i].type = INVALID_EP_TYPE;
     }
 
-    if (s->configuration == 0) {
-        /* not configured yet -- leave all endpoints disabled */
-        return 0;
-    }
-
-    /* get the desired configuration, interface, and endpoint descriptors
-     * from device description */
-    descriptors = &s->descr[18];
-    length = s->descr_len - 18;
-    i = 0;
-
-    if (descriptors[i + 1] != USB_DT_CONFIG ||
-        descriptors[i + 5] != s->configuration) {
-        fprintf(stderr, "invalid descriptor data - configuration %d\n",
-                s->configuration);
-        return 1;
-    }
-    i += descriptors[i];
-
-    while (i < length) {
-        if (descriptors[i + 1] != USB_DT_INTERFACE ||
-            (descriptors[i + 1] == USB_DT_INTERFACE &&
-             descriptors[i + 4] == 0)) {
-            i += descriptors[i];
-            continue;
-        }
-
-        interface = descriptors[i + 2];
-        alt_interface = usb_linux_get_alt_setting(s, s->configuration,
-                                                  interface);
-
-        /* the current interface descriptor is the active interface
-         * and has endpoints */
-        if (descriptors[i + 3] != alt_interface) {
-            i += descriptors[i];
-            continue;
-        }
-
-        /* advance to the endpoints */
-        while (i < length && descriptors[i +1] != USB_DT_ENDPOINT)
-            i += descriptors[i];
-
-        if (i >= length)
+    for (i = 0;; i += d->bLength) {
+        if (i+2 >= s->descr_len) {
             break;
-
-        while (i < length) {
-            if (descriptors[i + 1] != USB_DT_ENDPOINT)
-                break;
-
-            devep = descriptors[i + 2];
+        }
+        d = (void *)(s->descr + i);
+        if (d->bLength < 2) {
+            trace_usb_host_parse_error(s->bus_num, s->addr,
+                                       "descriptor too short");
+            goto error;
+        }
+        if (i + d->bLength > s->descr_len) {
+            trace_usb_host_parse_error(s->bus_num, s->addr,
+                                       "descriptor too long");
+            goto error;
+        }
+        switch (d->bDescriptorType) {
+        case 0:
+            trace_usb_host_parse_error(s->bus_num, s->addr,
+                                       "invalid descriptor type");
+            goto error;
+        case USB_DT_DEVICE:
+            if (d->bLength < 0x12) {
+                trace_usb_host_parse_error(s->bus_num, s->addr,
+                                           "device descriptor too short");
+                goto error;
+            }
+            v = (d->u.device.idVendor_hi << 8) | d->u.device.idVendor_lo;
+            p = (d->u.device.idProduct_hi << 8) | d->u.device.idProduct_lo;
+            trace_usb_host_parse_device(s->bus_num, s->addr, v, p);
+            break;
+        case USB_DT_CONFIG:
+            if (d->bLength < 0x09) {
+                trace_usb_host_parse_error(s->bus_num, s->addr,
+                                           "config descriptor too short");
+                goto error;
+            }
+            configuration = d->u.config.bConfigurationValue;
+            active = (configuration == s->configuration);
+            trace_usb_host_parse_config(s->bus_num, s->addr,
+                                        configuration, active);
+            break;
+        case USB_DT_INTERFACE:
+            if (d->bLength < 0x09) {
+                trace_usb_host_parse_error(s->bus_num, s->addr,
+                                           "interface descriptor too short");
+                goto error;
+            }
+            interface = d->u.interface.bInterfaceNumber;
+            altsetting = d->u.interface.bAlternateSetting;
+            active = (configuration == s->configuration) &&
+                (altsetting == s->altsetting[interface]);
+            trace_usb_host_parse_interface(s->bus_num, s->addr,
+                                           interface, altsetting, active);
+            break;
+        case USB_DT_ENDPOINT:
+            if (d->bLength < 0x07) {
+                trace_usb_host_parse_error(s->bus_num, s->addr,
+                                           "endpoint descriptor too short");
+                goto error;
+            }
+            devep = d->u.endpoint.bEndpointAddress;
             pid = (devep & USB_DIR_IN) ? USB_TOKEN_IN : USB_TOKEN_OUT;
             ep = devep & 0xf;
             if (ep == 0) {
-                fprintf(stderr, "usb-linux: invalid ep descriptor, ep == 0\n");
-                return 1;
+                trace_usb_host_parse_error(s->bus_num, s->addr,
+                                           "invalid endpoint address");
+                goto error;
             }
+            trace_usb_host_parse_endpoint(s->bus_num, s->addr, ep,
+                                          (devep & USB_DIR_IN) ? "in" : "out",
+                                          tname[d->u.endpoint.bmAttributes & 0x3],
+                                          active);
 
-            switch (descriptors[i + 3] & 0x3) {
-            case 0x00:
-                type = USBDEVFS_URB_TYPE_CONTROL;
-                break;
-            case 0x01:
-                type = USBDEVFS_URB_TYPE_ISO;
-                set_max_packet_size(s, pid, ep, descriptors + i);
-                break;
-            case 0x02:
-                type = USBDEVFS_URB_TYPE_BULK;
-                break;
-            case 0x03:
-                type = USBDEVFS_URB_TYPE_INTERRUPT;
-                break;
-            default:
-                DPRINTF("usb_host: malformed endpoint type\n");
-                type = USBDEVFS_URB_TYPE_BULK;
+            if (active) {
+                switch (d->u.endpoint.bmAttributes & 0x3) {
+                case 0x00:
+                    type = USBDEVFS_URB_TYPE_CONTROL;
+                    break;
+                case 0x01:
+                    type = USBDEVFS_URB_TYPE_ISO;
+                    mps = d->u.endpoint.wMaxPacketSize_lo |
+                        (d->u.endpoint.wMaxPacketSize_hi << 8);
+                    set_max_packet_size(s, pid, ep, mps);
+                    break;
+                case 0x02:
+                    type = USBDEVFS_URB_TYPE_BULK;
+                    break;
+                case 0x03:
+                    type = USBDEVFS_URB_TYPE_INTERRUPT;
+                    break;
+                }
+                epd = get_endp(s, pid, ep);
+                assert(epd->type == INVALID_EP_TYPE);
+                epd->type = type;
+                epd->halted = 0;
             }
-            epd = get_endp(s, pid, ep);
-            assert(epd->type == INVALID_EP_TYPE);
-            epd->type = type;
-            epd->halted = 0;
-
-            i += descriptors[i];
+            break;
+        default:
+            trace_usb_host_parse_unknown(s->bus_num, s->addr,
+                                         d->bLength, d->bDescriptorType);
+            break;
         }
     }
     return 0;
+
+error:
+    for (i = 0; i < MAX_ENDPOINTS; i++) {
+        s->ep_in[i].type = INVALID_EP_TYPE;
+        s->ep_out[i].type = INVALID_EP_TYPE;
+    }
+    return 1;
 }
 
 /*
@@ -1313,7 +1347,7 @@ static int usb_host_close(USBHostDevice *dev)
 {
     int i;
 
-    if (dev->fd == -1 || !dev->dev.attached) {
+    if (dev->fd == -1) {
         return -1;
     }
 
@@ -1329,19 +1363,22 @@ static int usb_host_close(USBHostDevice *dev)
     }
     async_complete(dev);
     dev->closing = 0;
-    usb_device_detach(&dev->dev);
-    ioctl(dev->fd, USBDEVFS_RESET);
+    if (dev->dev.attached) {
+        usb_device_detach(&dev->dev);
+    }
+    usb_host_do_reset(dev);
     close(dev->fd);
     dev->fd = -1;
     return 0;
 }
 
-static void usb_host_exit_notifier(struct Notifier* n)
+static void usb_host_exit_notifier(struct Notifier *n, void *data)
 {
     USBHostDevice *s = container_of(n, USBHostDevice, exit);
 
+    usb_host_release_port(s);
     if (s->fd != -1) {
-        ioctl(s->fd, USBDEVFS_RESET);
+        usb_host_do_reset(s);;
     }
 }
 
@@ -1465,6 +1502,7 @@ int usb_host_device_close(const char *devname)
     return -1;
 }
 
+#if 0 /* Disabled for Red Hat Enterprise Linux */
 static int get_tag_value(char *buf, int buf_size,
                          const char *str, const char *tag,
                          const char *stopchars)
@@ -1580,6 +1618,7 @@ static int usb_host_scan_dev(void *opaque, USBScanFunc *func)
         fclose(f);
     return ret;
 }
+#endif
 
 /*
  * Read sys file-system device file
@@ -1717,6 +1756,7 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
             DPRINTF(USBDBG_DEVOPENED, USBSYSBUS_PATH);
             goto found_devices;
         }
+#if 0 /* Disabled for Red Hat Enterprise Linux */
         f = fopen(USBPROCBUS_PATH "/devices", "r");
         if (f) {
             /* devices found in /proc/bus/usb/ */
@@ -1736,6 +1776,9 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
             DPRINTF(USBDBG_DEVOPENED, USBDEVBUS_PATH);
             goto found_devices;
         }
+#else
+        (void)f;
+#endif
     found_devices:
         if (!usb_fs_type) {
             if (mon)
@@ -1752,10 +1795,12 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
     }
 
     switch (usb_fs_type) {
+#if 0 /* Disabled for Red Hat Enterprise Linux */
     case USB_FS_PROC:
     case USB_FS_DEV:
         ret = usb_host_scan_dev(opaque, func);
         break;
+#endif
     case USB_FS_SYS:
         ret = usb_host_scan_sys(opaque, func);
         break;

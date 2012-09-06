@@ -95,6 +95,7 @@ typedef struct {
     int (*load_config)(void * opaque, QEMUFile *f);
     int (*load_queue)(void * opaque, int n, QEMUFile *f);
     unsigned (*get_features)(void * opaque);
+    void (*force_features)(void * opaque, uint32_t features);
     bool (*query_guest_notifiers)(void * opaque);
     int (*set_guest_notifiers)(void * opaque, bool assigned);
     int (*set_host_notifier)(void * opaque, int n, bool assigned);
@@ -159,6 +160,8 @@ void virtio_notify(VirtIODevice *vdev, VirtQueue *vq);
 void virtio_save(VirtIODevice *vdev, QEMUFile *f);
 
 int virtio_load(VirtIODevice *vdev, QEMUFile *f);
+int virtio_load_with_features(VirtIODevice *vdev, QEMUFile *f,
+                              uint32_t supported_features);
 
 void virtio_cleanup(VirtIODevice *vdev);
 
@@ -200,11 +203,14 @@ VirtIODevice *virtio_net_init(DeviceState *dev, NICConf *conf,
 typedef struct virtio_serial_conf virtio_serial_conf;
 VirtIODevice *virtio_serial_init(DeviceState *dev, virtio_serial_conf *serial);
 VirtIODevice *virtio_balloon_init(DeviceState *dev);
+typedef struct VirtIOSCSIConf VirtIOSCSIConf;
+VirtIODevice *virtio_scsi_init(DeviceState *dev, VirtIOSCSIConf *conf);
 
 void virtio_net_exit(VirtIODevice *vdev);
 void virtio_blk_exit(VirtIODevice *vdev);
 void virtio_serial_exit(VirtIODevice *vdev);
 void virtio_balloon_exit(VirtIODevice *vdev);
+void virtio_scsi_exit(VirtIODevice *vdev);
 
 #define DEFINE_VIRTIO_COMMON_FEATURES(_state, _field) \
 	DEFINE_PROP_BIT("indirect_desc", _state, _field, \

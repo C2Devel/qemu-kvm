@@ -1968,7 +1968,7 @@ void do_savevm(Monitor *mon, const QDict *qdict)
         return;
     }
     /* ??? Should this occur after vm_stop?  */
-    qemu_aio_flush();
+    bdrv_drain_all();
 
     saved_vm_running = runstate_is_running();
     vm_stop(RUN_STATE_SAVE_VM);
@@ -2064,7 +2064,7 @@ int load_vmstate(const char *name)
     }
 
     /* Flush all IO requests so they don't interfere with the new state.  */
-    qemu_aio_flush();
+    bdrv_drain_all();
 
     bs1 = NULL;
     while ((bs1 = bdrv_next(bs1))) {

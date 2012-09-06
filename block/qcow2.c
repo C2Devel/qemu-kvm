@@ -97,8 +97,9 @@ static int qcow2_read_extensions(BlockDriverState *bs, uint64_t start_offset,
 #endif
 
         if (bdrv_pread(bs->file, offset, &ext, sizeof(ext)) != sizeof(ext)) {
-            fprintf(stderr, "qcow2_handle_extension: ERROR: pread fail from offset %llu\n",
-                    (unsigned long long)offset);
+            fprintf(stderr, "qcow2_handle_extension: ERROR: "
+                    "pread fail from offset %" PRIu64 "\n",
+                    offset);
             return 1;
         }
         be32_to_cpus(&ext.magic);
@@ -217,7 +218,7 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     }
     s->l1_table_offset = header.l1_table_offset;
     if (s->l1_size > 0) {
-        s->l1_table = qemu_mallocz(
+        s->l1_table = g_malloc0(
             align_offset(s->l1_size * sizeof(uint64_t), 512));
         ret = bdrv_pread(bs->file, s->l1_table_offset, s->l1_table,
                          s->l1_size * sizeof(uint64_t));
@@ -235,9 +236,9 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     s->refcount_block_cache = qcow2_cache_create(bs, REFCOUNT_CACHE_SIZE,
         writethrough);
 
-    s->cluster_cache = qemu_malloc(s->cluster_size);
+    s->cluster_cache = g_malloc(s->cluster_size);
     /* one more sector for decompressed data alignment */
-    s->cluster_data = qemu_malloc(QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size
+    s->cluster_data = g_malloc(QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size
                                   + 512);
     s->cluster_cache_offset = -1;
 
@@ -277,6 +278,9 @@ static int qcow2_open(BlockDriverState *bs, int flags)
         goto fail;
     }
 
+    /* Initialise locks */
+    qemu_co_mutex_init(&s->lock);
+
 #ifdef DEBUG_ALLOC
     qcow2_check_refcounts(bs);
 #endif
@@ -285,12 +289,12 @@ static int qcow2_open(BlockDriverState *bs, int flags)
  fail:
     qcow2_free_snapshots(bs);
     qcow2_refcount_close(bs);
-    qemu_free(s->l1_table);
+    g_free(s->l1_table);
     if (s->l2_table_cache) {
         qcow2_cache_destroy(bs, s->l2_table_cache);
     }
-    qemu_free(s->cluster_cache);
-    qemu_free(s->cluster_data);
+    g_free(s->cluster_cache);
+    g_free(s->cluster_data);
     return ret;
 }
 
@@ -336,16 +340,19 @@ static int qcow2_set_key(BlockDriverState *bs, const char *key)
     return 0;
 }
 
-static int qcow2_is_allocated(BlockDriverState *bs, int64_t sector_num,
-                              int nb_sectors, int *pnum)
+static int coroutine_fn qcow2_co_is_allocated(BlockDriverState *bs,
+        int64_t sector_num, int nb_sectors, int *pnum)
 {
+    BDRVQcowState *s = bs->opaque;
     uint64_t cluster_offset;
     int ret;
 
     *pnum = nb_sectors;
-    /* FIXME We can get errors here, but the bdrv_is_allocated interface can't
-     * pass them on today */
+    /* FIXME We can get errors here, but the bdrv_co_is_allocated interface
+     * can't pass them on today */
+    qemu_co_mutex_lock(&s->lock);
     ret = qcow2_get_cluster_offset(bs, sector_num << 9, pnum, &cluster_offset);
+    qemu_co_mutex_unlock(&s->lock);
     if (ret < 0) {
         *pnum = 0;
     }
@@ -370,382 +377,250 @@ int qcow2_backing_read1(BlockDriverState *bs, QEMUIOVector *qiov,
     return n1;
 }
 
-typedef struct QCowAIOCB {
-    BlockDriverAIOCB common;
-    int64_t sector_num;
-    QEMUIOVector *qiov;
-    int remaining_sectors;
-    int cur_nr_sectors;	/* number of sectors in current iteration */
-    uint64_t bytes_done;
-    uint64_t cluster_offset;
-    uint8_t *cluster_data;
-    BlockDriverAIOCB *hd_aiocb;
-    QEMUIOVector hd_qiov;
-    QEMUBH *bh;
-    QCowL2Meta l2meta;
-    QLIST_ENTRY(QCowAIOCB) next_depend;
-} QCowAIOCB;
-
-static void qcow2_aio_cancel(BlockDriverAIOCB *blockacb)
+static int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
+                          int remaining_sectors, QEMUIOVector *qiov)
 {
-    QCowAIOCB *acb = (QCowAIOCB *)blockacb;
-    if (acb->hd_aiocb)
-        bdrv_aio_cancel(acb->hd_aiocb);
-    qemu_aio_release(acb);
-}
-
-static AIOPool qcow2_aio_pool = {
-    .aiocb_size         = sizeof(QCowAIOCB),
-    .cancel             = qcow2_aio_cancel,
-};
-
-static void qcow2_aio_read_cb(void *opaque, int ret);
-static void qcow2_aio_read_bh(void *opaque)
-{
-    QCowAIOCB *acb = opaque;
-    qemu_bh_delete(acb->bh);
-    acb->bh = NULL;
-    qcow2_aio_read_cb(opaque, 0);
-}
-
-static int qcow2_schedule_bh(QEMUBHFunc *cb, QCowAIOCB *acb)
-{
-    if (acb->bh)
-        return -EIO;
-
-    acb->bh = qemu_bh_new(cb, acb);
-    if (!acb->bh)
-        return -EIO;
-
-    qemu_bh_schedule(acb->bh);
-
-    return 0;
-}
-
-static void qcow2_aio_read_cb(void *opaque, int ret)
-{
-    QCowAIOCB *acb = opaque;
-    BlockDriverState *bs = acb->common.bs;
     BDRVQcowState *s = bs->opaque;
     int index_in_cluster, n1;
+    int ret;
+    int cur_nr_sectors; /* number of sectors in current iteration */
+    uint64_t cluster_offset = 0;
+    uint64_t bytes_done = 0;
+    QEMUIOVector hd_qiov;
+    uint8_t *cluster_data = NULL;
 
-    acb->hd_aiocb = NULL;
-    if (ret < 0)
-        goto done;
+    qemu_iovec_init(&hd_qiov, qiov->niov);
 
-    /* post process the read buffer */
-    if (!acb->cluster_offset) {
-        /* nothing to do */
-    } else if (acb->cluster_offset & QCOW_OFLAG_COMPRESSED) {
-        /* nothing to do */
-    } else {
+    qemu_co_mutex_lock(&s->lock);
+
+    while (remaining_sectors != 0) {
+
+        /* prepare next request */
+        cur_nr_sectors = remaining_sectors;
         if (s->crypt_method) {
-            qcow2_encrypt_sectors(s, acb->sector_num,  acb->cluster_data,
-                acb->cluster_data, acb->cur_nr_sectors, 0, &s->aes_decrypt_key);
-            qemu_iovec_reset(&acb->hd_qiov);
-            qemu_iovec_copy(&acb->hd_qiov, acb->qiov, acb->bytes_done,
-                acb->cur_nr_sectors * 512);
-            qemu_iovec_from_buffer(&acb->hd_qiov, acb->cluster_data,
-                512 * acb->cur_nr_sectors);
+            cur_nr_sectors = MIN(cur_nr_sectors,
+                QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors);
         }
-    }
 
-    acb->remaining_sectors -= acb->cur_nr_sectors;
-    acb->sector_num += acb->cur_nr_sectors;
-    acb->bytes_done += acb->cur_nr_sectors * 512;
+        ret = qcow2_get_cluster_offset(bs, sector_num << 9,
+            &cur_nr_sectors, &cluster_offset);
+        if (ret < 0) {
+            goto fail;
+        }
 
-    if (acb->remaining_sectors == 0) {
-        /* request completed */
-        ret = 0;
-        goto done;
-    }
+        index_in_cluster = sector_num & (s->cluster_sectors - 1);
 
-    /* prepare next AIO request */
-    acb->cur_nr_sectors = acb->remaining_sectors;
-    if (s->crypt_method) {
-        acb->cur_nr_sectors = MIN(acb->cur_nr_sectors,
-            QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors);
-    }
+        qemu_iovec_reset(&hd_qiov);
+        qemu_iovec_copy(&hd_qiov, qiov, bytes_done,
+            cur_nr_sectors * 512);
 
-    ret = qcow2_get_cluster_offset(bs, acb->sector_num << 9,
-        &acb->cur_nr_sectors, &acb->cluster_offset);
-    if (ret < 0) {
-        goto done;
-    }
+        if (!cluster_offset) {
 
-    index_in_cluster = acb->sector_num & (s->cluster_sectors - 1);
-
-    qemu_iovec_reset(&acb->hd_qiov);
-    qemu_iovec_copy(&acb->hd_qiov, acb->qiov, acb->bytes_done,
-        acb->cur_nr_sectors * 512);
-
-    if (!acb->cluster_offset) {
-
-        if (bs->backing_hd) {
-            /* read from the base image */
-            n1 = qcow2_backing_read1(bs->backing_hd, &acb->hd_qiov,
-                acb->sector_num, acb->cur_nr_sectors);
-            if (n1 > 0) {
-                BLKDBG_EVENT(bs->file, BLKDBG_READ_BACKING_AIO);
-                acb->hd_aiocb = bdrv_aio_readv(bs->backing_hd, acb->sector_num,
-                                    &acb->hd_qiov, n1, qcow2_aio_read_cb, acb);
-                if (acb->hd_aiocb == NULL) {
-                    ret = -EIO;
-                    goto done;
+            if (bs->backing_hd) {
+                /* read from the base image */
+                n1 = qcow2_backing_read1(bs->backing_hd, &hd_qiov,
+                    sector_num, cur_nr_sectors);
+                if (n1 > 0) {
+                    BLKDBG_EVENT(bs->file, BLKDBG_READ_BACKING_AIO);
+                    qemu_co_mutex_unlock(&s->lock);
+                    ret = bdrv_co_readv(bs->backing_hd, sector_num,
+                                        n1, &hd_qiov);
+                    qemu_co_mutex_lock(&s->lock);
+                    if (ret < 0) {
+                        goto fail;
+                    }
                 }
             } else {
-                ret = qcow2_schedule_bh(qcow2_aio_read_bh, acb);
-                if (ret < 0)
-                    goto done;
+                /* Note: in this case, no need to wait */
+                qemu_iovec_memset(&hd_qiov, 0, 512 * cur_nr_sectors);
             }
+        } else if (cluster_offset & QCOW_OFLAG_COMPRESSED) {
+            /* add AIO support for compressed blocks ? */
+            ret = qcow2_decompress_cluster(bs, cluster_offset);
+            if (ret < 0) {
+                goto fail;
+            }
+
+            qemu_iovec_from_buffer(&hd_qiov,
+                s->cluster_cache + index_in_cluster * 512,
+                512 * cur_nr_sectors);
         } else {
-            /* Note: in this case, no need to wait */
-            qemu_iovec_memset(&acb->hd_qiov, 0, 512 * acb->cur_nr_sectors);
-            ret = qcow2_schedule_bh(qcow2_aio_read_bh, acb);
-            if (ret < 0)
-                goto done;
-        }
-    } else if (acb->cluster_offset & QCOW_OFLAG_COMPRESSED) {
-        /* add AIO support for compressed blocks ? */
-        ret = qcow2_decompress_cluster(bs, acb->cluster_offset);
-        if (ret < 0) {
-            goto done;
-        }
-
-        qemu_iovec_from_buffer(&acb->hd_qiov,
-            s->cluster_cache + index_in_cluster * 512,
-            512 * acb->cur_nr_sectors);
-
-        ret = qcow2_schedule_bh(qcow2_aio_read_bh, acb);
-        if (ret < 0)
-            goto done;
-    } else {
-        if ((acb->cluster_offset & 511) != 0) {
-            ret = -EIO;
-            goto done;
-        }
-
-        if (s->crypt_method) {
-            /*
-             * For encrypted images, read everything into a temporary
-             * contiguous buffer on which the AES functions can work.
-             */
-            if (!acb->cluster_data) {
-                acb->cluster_data =
-                    qemu_mallocz(QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size);
+            if ((cluster_offset & 511) != 0) {
+                ret = -EIO;
+                goto fail;
             }
 
-            assert(acb->cur_nr_sectors <=
-                QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors);
-            qemu_iovec_reset(&acb->hd_qiov);
-            qemu_iovec_add(&acb->hd_qiov, acb->cluster_data,
-                512 * acb->cur_nr_sectors);
+            if (s->crypt_method) {
+                /*
+                 * For encrypted images, read everything into a temporary
+                 * contiguous buffer on which the AES functions can work.
+                 */
+                if (!cluster_data) {
+                    cluster_data =
+                        g_malloc0(QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size);
+                }
+
+                assert(cur_nr_sectors <=
+                    QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors);
+                qemu_iovec_reset(&hd_qiov);
+                qemu_iovec_add(&hd_qiov, cluster_data,
+                    512 * cur_nr_sectors);
+            }
+
+            BLKDBG_EVENT(bs->file, BLKDBG_READ_AIO);
+            qemu_co_mutex_unlock(&s->lock);
+            ret = bdrv_co_readv(bs->file,
+                                (cluster_offset >> 9) + index_in_cluster,
+                                cur_nr_sectors, &hd_qiov);
+            qemu_co_mutex_lock(&s->lock);
+            if (ret < 0) {
+                goto fail;
+            }
+            if (s->crypt_method) {
+                qcow2_encrypt_sectors(s, sector_num,  cluster_data,
+                    cluster_data, cur_nr_sectors, 0, &s->aes_decrypt_key);
+                qemu_iovec_reset(&hd_qiov);
+                qemu_iovec_copy(&hd_qiov, qiov, bytes_done,
+                    cur_nr_sectors * 512);
+                qemu_iovec_from_buffer(&hd_qiov, cluster_data,
+                    512 * cur_nr_sectors);
+            }
         }
 
-        BLKDBG_EVENT(bs->file, BLKDBG_READ_AIO);
-        acb->hd_aiocb = bdrv_aio_readv(bs->file,
-                            (acb->cluster_offset >> 9) + index_in_cluster,
-                            &acb->hd_qiov, acb->cur_nr_sectors,
-                            qcow2_aio_read_cb, acb);
-        if (acb->hd_aiocb == NULL) {
-            ret = -EIO;
-            goto done;
-        }
+        remaining_sectors -= cur_nr_sectors;
+        sector_num += cur_nr_sectors;
+        bytes_done += cur_nr_sectors * 512;
     }
+    ret = 0;
 
-    return;
-done:
-    acb->common.cb(acb->common.opaque, ret);
-    qemu_iovec_destroy(&acb->hd_qiov);
-    qemu_aio_release(acb);
+fail:
+    qemu_co_mutex_unlock(&s->lock);
+
+    qemu_iovec_destroy(&hd_qiov);
+    g_free(cluster_data);
+
+    return ret;
 }
 
-static QCowAIOCB *qcow2_aio_setup(BlockDriverState *bs, int64_t sector_num,
-                                  QEMUIOVector *qiov, int nb_sectors,
-                                  BlockDriverCompletionFunc *cb,
-                                  void *opaque, int is_write)
+static void run_dependent_requests(BDRVQcowState *s, QCowL2Meta *m)
 {
-    QCowAIOCB *acb;
-
-    acb = qemu_aio_get(&qcow2_aio_pool, bs, cb, opaque);
-    if (!acb)
-        return NULL;
-    acb->hd_aiocb = NULL;
-    acb->sector_num = sector_num;
-    acb->qiov = qiov;
-
-    qemu_iovec_init(&acb->hd_qiov, qiov->niov);
-
-    acb->bytes_done = 0;
-    acb->remaining_sectors = nb_sectors;
-    acb->cur_nr_sectors = 0;
-    acb->cluster_offset = 0;
-    acb->l2meta.nb_clusters = 0;
-    QLIST_INIT(&acb->l2meta.dependent_requests);
-    return acb;
-}
-
-static BlockDriverAIOCB *qcow2_aio_readv(BlockDriverState *bs,
-                                         int64_t sector_num,
-                                         QEMUIOVector *qiov, int nb_sectors,
-                                         BlockDriverCompletionFunc *cb,
-                                         void *opaque)
-{
-    QCowAIOCB *acb;
-
-    acb = qcow2_aio_setup(bs, sector_num, qiov, nb_sectors, cb, opaque, 0);
-    if (!acb)
-        return NULL;
-
-    qcow2_aio_read_cb(acb, 0);
-    return &acb->common;
-}
-
-static void qcow2_aio_write_cb(void *opaque, int ret);
-
-static void run_dependent_requests(QCowL2Meta *m)
-{
-    QCowAIOCB *req;
-    QCowAIOCB *next;
-
     /* Take the request off the list of running requests */
     if (m->nb_clusters != 0) {
         QLIST_REMOVE(m, next_in_flight);
     }
 
-    /*
-     * Restart all dependent requests.
-     * Can't use QLIST_FOREACH here - the next link might not be the same
-     * any more after the callback  (request could depend on a different
-     * request now)
-     */
-    for (req = m->dependent_requests.lh_first; req != NULL; req = next) {
-        next = req->next_depend.le_next;
-        qcow2_aio_write_cb(req, 0);
+    /* Restart all dependent requests */
+    if (!qemu_co_queue_empty(&m->dependent_requests)) {
+        qemu_co_mutex_unlock(&s->lock);
+        qemu_co_queue_restart_all(&m->dependent_requests);
+        qemu_co_mutex_lock(&s->lock);
     }
-
-    /* Empty the list for the next part of the request */
-    QLIST_INIT(&m->dependent_requests);
 }
 
-static void qcow2_aio_write_cb(void *opaque, int ret)
+static int qcow2_co_writev(BlockDriverState *bs,
+                           int64_t sector_num,
+                           int remaining_sectors,
+                           QEMUIOVector *qiov)
 {
-    QCowAIOCB *acb = opaque;
-    BlockDriverState *bs = acb->common.bs;
     BDRVQcowState *s = bs->opaque;
     int index_in_cluster;
     int n_end;
+    int ret;
+    int cur_nr_sectors; /* number of sectors in current iteration */
+    uint64_t cluster_offset;
+    QEMUIOVector hd_qiov;
+    uint64_t bytes_done = 0;
+    uint8_t *cluster_data = NULL;
+    QCowL2Meta l2meta = {
+        .nb_clusters = 0,
+    };
 
-    acb->hd_aiocb = NULL;
+    qemu_co_queue_init(&l2meta.dependent_requests);
 
-    if (ret >= 0) {
-        ret = qcow2_alloc_cluster_link_l2(bs, &acb->l2meta);
-    }
-
-    run_dependent_requests(&acb->l2meta);
-
-    if (ret < 0)
-        goto done;
-
-    acb->remaining_sectors -= acb->cur_nr_sectors;
-    acb->sector_num += acb->cur_nr_sectors;
-    acb->bytes_done += acb->cur_nr_sectors * 512;
-
-    if (acb->remaining_sectors == 0) {
-        /* request completed */
-        ret = 0;
-        goto done;
-    }
-
-    index_in_cluster = acb->sector_num & (s->cluster_sectors - 1);
-    n_end = index_in_cluster + acb->remaining_sectors;
-    if (s->crypt_method &&
-        n_end > QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors)
-        n_end = QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors;
-
-    ret = qcow2_alloc_cluster_offset(bs, acb->sector_num << 9,
-        index_in_cluster, n_end, &acb->cur_nr_sectors, &acb->l2meta);
-    if (ret < 0) {
-        goto done;
-    }
-
-    acb->cluster_offset = acb->l2meta.cluster_offset;
-
-    /* Need to wait for another request? If so, we are done for now. */
-    if (acb->l2meta.nb_clusters == 0 && acb->l2meta.depends_on != NULL) {
-        QLIST_INSERT_HEAD(&acb->l2meta.depends_on->dependent_requests,
-            acb, next_depend);
-        return;
-    }
-
-    assert((acb->cluster_offset & 511) == 0);
-
-    qemu_iovec_reset(&acb->hd_qiov);
-    qemu_iovec_copy(&acb->hd_qiov, acb->qiov, acb->bytes_done,
-        acb->cur_nr_sectors * 512);
-
-    if (s->crypt_method) {
-        if (!acb->cluster_data) {
-            acb->cluster_data = qemu_mallocz(QCOW_MAX_CRYPT_CLUSTERS *
-                                             s->cluster_size);
-        }
-
-        assert(acb->hd_qiov.size <= QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size);
-        qemu_iovec_to_buffer(&acb->hd_qiov, acb->cluster_data);
-
-        qcow2_encrypt_sectors(s, acb->sector_num, acb->cluster_data,
-            acb->cluster_data, acb->cur_nr_sectors, 1, &s->aes_encrypt_key);
-
-        qemu_iovec_reset(&acb->hd_qiov);
-        qemu_iovec_add(&acb->hd_qiov, acb->cluster_data,
-            acb->cur_nr_sectors * 512);
-    }
-
-    BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
-    acb->hd_aiocb = bdrv_aio_writev(bs->file,
-                                    (acb->cluster_offset >> 9) + index_in_cluster,
-                                    &acb->hd_qiov, acb->cur_nr_sectors,
-                                    qcow2_aio_write_cb, acb);
-    if (acb->hd_aiocb == NULL) {
-        ret = -EIO;
-        goto fail;
-    }
-
-    return;
-
-fail:
-    if (acb->l2meta.nb_clusters != 0) {
-        QLIST_REMOVE(&acb->l2meta, next_in_flight);
-    }
-done:
-    acb->common.cb(acb->common.opaque, ret);
-    qemu_iovec_destroy(&acb->hd_qiov);
-    qemu_aio_release(acb);
-}
-
-static BlockDriverAIOCB *qcow2_aio_writev(BlockDriverState *bs,
-                                          int64_t sector_num,
-                                          QEMUIOVector *qiov, int nb_sectors,
-                                          BlockDriverCompletionFunc *cb,
-                                          void *opaque)
-{
-    BDRVQcowState *s = bs->opaque;
-    QCowAIOCB *acb;
+    qemu_iovec_init(&hd_qiov, qiov->niov);
 
     s->cluster_cache_offset = -1; /* disable compressed cache */
 
-    acb = qcow2_aio_setup(bs, sector_num, qiov, nb_sectors, cb, opaque, 1);
-    if (!acb)
-        return NULL;
+    qemu_co_mutex_lock(&s->lock);
 
-    qcow2_aio_write_cb(acb, 0);
-    return &acb->common;
+    while (remaining_sectors != 0) {
+
+        index_in_cluster = sector_num & (s->cluster_sectors - 1);
+        n_end = index_in_cluster + remaining_sectors;
+        if (s->crypt_method &&
+            n_end > QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors) {
+            n_end = QCOW_MAX_CRYPT_CLUSTERS * s->cluster_sectors;
+        }
+
+        ret = qcow2_alloc_cluster_offset(bs, sector_num << 9,
+            index_in_cluster, n_end, &cur_nr_sectors, &l2meta);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        cluster_offset = l2meta.cluster_offset;
+        assert((cluster_offset & 511) == 0);
+
+        qemu_iovec_reset(&hd_qiov);
+        qemu_iovec_copy(&hd_qiov, qiov, bytes_done,
+            cur_nr_sectors * 512);
+
+        if (s->crypt_method) {
+            if (!cluster_data) {
+                cluster_data = g_malloc0(QCOW_MAX_CRYPT_CLUSTERS *
+                                                 s->cluster_size);
+            }
+
+            assert(hd_qiov.size <=
+                   QCOW_MAX_CRYPT_CLUSTERS * s->cluster_size);
+            qemu_iovec_to_buffer(&hd_qiov, cluster_data);
+
+            qcow2_encrypt_sectors(s, sector_num, cluster_data,
+                cluster_data, cur_nr_sectors, 1, &s->aes_encrypt_key);
+
+            qemu_iovec_reset(&hd_qiov);
+            qemu_iovec_add(&hd_qiov, cluster_data,
+                cur_nr_sectors * 512);
+        }
+
+        BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
+        qemu_co_mutex_unlock(&s->lock);
+        ret = bdrv_co_writev(bs->file,
+                             (cluster_offset >> 9) + index_in_cluster,
+                             cur_nr_sectors, &hd_qiov);
+        qemu_co_mutex_lock(&s->lock);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        ret = qcow2_alloc_cluster_link_l2(bs, &l2meta);
+        if (ret < 0) {
+            goto fail;
+        }
+
+        run_dependent_requests(s, &l2meta);
+
+        remaining_sectors -= cur_nr_sectors;
+        sector_num += cur_nr_sectors;
+        bytes_done += cur_nr_sectors * 512;
+    }
+    ret = 0;
+
+fail:
+    run_dependent_requests(s, &l2meta);
+
+    qemu_co_mutex_unlock(&s->lock);
+
+    qemu_iovec_destroy(&hd_qiov);
+    g_free(cluster_data);
+
+    return ret;
 }
 
 static void qcow2_close(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
-    qemu_free(s->l1_table);
+    g_free(s->l1_table);
 
     qcow2_cache_flush(bs, s->l2_table_cache);
     qcow2_cache_flush(bs, s->refcount_block_cache);
@@ -753,8 +628,8 @@ static void qcow2_close(BlockDriverState *bs)
     qcow2_cache_destroy(bs, s->l2_table_cache);
     qcow2_cache_destroy(bs, s->refcount_block_cache);
 
-    qemu_free(s->cluster_cache);
-    qemu_free(s->cluster_data);
+    g_free(s->cluster_cache);
+    g_free(s->cluster_data);
     qcow2_refcount_close(bs);
 }
 
@@ -899,7 +774,7 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
 
     nb_sectors = bdrv_getlength(bs) >> 9;
     offset = 0;
-    QLIST_INIT(&meta.dependent_requests);
+    qemu_co_queue_init(&meta.dependent_requests);
     meta.cluster_offset = 0;
 
     /* First allocate metadata in _really_ big chunks */
@@ -918,7 +793,7 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
 
         /* There are no dependent requests, but we need to remove our request
          * from the list of in-flight requests */
-        run_dependent_requests(&meta);
+        run_dependent_requests(bs->opaque, &meta);
 
         /* TODO Preallocate data if requested */
 
@@ -928,7 +803,7 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
 
     /* Then write zeros to the cluster data, if requested */
     if (mode == PREALLOC_FULL) {
-        void *buf = qemu_mallocz(IO_BUF_SIZE);
+        void *buf = g_malloc0(IO_BUF_SIZE);
 
         nb_sectors = bdrv_getlength(bs) >> BDRV_SECTOR_BITS;
         offset = 0;
@@ -937,7 +812,7 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
             num = MIN(nb_sectors, IO_BUF_SIZE / BDRV_SECTOR_SIZE);
             ret = bdrv_write(bs, offset >> BDRV_SECTOR_BITS, buf, num);
             if (ret < 0) {
-                qemu_free(buf);
+                g_free(buf);
                 return ret;
             }
 
@@ -945,7 +820,7 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
             offset += num << 9;
         }
 
-        qemu_free(buf);
+        g_free(buf);
     }
 
     /*
@@ -1094,7 +969,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
 
     } while (ref_clusters != old_ref_clusters);
 
-    s->refcount_table = qemu_mallocz(reftable_clusters * s->cluster_size);
+    s->refcount_table = g_malloc0(reftable_clusters * s->cluster_size);
 
     s->refcount_table_offset = offset;
     header.refcount_table_offset = cpu_to_be64(offset);
@@ -1107,7 +982,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         offset += s->cluster_size;
     }
 
-    s->refcount_block = qemu_mallocz(ref_clusters * s->cluster_size);
+    s->refcount_block = g_malloc0(ref_clusters * s->cluster_size);
 
     /* update refcounts */
     qcow2_create_refcount_update(s, 0, header_size);
@@ -1183,8 +1058,8 @@ static int qcow2_create2(const char *filename, int64_t total_size,
 
     ret = 0;
 exit:
-    qemu_free(s->refcount_table);
-    qemu_free(s->refcount_block);
+    g_free(s->refcount_table);
+    g_free(s->refcount_block);
 
     cret = close(fd);
     if (ret == 0 && cret < 0)
@@ -1271,6 +1146,19 @@ static int qcow2_make_empty(BlockDriverState *bs)
     return 0;
 }
 
+static coroutine_fn int qcow2_co_discard(BlockDriverState *bs,
+    int64_t sector_num, int nb_sectors)
+{
+    int ret;
+    BDRVQcowState *s = bs->opaque;
+
+    qemu_co_mutex_lock(&s->lock);
+    ret = qcow2_discard_clusters(bs, sector_num << BDRV_SECTOR_BITS,
+        nb_sectors);
+    qemu_co_mutex_unlock(&s->lock);
+    return ret;
+}
+
 /* XXX: put compressed sectors first, then all the cluster aligned
    tables to avoid losing bytes in alignment */
 static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
@@ -1294,7 +1182,7 @@ static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
     if (nb_sectors != s->cluster_sectors)
         return -EINVAL;
 
-    out_buf = qemu_malloc(s->cluster_size + (s->cluster_size / 1000) + 128);
+    out_buf = g_malloc(s->cluster_size + (s->cluster_size / 1000) + 128);
 
     /* best compression, small window, no zlib header */
     memset(&strm, 0, sizeof(strm));
@@ -1302,8 +1190,8 @@ static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
                        Z_DEFLATED, -12,
                        9, Z_DEFAULT_STRATEGY);
     if (ret != 0) {
-        qemu_free(out_buf);
-        return -1;
+        ret = -EINVAL;
+        goto fail;
     }
 
     strm.avail_in = s->cluster_size;
@@ -1313,9 +1201,9 @@ static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
 
     ret = deflate(&strm, Z_FINISH);
     if (ret != Z_STREAM_END && ret != Z_OK) {
-        qemu_free(out_buf);
         deflateEnd(&strm);
-        return -1;
+        ret = -EINVAL;
+        goto fail;
     }
     out_len = strm.next_out - out_buf;
 
@@ -1323,29 +1211,37 @@ static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
 
     if (ret != Z_STREAM_END || out_len >= s->cluster_size) {
         /* could not compress: write normal cluster */
-        bdrv_write(bs, sector_num, buf, s->cluster_sectors);
+        ret = bdrv_write(bs, sector_num, buf, s->cluster_sectors);
+        if (ret < 0) {
+            goto fail;
+        }
     } else {
         cluster_offset = qcow2_alloc_compressed_cluster_offset(bs,
             sector_num << 9, out_len);
-        if (!cluster_offset)
-            return -1;
+        if (!cluster_offset) {
+            ret = -EIO;
+            goto fail;
+        }
         cluster_offset &= s->cluster_offset_mask;
         BLKDBG_EVENT(bs->file, BLKDBG_WRITE_COMPRESSED);
-        if (bdrv_pwrite(bs->file, cluster_offset, out_buf, out_len) != out_len) {
-            qemu_free(out_buf);
-            return -1;
+        ret = bdrv_pwrite(bs->file, cluster_offset, out_buf, out_len);
+        if (ret < 0) {
+            goto fail;
         }
     }
 
-    qemu_free(out_buf);
-    return 0;
+    ret = 0;
+fail:
+    g_free(out_buf);
+    return ret;
 }
 
-static int qcow2_flush(BlockDriverState *bs)
+static int qcow2_co_flush(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
     int ret;
 
+    qemu_co_mutex_lock(&s->lock);
     ret = qcow2_cache_flush(bs, s->l2_table_cache);
     if (ret < 0) {
         return ret;
@@ -1355,28 +1251,9 @@ static int qcow2_flush(BlockDriverState *bs)
     if (ret < 0) {
         return ret;
     }
+    qemu_co_mutex_unlock(&s->lock);
 
-    return bdrv_flush(bs->file);
-}
-
-static BlockDriverAIOCB *qcow2_aio_flush(BlockDriverState *bs,
-                                         BlockDriverCompletionFunc *cb,
-                                         void *opaque)
-{
-    BDRVQcowState *s = bs->opaque;
-    int ret;
-
-    ret = qcow2_cache_flush(bs, s->l2_table_cache);
-    if (ret < 0) {
-        return NULL;
-    }
-
-    ret = qcow2_cache_flush(bs, s->refcount_block_cache);
-    if (ret < 0) {
-        return NULL;
-    }
-
-    return bdrv_aio_flush(bs->file, cb, opaque);
+    return bdrv_co_flush(bs->file);
 }
 
 static int64_t qcow2_vm_state_offset(BDRVQcowState *s)
@@ -1413,7 +1290,8 @@ static void dump_refcounts(BlockDriverState *bs)
         k++;
         while (k < nb_clusters && get_refcount(bs, k) == refcount)
             k++;
-        printf("%lld: refcount=%d nb=%lld\n", k, refcount, k - k1);
+        printf("%" PRId64 ": refcount=%d nb=%" PRId64 "\n", k, refcount,
+               k - k1);
     }
 }
 #endif
@@ -1490,15 +1368,15 @@ static BlockDriver bdrv_qcow2 = {
     .bdrv_open          = qcow2_open,
     .bdrv_close         = qcow2_close,
     .bdrv_create        = qcow2_create,
-    .bdrv_flush         = qcow2_flush,
-    .bdrv_is_allocated  = qcow2_is_allocated,
+    .bdrv_co_is_allocated = qcow2_co_is_allocated,
     .bdrv_set_key       = qcow2_set_key,
     .bdrv_make_empty    = qcow2_make_empty,
 
-    .bdrv_aio_readv     = qcow2_aio_readv,
-    .bdrv_aio_writev    = qcow2_aio_writev,
-    .bdrv_aio_flush     = qcow2_aio_flush,
+    .bdrv_co_readv      = qcow2_co_readv,
+    .bdrv_co_writev     = qcow2_co_writev,
+    .bdrv_co_flush      = qcow2_co_flush,
 
+    .bdrv_co_discard        = qcow2_co_discard,
     .bdrv_truncate          = qcow2_truncate,
     .bdrv_write_compressed  = qcow2_write_compressed,
 

@@ -50,20 +50,20 @@ int qcow2_grow_l1_table(BlockDriverState *bs, int min_size)
 #endif
 
     new_l1_size2 = sizeof(uint64_t) * new_l1_size;
-    new_l1_table = qemu_mallocz(align_offset(new_l1_size2, 512));
+    new_l1_table = g_malloc0(align_offset(new_l1_size2, 512));
     memcpy(new_l1_table, s->l1_table, s->l1_size * sizeof(uint64_t));
 
     /* write new table (align to cluster) */
     BLKDBG_EVENT(bs->file, BLKDBG_L1_GROW_ALLOC_TABLE);
     new_l1_table_offset = qcow2_alloc_clusters(bs, new_l1_size2);
     if (new_l1_table_offset < 0) {
-        qemu_free(new_l1_table);
+        g_free(new_l1_table);
         return new_l1_table_offset;
     }
 
     ret = qcow2_cache_flush(bs, s->refcount_block_cache);
     if (ret < 0) {
-        return ret;
+        goto fail;
     }
 
     BLKDBG_EVENT(bs->file, BLKDBG_L1_GROW_WRITE_TABLE);
@@ -83,14 +83,14 @@ int qcow2_grow_l1_table(BlockDriverState *bs, int min_size)
     if (ret < 0) {
         goto fail;
     }
-    qemu_free(s->l1_table);
+    g_free(s->l1_table);
     qcow2_free_clusters(bs, s->l1_table_offset, s->l1_size * sizeof(uint64_t));
     s->l1_table_offset = new_l1_table_offset;
     s->l1_table = new_l1_table;
     s->l1_size = new_l1_size;
     return 0;
  fail:
-    qemu_free(new_l1_table);
+    g_free(new_l1_table);
     qcow2_free_clusters(bs, new_l1_table_offset, new_l1_size2);
     return ret;
 }
@@ -561,8 +561,10 @@ uint64_t qcow2_alloc_compressed_cluster_offset(BlockDriverState *bs,
     }
 
     cluster_offset = be64_to_cpu(l2_table[l2_index]);
-    if (cluster_offset & QCOW_OFLAG_COPIED)
-        return cluster_offset & ~QCOW_OFLAG_COPIED;
+    if (cluster_offset & QCOW_OFLAG_COPIED) {
+        qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+        return 0;
+    }
 
     if (cluster_offset)
         qcow2_free_any_clusters(bs, cluster_offset, 1);
@@ -605,7 +607,7 @@ int qcow2_alloc_cluster_link_l2(BlockDriverState *bs, QCowL2Meta *m)
     if (m->nb_clusters == 0)
         return 0;
 
-    old_cluster = qemu_malloc(m->nb_clusters * sizeof(uint64_t));
+    old_cluster = g_malloc(m->nb_clusters * sizeof(uint64_t));
 
     /* copy content of unmodified sectors */
     start_sect = (m->offset & ~(s->cluster_size - 1)) >> 9;
@@ -676,7 +678,7 @@ int qcow2_alloc_cluster_link_l2(BlockDriverState *bs, QCowL2Meta *m)
 
     ret = 0;
 err:
-    qemu_free(old_cluster);
+    g_free(old_cluster);
     return ret;
  }
 
@@ -690,12 +692,12 @@ err:
  * m->depends_on is set to NULL and the other fields in m are meaningless.
  *
  * If the cluster is newly allocated, m->nb_clusters is set to the number of
- * contiguous clusters that have been allocated. This may be 0 if the request
- * conflict with another write request in flight; in this case, m->depends_on
- * is set and the remaining fields of m are meaningless.
+ * contiguous clusters that have been allocated. In this case, the other
+ * fields of m are valid and contain information about the first allocated
+ * cluster.
  *
- * If m->nb_clusters is non-zero, the other fields of m are valid and contain
- * information about the first allocated cluster.
+ * If the request conflicts with another write request in flight, the coroutine
+ * is queued and will be reentered when the dependency has completed.
  *
  * Return 0 on success and -errno in error cases
  */
@@ -709,6 +711,7 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
     unsigned int nb_clusters, i = 0;
     QCowL2Meta *old_alloc;
 
+again:
     ret = get_cluster_table(bs, offset, &l2_table, &l2_offset, &l2_index);
     if (ret < 0) {
         return ret;
@@ -729,6 +732,11 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
         cluster_offset &= ~QCOW_OFLAG_COPIED;
         m->nb_clusters = 0;
         m->depends_on = NULL;
+
+        ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+        if (ret < 0) {
+            return ret;
+        }
 
         goto out;
     }
@@ -762,6 +770,11 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
     assert(i <= nb_clusters);
     nb_clusters = i;
 
+    ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    if (ret < 0) {
+        return ret;
+    }
+
     /*
      * Check if there already is an AIO write request in flight which allocates
      * the same cluster. In this case we need to wait until the previous
@@ -785,12 +798,12 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
             }
 
             if (nb_clusters == 0) {
-                /* Set dependency and wait for a callback */
-                m->depends_on = old_alloc;
-                m->nb_clusters = 0;
-                *num = 0;
-                ret = 0;
-                goto fail;
+                /* Wait for the dependency to complete. We need to recheck
+                 * the free/allocated clusters when we continue. */
+                qemu_co_mutex_unlock(&s->lock);
+                qemu_co_queue_wait(&old_alloc->dependent_requests);
+                qemu_co_mutex_lock(&s->lock);
+                goto again;
             }
         }
     }
@@ -805,7 +818,6 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
 
     cluster_offset = qcow2_alloc_clusters(bs, nb_clusters * s->cluster_size);
     if (cluster_offset < 0) {
-        QLIST_REMOVE(m, next_in_flight);
         ret = cluster_offset;
         goto fail;
     }
@@ -816,11 +828,6 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
     m->nb_clusters = nb_clusters;
 
 out:
-    ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
-    if (ret < 0) {
-        return ret;
-    }
-
     m->nb_available = MIN(nb_clusters << (s->cluster_bits - 9), n_end);
     m->cluster_offset = cluster_offset;
 
@@ -829,7 +836,7 @@ out:
     return 0;
 
 fail:
-    qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    QLIST_REMOVE(m, next_in_flight);
     return ret;
 }
 
@@ -882,5 +889,87 @@ int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset)
         }
         s->cluster_cache_offset = coffset;
     }
+    return 0;
+}
+
+/*
+ * This discards as many clusters of nb_clusters as possible at once (i.e.
+ * all clusters in the same L2 table) and returns the number of discarded
+ * clusters.
+ */
+static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
+    unsigned int nb_clusters)
+{
+    BDRVQcowState *s = bs->opaque;
+    uint64_t l2_offset, *l2_table;
+    int l2_index;
+    int ret;
+    int i;
+
+    ret = get_cluster_table(bs, offset, &l2_table, &l2_offset, &l2_index);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Limit nb_clusters to one L2 table */
+    nb_clusters = MIN(nb_clusters, s->l2_size - l2_index);
+
+    for (i = 0; i < nb_clusters; i++) {
+        uint64_t old_offset;
+
+        old_offset = be64_to_cpu(l2_table[l2_index + i]);
+        old_offset &= ~QCOW_OFLAG_COPIED;
+
+        if (old_offset == 0) {
+            continue;
+        }
+
+        /* First remove L2 entries */
+        qcow2_cache_entry_mark_dirty(s->l2_table_cache, l2_table);
+        l2_table[l2_index + i] = cpu_to_be64(0);
+
+        /* Then decrease the refcount */
+        qcow2_free_any_clusters(bs, old_offset, 1);
+    }
+
+    ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return nb_clusters;
+}
+
+int qcow2_discard_clusters(BlockDriverState *bs, uint64_t offset,
+    int nb_sectors)
+{
+    BDRVQcowState *s = bs->opaque;
+    uint64_t end_offset;
+    unsigned int nb_clusters;
+    int ret;
+
+    end_offset = offset + (nb_sectors << BDRV_SECTOR_BITS);
+
+    /* Round start up and end down */
+    offset = align_offset(offset, s->cluster_size);
+    end_offset &= ~(s->cluster_size - 1);
+
+    if (offset > end_offset) {
+        return 0;
+    }
+
+    nb_clusters = size_to_clusters(s, end_offset - offset);
+
+    /* Each L2 table is handled by its own loop iteration */
+    while (nb_clusters > 0) {
+        ret = discard_single_l2(bs, offset, nb_clusters);
+        if (ret < 0) {
+            return ret;
+        }
+
+        nb_clusters -= ret;
+        offset += (ret * s->cluster_size);
+    }
+
     return 0;
 }

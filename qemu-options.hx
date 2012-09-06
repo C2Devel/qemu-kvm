@@ -104,15 +104,8 @@ DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "       [,cyls=c,heads=h,secs=s[,trans=t]][,snapshot=on|off]\n"
     "       [,cache=writethrough|writeback|none|unsafe][,format=f]\n"
     "       [,serial=s][,addr=A][,id=name][,aio=threads|native]\n"
-    "       [,readonly=on|off][,copy-on-read=on|off][,stream=on|off]\n"
+    "       [,readonly=on|off][,copy-on-read=on|off]\n"
     "                use 'file' as a drive image\n")
-DEF("set", HAS_ARG, QEMU_OPTION_set,
-    "-set group.id.arg=value\n"
-    "                set <arg> parameter for item <id> of type <group>\n"
-    "                i.e. -set drive.$id.file=/path/to/image\n")
-DEF("global", HAS_ARG, QEMU_OPTION_global,
-    "-global driver.property=value\n"
-    "                set a global default for a driver property\n")
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
 
@@ -153,9 +146,6 @@ Specify the controller's PCI address (if=virtio only).
 @item copy-on-read=@var{copy-on-read}
 @var{copy-on-read} is "on" or "off" and enables whether to copy read backing
 file sectors into the image file.
-@item stream=@var{stream}
-@var{stream} is "on" or "off" and enables background copying of backing file
-contents into the image file until the backing file is no longer needed.
 @end table
 
 By default, writethrough caching is used for all block device.  This means that
@@ -185,8 +175,7 @@ etc. you're image will most probably be rendered unusable.
 
 Copy-on-read avoids accessing the same backing file sectors repeatedly and is
 useful when the backing file is over a slow network.  By default copy-on-read
-is off.  Note that copy-on-read is a hint and may by ignored by block drivers
-which do not support it.
+is off.
 
 Instead of @option{-cdrom} you can use:
 @example
@@ -232,6 +221,27 @@ is interpreted like:
 @example
 qemu -hda a -hdb b
 @end example
+ETEXI
+
+DEF("set", HAS_ARG, QEMU_OPTION_set,
+    "-set group.id.arg=value\n"
+    "                set <arg> parameter for item <id> of type <group>\n"
+    "                i.e. -set drive.$id.file=/path/to/image\n")
+DEF("global", HAS_ARG, QEMU_OPTION_global,
+    "-global driver.prop=value\n"
+    "                set a global default for a driver property\n")
+STEXI
+@item -global @var{driver}.@var{prop}=@var{value}
+@findex -global
+Set default value of @var{driver}'s property @var{prop} to @var{value}, e.g.:
+
+@example
+qemu -global ide-drive.physical_block_size=4096 -drive file=file,if=ide,index=0,media=disk
+@end example
+
+In particular, you can use this to set driver properties for devices which are 
+created automatically by the machine model. To create a device which is not
+created automatically and set properties on it, use -@option{device}.
 ETEXI
 
 DEF("mtdblock", HAS_ARG, QEMU_OPTION_mtdblock,
@@ -299,6 +309,13 @@ STEXI
 Set virtual RAM size to @var{megs} megabytes. Default is 128 MiB.  Optionally,
 a suffix of ``M'' or ``G'' can be used to signify a value in megabytes or
 gigabytes respectively.
+ETEXI
+
+DEF("redhat-disable-KSM", 0, QEMU_OPTION_disable_KSM,
+    "-redhat-disable-KSM  disable KSM on guest physical memory\n")
+STEXI
+@item -redhat-disable-KSM
+Disable KSM on the virtual RAM.
 ETEXI
 
 DEF("k", HAS_ARG, QEMU_OPTION_k,
@@ -586,8 +603,8 @@ The x509 file names can also be configured individually.
 @item tls-ciphers=<list>
 Specify which ciphers to use.
 
-@item tls-channel=[main|display|inputs|record|playback|tunnel]
-@item plaintext-channel=[main|display|inputs|record|playback|tunnel]
+@item tls-channel=[main|display|cursor|inputs|record|playback]
+@item plaintext-channel=[main|display|cursor|inputs|record|playback]
 Force specific channel to be used with or without TLS encryption.  The
 options can be specified multiple times to configure multiple
 channels.  The special name "default" can be used to set the default
@@ -774,6 +791,19 @@ When the @option{acl} flag is set, the initial access list will be
 empty, with a @code{deny} policy. Thus no one will be allowed to
 use the VNC server until the ACLs have been loaded. This can be
 achieved using the @code{acl} monitor command.
+
+@item share=[allow-exclusive|force-shared|ignore]
+
+Set display sharing policy.  'allow-exclusive' allows clients to ask
+for exclusive access.  As suggested by the rfb spec this is
+implemented by dropping other connections.  Connecting multiple
+clients in parallel requires all clients asking for a shared session
+(vncviewer: -shared switch).  This is the default.  'force-shared'
+disables exclusive client access.  Useful for shared desktop sessions,
+where you don't want someone forgetting specify -shared disconnect
+everybody else.  'ignore' completely ignores the shared flag and
+allows everybody connect unconditionally.  Doesn't conform to the rfb
+spec but is traditional qemu behavior.
 
 @end table
 ETEXI
@@ -1724,6 +1754,17 @@ STEXI
 Setup monitor on chardev @var{name}.
 ETEXI
 
+DEF("debugcon", HAS_ARG, QEMU_OPTION_debugcon, \
+    "-debugcon dev   redirect the debug console to char device 'dev'\n")
+STEXI
+@item -debugcon @var{dev}
+Redirect the debug console to host device @var{dev} (same devices as the
+serial port).  The debug console is an I/O port which is typically port
+0xe9; writing to that I/O port sends output to this device.
+The default device is @code{vc} in graphical mode and @code{stdio} in
+non graphical mode.
+ETEXI
+
 DEF("pidfile", HAS_ARG, QEMU_OPTION_pidfile, \
     "-pidfile file   write PID to 'file'\n")
 STEXI
@@ -2112,6 +2153,3 @@ DEF("fake-machine", 0, QEMU_OPTION_fake_machine,
     "-fake-machine        create a fake machine incapable of running guest code\n"
     "                     mimimal resource use, use for scalability testing")
 #endif
-
-DEF("redhat-disable-KSM", 0, QEMU_OPTION_disable_KSM,
-    "-redhat-disable-KSM  disable KSM on guest physical memory\n")

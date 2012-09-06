@@ -701,6 +701,8 @@ typedef struct CPUX86State {
     uint32_t cpuid_model[12];
     uint32_t cpuid_ext2_features;
     uint32_t cpuid_ext3_features;
+    /* Flags from CPUID[EAX=7,ECX=0].EBX */
+    uint32_t cpuid_7_0_ebx;
     uint32_t cpuid_apic_id;
     int cpuid_vendor_override;
 
@@ -720,6 +722,7 @@ typedef struct CPUX86State {
     uint32_t sipi_vector;
     uint32_t cpuid_kvm_features;
     bool tsc_valid;
+    void *kvm_xsave_buf;
 
     /* in order to simplify APIC support, we leave this pointer to the
        user */
@@ -847,14 +850,17 @@ void cpu_x86_frstor(CPUX86State *s, target_ulong ptr, int data32);
 int cpu_x86_signal_handler(int host_signum, void *pinfo,
                            void *puc);
 
+/* cpuid.c */
+void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
+                   uint32_t *eax, uint32_t *ebx,
+                   uint32_t *ecx, uint32_t *edx);
+int cpu_x86_register (CPUX86State *env, const char *cpu_model);
+
 /* helper.c */
 int cpu_x86_handle_mmu_fault(CPUX86State *env, target_ulong addr,
                              int is_write, int mmu_idx, int is_softmmu);
 #define cpu_handle_mmu_fault cpu_x86_handle_mmu_fault
 void cpu_x86_set_a20(CPUX86State *env, int a20_state);
-void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
-                   uint32_t *eax, uint32_t *ebx,
-                   uint32_t *ecx, uint32_t *edx);
 
 static inline int hw_breakpoint_enabled(unsigned long dr7, int index)
 {

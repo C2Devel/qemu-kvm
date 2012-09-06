@@ -149,15 +149,20 @@ int qemu_create_pidfile(const char *filename)
     int fd;
 
     fd = qemu_open(filename, O_RDWR | O_CREAT, 0600);
-    if (fd == -1)
+    if (fd == -1) {
         return -1;
-
-    if (lockf(fd, F_TLOCK, 0) == -1)
-        return -1;
-
+    }
+    if (lockf(fd, F_TLOCK, 0) == -1) {
+        close(fd);
+       return -1;
+    }
     len = snprintf(buffer, sizeof(buffer), "%ld\n", (long)getpid());
-    if (write(fd, buffer, len) != len)
+    if (write(fd, buffer, len) != len) {
+        close(fd);
         return -1;
+    }
+
+    /* keep pidfile open & locked forever */
 #else
     HANDLE file;
     DWORD flags;

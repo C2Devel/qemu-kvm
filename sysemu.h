@@ -10,6 +10,11 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include "qemu-os-win32.h"
+#endif
+
+#ifdef CONFIG_POSIX
+#include "qemu-os-posix.h"
 #endif
 
 /* vl.c */
@@ -67,17 +72,31 @@ int64_t cpu_get_ticks(void);
 void cpu_enable_ticks(void);
 void cpu_disable_ticks(void);
 
+typedef enum WakeupReason {
+    QEMU_WAKEUP_REASON_OTHER = 0,
+    QEMU_WAKEUP_REASON_RTC,
+    QEMU_WAKEUP_REASON_PMTIMER,
+} WakeupReason;
+
 void qemu_system_reset_request(void);
+void qemu_system_suspend_request(void);
+void qemu_register_suspend_notifier(Notifier *notifier);
+void qemu_unregister_suspend_notifier(Notifier *notifier);
+void qemu_system_wakeup_request(WakeupReason reason);
+void qemu_system_wakeup_enable(WakeupReason reason, bool enabled);
+void qemu_register_wakeup_notifier(Notifier *notifier);
 void qemu_system_shutdown_request(void);
 void qemu_system_powerdown_request(void);
 int qemu_no_shutdown(void);
 int qemu_shutdown_requested(void);
 int qemu_reset_requested(void);
+int qemu_suspend_requested(void);
 int qemu_powerdown_requested(void);
 void qemu_system_killed(int signal, pid_t pid);
 void qemu_kill_report(void);
 extern qemu_irq qemu_system_powerdown;
 void qemu_system_reset(void);
+void qemu_system_suspend(void);
 
 void qemu_add_machine_init_done_notifier(Notifier *notify);
 void qemu_add_exit_notifier(Notifier *notify);
@@ -100,24 +119,10 @@ int qemu_savevm_state_complete(Monitor *mon, QEMUFile *f);
 void qemu_savevm_state_cancel(Monitor *mon, QEMUFile *f);
 int qemu_loadvm_state(QEMUFile *f);
 
-#ifdef _WIN32
-/* Polling handling */
-
-/* return TRUE if no sleep should be done afterwards */
-typedef int PollingFunc(void *opaque);
-
-int qemu_add_polling_cb(PollingFunc *func, void *opaque);
-void qemu_del_polling_cb(PollingFunc *func, void *opaque);
-
-/* Wait objects handling */
-typedef void WaitObjectFunc(void *opaque);
-
-int qemu_add_wait_object(HANDLE handle, WaitObjectFunc *func, void *opaque);
-void qemu_del_wait_object(HANDLE handle, WaitObjectFunc *func, void *opaque);
-#endif
-
 /* SLIRP */
 void do_info_slirp(Monitor *mon);
+
+void os_setup_early_signal_handling(void);
 
 typedef enum DisplayType
 {
@@ -187,7 +192,7 @@ extern unsigned int nb_prom_envs;
 #endif
 
 /* acpi */
-void qemu_system_cpu_hot_add(int cpu, int state);
+void qemu_system_cpu_hot_add(int cpu, int state, Monitor *mon);
 
 /* pci-hotplug */
 void pci_device_hot_add(Monitor *mon, const QDict *qdict);

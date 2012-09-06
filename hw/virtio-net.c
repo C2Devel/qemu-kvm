@@ -54,6 +54,7 @@ typedef struct VirtIONet
     uint8_t nouni;
     uint8_t nobcast;
     uint8_t vhost_started;
+    bool macvtap_rhel620_compat;
     struct {
         int in_use;
         int first_multi;
@@ -225,6 +226,13 @@ static uint32_t virtio_net_get_features(VirtIODevice *vdev, uint32_t features)
     }
     if (!tap_get_vhost_net(n->nic->nc.peer)) {
         return features;
+    }
+    /*
+     * In rhel 6.1 and 6.2 macvtap does not support rx mergeable
+     * buffers when used with vhost-net.
+     */
+    if (n->macvtap_rhel620_compat) {
+        features &= ~(1 << VIRTIO_NET_F_MRG_RXBUF);
     }
     return vhost_net_get_features(tap_get_vhost_net(n->nic->nc.peer), features);
 }
@@ -845,11 +853,15 @@ static int virtio_net_load(QEMUFile *f, void *opaque, int version_id)
 {
     VirtIONet *n = opaque;
     int i;
+    int ret;
 
     if (version_id < 2 || version_id > VIRTIO_NET_VM_VERSION)
         return -EINVAL;
 
-    virtio_load(&n->vdev, f);
+    ret = virtio_load(&n->vdev, f);
+    if (ret) {
+        return ret;
+    }
 
     qemu_get_buffer(f, n->mac, ETH_ALEN);
     n->tx_waiting = qemu_get_be32(f);
@@ -988,6 +1000,7 @@ VirtIODevice *virtio_net_init(DeviceState *dev, NICConf *conf,
         n->tx_vq = virtio_add_queue(&n->vdev, 256, virtio_net_handle_tx_bh);
         n->tx_bh = qemu_bh_new(virtio_net_tx_bh, n);
     }
+    n->macvtap_rhel620_compat = net->macvtap_rhel620_compat;
     n->ctrl_vq = virtio_add_queue(&n->vdev, 64, virtio_net_handle_ctrl);
     qemu_macaddr_default_if_unset(&conf->macaddr);
     memcpy(&n->mac[0], &conf->macaddr, sizeof(n->mac));

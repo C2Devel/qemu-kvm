@@ -15,6 +15,7 @@ i386
 libhw32
 libhw64
 libuser
+qapi-generated
 qemu-doc.html
 qemu-tech.html
 qemu-doc.info
@@ -31,6 +32,7 @@ qemu-options.texi
 qemu-img-cmds.texi
 qemu-img-cmds.h
 qemu-io
+qemu-ga
 qemu-monitor.texi
 .gdbinit
 *.a

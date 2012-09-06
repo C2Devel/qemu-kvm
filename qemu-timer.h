@@ -1,6 +1,9 @@
 #ifndef QEMU_TIMER_H
 #define QEMU_TIMER_H
 
+#include "qemu-common.h"
+#include "notify.h"
+
 /* timers */
 
 typedef struct QEMUClock QEMUClock;
@@ -25,6 +28,10 @@ extern QEMUClock *vm_clock;
 extern QEMUClock *host_clock;
 
 int64_t qemu_get_clock(QEMUClock *clock);
+
+void qemu_register_clock_reset_notifier(QEMUClock *clock, Notifier *notifier);
+void qemu_unregister_clock_reset_notifier(QEMUClock *clock,
+                                          Notifier *notifier);
 
 QEMUTimer *qemu_new_timer(QEMUClock *clock, QEMUTimerCB *cb, void *opaque);
 void qemu_free_timer(QEMUTimer *ts);

@@ -307,8 +307,9 @@ int load_elf(const char *filename, int64_t address_offset,
         target_data_order = ELFDATA2LSB;
     }
 
-    if (target_data_order != e_ident[EI_DATA])
-        return -1;
+    if (target_data_order != e_ident[EI_DATA]) {
+        goto fail;
+    }
 
     lseek(fd, 0, SEEK_SET);
     if (e_ident[EI_CLASS] == ELFCLASS64) {

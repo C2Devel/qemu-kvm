@@ -84,7 +84,17 @@ struct RTCState {
     QEMUTimer *coalesced_timer;
     QEMUTimer *second_timer;
     QEMUTimer *second_timer2;
+    Notifier suspend_notifier;
+    Notifier clock_reset_notifier;
 };
+
+/* set CMOS shutdown status register (index 0xF) as S3_resume(0xFE)
+   BIOS will read it and start S3 resume at POST Entry */
+static void rtc_notify_suspend(Notifier *notifier, void *data)
+{
+    RTCState *s = container_of(notifier, RTCState, suspend_notifier);
+    rtc_set_memory(s, 0xF, 0xFE);
+}
 
 static void rtc_irq_raise(qemu_irq irq)
 {
@@ -423,6 +433,7 @@ static void rtc_update_second2(void *opaque)
              rtc_from_bcd(s, s->cmos_data[RTC_HOURS_ALARM]) == s->current_tm.tm_hour)) {
 
             s->cmos_data[RTC_REG_C] |= 0xa0;
+            qemu_system_wakeup_request(QEMU_WAKEUP_REASON_RTC);
             rtc_irq_raise(s->irq);
         }
     }
@@ -561,6 +572,22 @@ static const VMStateDescription vmstate_rtc = {
     }
 };
 
+static void rtc_notify_clock_reset(Notifier *notifier, void *data)
+{
+    RTCState *s = container_of(notifier, RTCState, clock_reset_notifier);
+    int64_t now = *(int64_t *)data;
+
+    rtc_set_date_from_host(s);
+    s->next_second_time = now + (get_ticks_per_sec() * 99) / 100;
+    qemu_mod_timer(s->second_timer2, s->next_second_time);
+    rtc_timer_update(s, now);
+#ifdef TARGET_I386
+    if (rtc_td_hack) {
+        rtc_coalesced_timer_update(s);
+    }
+#endif
+}
+
 static void rtc_reset(void *opaque)
 {
     RTCState *s = opaque;
@@ -599,6 +626,11 @@ static int rtc_initfn(ISADevice *dev)
 #endif
     s->second_timer = qemu_new_timer(rtc_clock, rtc_update_second, s);
     s->second_timer2 = qemu_new_timer(rtc_clock, rtc_update_second2, s);
+
+    s->suspend_notifier.notify = rtc_notify_suspend;
+    qemu_register_suspend_notifier(&s->suspend_notifier);
+    s->clock_reset_notifier.notify = rtc_notify_clock_reset;
+    qemu_register_clock_reset_notifier(rtc_clock, &s->clock_reset_notifier);
 
     s->next_second_time =
         qemu_get_clock(rtc_clock) + (get_ticks_per_sec() * 99) / 100;

@@ -62,6 +62,10 @@ struct KVMState
     int fd;
     int vmfd;
     int coalesced_mmio;
+#ifdef KVM_CAP_COALESCED_MMIO
+    struct kvm_coalesced_mmio_ring *coalesced_mmio_ring;
+#endif
+    bool coalesced_flush_in_progress;
     int broken_set_mem_region;
     int migration_log;
     int vcpu_events;
@@ -205,6 +209,12 @@ int kvm_init_vcpu(CPUState *env)
         dprintf("mmap'ing vcpu state failed\n");
         goto err;
     }
+
+#ifdef KVM_CAP_COALESCED_MMIO
+    if (s->coalesced_mmio && !s->coalesced_mmio_ring)
+        s->coalesced_mmio_ring = (void *) env->kvm_run +
+		s->coalesced_mmio * PAGE_SIZE;
+#endif
 
     ret = kvm_arch_init_vcpu(env);
     if (ret == 0) {
@@ -507,10 +517,10 @@ int kvm_init(int smp_cpus)
         goto err;
     }
 
+    s->coalesced_mmio = 0;
 #ifdef KVM_CAP_COALESCED_MMIO
     s->coalesced_mmio = kvm_check_extension(s, KVM_CAP_COALESCED_MMIO);
-#else
-    s->coalesced_mmio = 0;
+    s->coalesced_mmio_ring = NULL;
 #endif
 
     s->broken_set_mem_region = 1;
@@ -589,14 +599,19 @@ static int kvm_handle_io(uint16_t port, void *data, int direction, int size,
 }
 
 #ifdef KVM_UPSTREAM
-static void kvm_run_coalesced_mmio(CPUState *env, struct kvm_run *run)
+void kvm_flush_coalesced_mmio_buffer(void)
 {
 #ifdef KVM_CAP_COALESCED_MMIO
     KVMState *s = kvm_state;
-    if (s->coalesced_mmio) {
-        struct kvm_coalesced_mmio_ring *ring;
 
-        ring = (void *)run + (s->coalesced_mmio * TARGET_PAGE_SIZE);
+    if (s->coalesced_flush_in_progress) {
+        return;
+    }
+
+    s->coalesced_flush_in_progress = true;
+
+    if (s->coalesced_mmio_ring) {
+        struct kvm_coalesced_mmio_ring *ring = s->coalesced_mmio_ring;
         while (ring->first != ring->last) {
             struct kvm_coalesced_mmio *ent;
 
@@ -607,6 +622,8 @@ static void kvm_run_coalesced_mmio(CPUState *env, struct kvm_run *run)
             ring->first = (ring->first + 1) % KVM_COALESCED_MMIO_MAX;
         }
     }
+
+    s->coalesced_flush_in_progress = false;
 #endif
 }
 
@@ -643,6 +660,8 @@ int kvm_cpu_exec(CPUState *env)
         qemu_mutex_lock_iothread();
         kvm_arch_post_run(env, run);
 
+        kvm_flush_coalesced_mmio_buffer();
+
         if (ret == -EINTR || ret == -EAGAIN) {
             dprintf("io window exit\n");
             ret = 0;
@@ -653,8 +672,6 @@ int kvm_cpu_exec(CPUState *env)
             dprintf("kvm run failed %s\n", strerror(-ret));
             abort();
         }
-
-        kvm_run_coalesced_mmio(env, run);
 
         ret = 0; /* exit loop */
         switch (run->exit_reason) {

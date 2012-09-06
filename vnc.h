@@ -28,6 +28,7 @@
 #define __QEMU_VNC_H
 
 #include "qemu-common.h"
+#include "qemu-queue.h"
 #include "console.h"
 #include "monitor.h"
 #include "audio/audio.h"
@@ -90,13 +91,28 @@ struct VncSurface
     DisplaySurface *ds;
 };
 
+typedef enum VncShareMode {
+    VNC_SHARE_MODE_CONNECTING = 1,
+    VNC_SHARE_MODE_SHARED,
+    VNC_SHARE_MODE_EXCLUSIVE,
+    VNC_SHARE_MODE_DISCONNECTED,
+} VncShareMode;
+
+typedef enum VncSharePolicy {
+    VNC_SHARE_POLICY_IGNORE = 1,
+    VNC_SHARE_POLICY_ALLOW_EXCLUSIVE,
+    VNC_SHARE_POLICY_FORCE_SHARED,
+} VncSharePolicy;
+
 struct VncDisplay
 {
+    QTAILQ_HEAD(, VncState) clients;
+    int num_exclusive;
+    VncSharePolicy share_policy;
     QEMUTimer *timer;
     int timer_interval;
     int lsock;
     DisplayState *ds;
-    VncState *clients;
     kbd_layout_t *kbd_layout;
 
     struct VncSurface guest;   /* guest visible surface (aka ds->surface) */
@@ -131,6 +147,7 @@ struct VncState
     int last_y;
     int client_width;
     int client_height;
+    VncShareMode share_mode;
 
     uint32_t vnc_encoding;
     uint8_t tight_quality;
@@ -170,7 +187,7 @@ struct VncState
     z_stream zlib_stream[4];
 
     Notifier mouse_mode_notifier;
-    VncState *next;
+    QTAILQ_ENTRY(VncState) next;
 };
 
 

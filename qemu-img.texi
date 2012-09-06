@@ -45,6 +45,10 @@ indicates the consecutive number of bytes that must contain only zeros
 for qemu-img to create a sparse image during conversion. This value is rounded
 down to the nearest 512 bytes. You may use the common size suffixes like
 @code{k} for kilobytes.
+@item -t @var{cache}
+specifies the cache mode that should be used with the (destination) file. See
+the documentation of the emulator's @code{-drive cache=...} option for allowed
+values.
 @end table
 
 Parameters to snapshot subcommand:
@@ -66,6 +70,13 @@ lists all snapshots in the given image
 Command description:
 
 @table @option
+@item check [-f @var{fmt}] @var{filename}
+
+Perform a consistency check on the disk image @var{filename}.
+
+Only the formats @code{qcow2}, @code{qed} and @code{vdi} support
+consistency checks.
+
 @item create [-f @var{fmt}] [-o @var{options}] @var{filename} [@var{size}]
 
 Create the new disk image @var{filename} of size @var{size} and format
@@ -80,11 +91,11 @@ this case. @var{backing_file} will never be modified unless you use the
 The size can also be specified using the @var{size} option with @code{-o},
 it doesn't need to be specified separately in this case.
 
-@item commit [-f @var{fmt}] @var{filename}
+@item commit [-f @var{fmt}] [-t @var{cache}] @var{filename}
 
 Commit the changes recorded in @var{filename} in its base image.
 
-@item convert [-c] [-p] [-f @var{fmt}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
+@item convert [-c] [-p] [-f @var{fmt}] [-t @var{cache}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
 
 Convert the disk image @var{filename} to disk image @var{output_filename}
 using format @var{output_fmt}. It can be optionally compressed (@code{-c}
@@ -113,6 +124,40 @@ they are displayed too.
 @item snapshot [-l | -a @var{snapshot} | -c @var{snapshot} | -d @var{snapshot} ] @var{filename}
 
 List, apply, create or delete snapshots in image @var{filename}.
+
+@item rebase [-f @var{fmt}] [-t @var{cache}] [-p] [-u] -b @var{backing_file} [-F @var{backing_fmt}] @var{filename}
+
+Changes the backing file of an image. Only the formats @code{qcow2} and
+@code{qed} support changing the backing file.
+
+The backing file is changed to @var{backing_file} and (if the image format of
+@var{filename} supports this) the backing file format is changed to
+@var{backing_fmt}.
+
+There are two different modes in which @code{rebase} can operate:
+@table @option
+@item Safe mode
+This is the default mode and performs a real rebase operation. The new backing
+file may differ from the old one and qemu-img rebase will take care of keeping
+the guest-visible content of @var{filename} unchanged.
+
+In order to achieve this, any clusters that differ between @var{backing_file}
+and the old backing file of @var{filename} are merged into @var{filename}
+before actually changing the backing file.
+
+Note that the safe mode is an expensive operation, comparable to converting
+an image. It only works if the old backing file still exists.
+
+@item Unsafe mode
+qemu-img uses the unsafe mode if @code{-u} is specified. In this mode, only the
+backing file name and format of @var{filename} is changed without any checks
+on the file contents. The user must take care of specifying the correct new
+backing file, or the guest-visible content of the image will be corrupted.
+
+This mode is useful for renaming or moving the backing file to somewhere else.
+It can be used without an accessible old backing file, i.e. you can use it to
+fix an image whose backing file has already been moved/renamed.
+@end table
 
 @item resize @var{filename} [+ | -]@var{size}
 
@@ -169,9 +214,12 @@ sizes can improve the image file size whereas larger cluster sizes generally
 provide better performance.
 
 @item preallocation
-Preallocation mode (allowed values: off, metadata). An image with preallocated
-metadata is initially larger but can improve performance when the image needs
-to grow.
+Preallocation mode (allowed values: off, metadata, full). An image with
+preallocated metadata is initially larger but can improve performance when the
+image needs to grow. Full preallocation additionally writes zeros to the whole
+image in order to preallocate lower layers (e.g. the file system containing the
+image file) as well. Note that full preallocation writes to every byte of the
+virtual disk, so it can take a long time for large images.
 
 @end table
 

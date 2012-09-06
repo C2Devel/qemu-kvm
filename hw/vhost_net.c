@@ -115,8 +115,8 @@ struct vhost_net *vhost_net_init(VLANClientState *backend, int devfd,
         net->dev.features &= ~(1 << VIRTIO_NET_F_MRG_RXBUF);
     }
     if (~net->dev.features & net->dev.backend_features) {
-        fprintf(stderr, "vhost lacks feature mask %llu for backend\n",
-                ~net->dev.features & net->dev.backend_features);
+        fprintf(stderr, "vhost lacks feature mask %" PRIu64 " for backend\n",
+                (uint64_t)(~net->dev.features & net->dev.backend_features));
         vhost_dev_cleanup(&net->dev);
         goto fail;
     }

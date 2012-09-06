@@ -99,163 +99,6 @@ Commit changes to the disk images (if -snapshot is used) or backing files.
 ETEXI
 
     {
-        .name       = "block_stream",
-        .args_type  = "device:B",
-        .params     = "device",
-        .help       = "Copy data from a backing file into a block device",
-        .user_print = monitor_user_noop,
-        .mhandler.cmd_new = do_block_stream,
-    },
-
-STEXI
-@item block_stream
-@findex block_stream
-Copy data from a backing file into a block device.
-ETEXI
-SQMP
-
-Copy data from a backing file into a block device.
-
-The block streaming operation is performed in the background until the entire
-backing file has been copied.  This command returns immediately once streaming
-has started.  The status of ongoing block streaming operations can be checked
-with query-block-jobs.  The operation can be stopped before it has completed
-using the block_job_cancel command.
-
-If a base file is specified then sectors are not copied from that base file and
-its backing chain.  When streaming completes the image file will have the base
-file as its backing file.  This can be used to stream a subset of the backing
-file chain instead of flattening the entire image.
-
-On successful completion the image file is updated to drop the backing file.
-
-Arguments:
-
-- device: device name (json-string)
-- base:   common backing file (json-string, optional)
-
-Errors:
-
-DeviceInUse:    streaming is already active on this device
-DeviceNotFound: device name is invalid
-NotSupported:   image streaming is not supported by this device
-
-Events:
-
-On completion the BLOCK_JOB_COMPLETED event is raised with the following
-fields:
-
-- type:     job type ("stream" for image streaming, json-string)
-- device:   device name (json-string)
-- end:      maximum progress value (json-int)
-- position: current progress value (json-int)
-- speed:    rate limit, bytes per second (json-int)
-- error:    error message (json-string, only on error)
-
-The completion event is raised both on success and on failure.  On
-success position is equal to end.  On failure position and end can be
-used to indicate at which point the operation failed.
-
-On failure the error field contains a human-readable error message.  There are
-no semantics other than that streaming has failed and clients should not try
-to interpret the error string.
-
-Examples:
-
--> { "execute": "block_stream", "arguments": { "device": "virtio0" } }
-<- { "return":  {} }
-
-EQMP
-
-    {
-        .name       = "block_job_cancel",
-        .args_type  = "device:B",
-        .params     = "device",
-        .help       = "Stop an active block streaming operation",
-        .user_print = monitor_user_noop,
-        .mhandler.cmd_async = do_block_job_cancel,
-        .async      = 1,
-    },
-
-STEXI
-@item block_job_cancel
-@findex block_job_cancel
-Stop an active block streaming operation.
-ETEXI
-SQMP
-
-block_job_cancel
-----------------
-
-Stop an active block streaming operation.
-
-This command returns once the active block streaming operation has been
-stopped.  It is an error to call this command if no operation is in progress.
-
-The image file retains its backing file unless the streaming operation happens
-to complete just as it is being cancelled.
-
-A new block streaming operation can be started at a later time to finish
-copying all data from the backing file.
-
-Arguments:
-
-- device: device name (json-string)
-
-Errors:
-
-DeviceNotActive: streaming is not active on this device
-DeviceInUse:     cancellation already in progress
-
-Examples:
-
--> { "execute": "block_job_cancel", "arguments": { "device": "virtio0" } }
-<- { "return":  {} }
-
-EQMP
-
-    {
-        .name       = "block_job_set_speed",
-        .args_type  = "device:B,value:o",
-        .params     = "device value",
-        .help       = "Set the maximum speed for a background block operation",
-        .user_print = monitor_user_noop,
-        .mhandler.cmd_new = do_block_job_set_speed,
-    },
-
-STEXI
-@item block_job_set_speed @var{device} @var{value}
-@findex block_job_set_speed
-Set the maximum speed for a background block operation.
-ETEXI
-SQMP
-block_job_set_speed
--------------------
-
-Set maximum speed for a background block operation.
-
-This is a per-block device command that can only be issued
-when there is an active block job.
-
-Throttling can be disabled by setting the speed to 0.
-
-Arguments:
-
-- device: device name (json-string)
-- value:  maximum speed, in bytes per second (json-int)
-
-Errors:
-DeviceNotActive: streaming is not active on this device
-NotSupported:    job type does not support speed setting
-
-Example:
-
--> { "execute": "block_job_set_speed",
-    "arguments": { "device": "virtio0", "value": 1024 } }
-
-EQMP
-
-    {
         .name       = "q|quit",
         .args_type  = "",
         .params     = "",
@@ -609,6 +452,21 @@ Example:
 <- { "return": {} }
 
 EQMP
+
+    {
+        .name       = "system_wakeup",
+        .args_type  = "",
+        .params     = "",
+        .help       = "wakeup guest from suspend",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_system_wakeup,
+    },
+
+STEXI
+@item system_wakeup
+@findex system_wakeup
+Wakeup guest from suspend.
+ETEXI
 
     {
         .name       = "gdbserver",
@@ -1333,7 +1191,7 @@ EQMP
         .help       = "send migration info to spice/vnc client",
         .user_print = monitor_user_noop,
         .mhandler.cmd_async = client_migrate_info,
-        .async      = 1,
+        .flags      = MONITOR_CMD_ASYNC,
     },
 
 SQMP
@@ -1384,6 +1242,30 @@ Example:
 
 EQMP
 
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "snapshot_blkdev",
+        .args_type  = "reuse:-n,device:B,snapshot-file:s?,format:s?",
+        .params     = "[-n] device [new-image-file] [format]",
+        .help       = "initiates a live snapshot\n\t\t\t"
+                      "of device. If a new image file is specified, the\n\t\t\t"
+                      "new image file will become the new root image.\n\t\t\t"
+                      "If format is specified, the snapshot file will\n\t\t\t"
+                      "be created in that format. Otherwise the\n\t\t\t"
+                      "snapshot will be internal! (currently unsupported).\n\t\t\t"
+                      "The default format is qcow2.  The -n flag requests QEMU\n\t\t\t"
+                      "to reuse the image found in new-image-file, instead of\n\t\t\t"
+                      "recreating it from scratch.",
+        .mhandler.cmd = hmp_snapshot_blkdev,
+    },
+#endif
+
+STEXI
+@item snapshot_blkdev
+@findex snapshot_blkdev
+Snapshot device, using snapshot file as target if provided
+ETEXI
+
     {
         .name       = "block_resize",
         .args_type  = "device:B,size:o",
@@ -1426,10 +1308,10 @@ EQMP
         .args_type  = "pci_addr:s,opts:s",
         .params     = "[[<domain>:]<bus>:]<slot>\n"
                       "[file=file][,if=type][,bus=n]\n"
-                      "[,unit=m][,media=d][index=i]\n"
+                      "[,unit=m][,media=d][,index=i]\n"
                       "[,cyls=c,heads=h,secs=s[,trans=t]]\n"
-                      "[snapshot=on|off][,cache=on|off]\n"
-                      "[,copy-on-read=on|off][,stream=on|off]",
+                      "[,snapshot=on|off][,cache=on|off]",
+                      "[,readonly=on|off][,copy-on-read=on|off]",
         .help       = "add drive to PCI storage controller",
         .mhandler.cmd = drive_hot_add,
     },
@@ -1602,6 +1484,199 @@ STEXI
 Remove host-to-guest TCP or UDP redirection.
 ETEXI
 
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "transaction",
+        .args_type  = "actions:O",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_transaction,
+    },
+#endif
+
+SQMP
+transaction
+-----------
+
+Atomically operate on one or more block devices, snapshotting them
+or enabling mirrored writes.  If there is any failure performing
+any of the operations, all snapshots for the group are abandoned, and
+the original disks pre-snapshot attempt are used.
+
+Mirrored writes keep the previous image file open, and start writing
+data also to the new file specified in the command.
+
+A list of dictionaries is accepted, that contains the actions to be performed.
+
+For snapshots this is the device, the file to use for the new snapshot,
+and the format.  The default format, if not specified, is qcow2.
+
+Each new snapshot defaults to being created by QEMU (wiping any
+contents if the file already exists), but it is also possible to reuse
+an externally-created file.  In the latter case, you should ensure that
+the new image file has the same contents as the current one; QEMU cannot
+perform any meaningful check.  Typically this is achieved by using the
+current image file as the backing file for the new image.
+
+Arguments:
+
+actions array:
+    - "type": the operation to perform.  The only supported
+      values are "blockdev-snapshot-sync" and "mirror". (json-string)
+    - "data": a dictionary.  The contents depend on the value
+      of "type".  When "type" is "blockdev-snapshot-sync":
+      - "device": device name to snapshot (json-string)
+      - "snapshot-file": name of new image file (json-string)
+      - "format": format of new image (json-string, optional)
+      - "mode": whether and how QEMU should create the snapshot file
+        (NewImageMode, optional, default "absolute-paths")
+      When "type" is "__com.redhat_drive-mirror":
+      - "device": device name to snapshot (json-string)
+      - "target": name of destination image file (json-string)
+      - "format": format of new image (json-string, optional)
+      - "full": whether the mirror should include all images or
+        just the topmost (json-bool)
+      - "mode": how QEMU should look for an existing image file
+        (NewImageMode, optional, default "absolute-paths")
+
+Example:
+
+-> { "execute": "transaction",
+     "arguments": { "actions": [
+         { 'type': 'blockdev-snapshot-sync', 'data' : { "device": "ide-hd0",
+                                         "snapshot-file": "/some/place/my-image",
+                                         "format": "qcow2" } },
+         { 'type': 'blockdev-snapshot-sync', 'data' : { "device": "ide-hd1",
+                                         "snapshot-file": "/some/place/my-image2",
+                                         "mode": "existing",
+                                         "format": "qcow2" } } ] } }
+<- { "return": {} }
+
+EQMP
+
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "blockdev-snapshot-sync",
+        .args_type  = "device:B,snapshot-file:s,mode:s?,format:s?",
+        .params     = "device [new-image-file] [mode] [format]",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_blockdev_snapshot_sync,
+    },
+#endif
+
+SQMP
+blockdev-snapshot-sync
+----------------------
+
+Synchronous snapshot of a block device. snapshot-file specifies the
+target of the new image. If the file exists, or if it is a device, the
+snapshot will be created in the existing file/device. If does not
+exist, a new file will be created. format specifies the format of the
+snapshot image, default is qcow2.
+
+Arguments:
+
+- "device": device name to snapshot (json-string)
+- "snapshot-file": name of new image file (json-string)
+- "mode": whether and how QEMU should create the snapshot file
+  (NewImageMode, optional, default "absolute-paths")
+- "full": whether the whole disk should be copied to the destination,
+  or only the topmost image (json-bool)
+- "format": format of new image (json-string, optional)
+
+Example:
+
+-> { "execute": "blockdev-snapshot", "arguments": { "device": "ide-hd0",
+                                                    "snapshot-file":
+                                                    "/some/place/my-image",
+                                                    "full": false,
+                                                    "format": "qcow2" } }
+<- { "return": {} }
+
+EQMP
+
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "__com.redhat_drive-mirror",
+        .args_type  = "full:-f,device:B,target:s,mode:s?,format:s?,speed:o?",
+        .params     = "device destination-image-file [mode] [format] [speed]",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input___com_redhat_drive_mirror,
+    },
+#endif
+
+SQMP
+__com.redhat_drive-mirror
+-------------------------
+
+Start mirroring a block device's writes to a new destination. target
+specifies the target of the new image. If the file exists, or if it is
+a device, it will be used as the new destination for writes. If does not
+exist, a new file will be created. format specifies the format of the
+mirror image, default is to probe if mode='existing', else qcow2.
+
+Arguments:
+
+- "device": device name to operate on (json-string)
+- "target": name of new image file (json-string)
+- "format": format of new image (json-string, optional)
+- "speed": the maximum speed, in bytes per second (json-int, optional)
+- "mode": how an image file should be created into the target
+  file/device (NewImageMode, optional, default 'absolute-paths')
+- "full": whether the whole disk should be copied to the destination,
+  or only the topmost image (json-bool)
+
+Example:
+
+-> { "execute": "__com.redhat_drive-mirror", "arguments": { "device": "ide-hd0",
+                                               "target": "/some/place/my-image",
+                                               "format": "qcow2" } }
+<- { "return": {} }
+
+EQMP
+
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "__com.redhat_drive-reopen",
+        .args_type  = "device:B,new-image-file:s,format:s?,witness:s?",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input___com_redhat_drive_reopen,
+    },
+#endif
+
+SQMP
+__com.redhat_drive-reopen
+-------------------------
+
+Assigns a new image file to a device. Except extremely rare cases where the
+guest is expecting the drive to change its content, the new image should
+contain the same data of the current one.  One use case is to terminate
+a __com.redhat-drive-mirror command.
+
+The command can optionally write a single byte to a file descriptor name
+that was passed via SCM rights (getfd).  QEMU will write a single byte
+to this file descriptor before completing the command successfully.
+If the byte is not written to the file, it is guaranteed that the
+guest has not issued any I/O to the new image.  Failure to write the
+byte is fatal just like failure to open the new image, and will cause
+the guest to revert to the currently open file.
+
+
+Arguments:
+
+- "device": device name to operate on (json-string)
+- "new-image-file": name of new image file (json-string)
+- "format": format of new image (json-string, optional)
+- "witness": file descriptor previously passed via SCM rights (json-string, optional)
+
+Example:
+
+-> { "execute": "__com.redhat_drive-reopen", "arguments": {"device": "ide-hd0",
+                                    "new-image-file": "/some/place/my-image",
+                                    "format": "qcow2" } }
+<- { "return": {} }
+
+EQMP
+
     {
         .name       = "balloon",
         .args_type  = "value:M",
@@ -1609,7 +1684,7 @@ ETEXI
         .help       = "request VM to change its memory allocation (in MB)",
         .user_print = monitor_user_noop,
         .mhandler.cmd_async = do_balloon,
-        .async      = 1,
+        .flags      = MONITOR_CMD_ASYNC,
     },
 
 STEXI
@@ -1946,7 +2021,7 @@ EQMP
         .help       = "send migration info to spice client",
 	.user_print = monitor_user_noop,
         .mhandler.cmd_async = redhat_spice_migrate_info,
-        .async      = 1,
+        .flags      = MONITOR_CMD_ASYNC,
     },
 
 
@@ -2061,6 +2136,7 @@ Arguments:
 - "werror": What to do on write error (json-string, optional)
 - "serial": Drive serial number (json-string, optional)
 - "snapshot": Enable snapshot mode (json-bool, optional)
+- "copy-on-read": Enable copy-on-read mode (json-bool, optional)
 
 Example:
 
@@ -2075,6 +2151,141 @@ Example:
      "arguments": { "id": "bar", "file": "tmp.qcow2", "format": "qcow2" } }
 <- {"return": {}}
 
+EQMP
+
+#ifdef CONFIG_BLOCK_STREAM
+    {
+        .name       = "block-stream",
+        .args_type  = "device:B,speed:o?,base:s?",
+        .params     = "device [speed [base]]",
+        .help       = "background copy backing file into a block device",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_stream,
+    },
+#endif
+
+SQMP
+block-stream
+------------
+
+Copy data from a backing file into a block device.
+
+The block streaming operation is performed in the background until the entire
+backing file has been copied.  This command returns immediately once streaming
+has started.  The status of ongoing block streaming operations can be checked
+with query-block-jobs.  The operation can be stopped before it has completed
+using the block-job-cancel command.
+
+If a base file is specified then sectors are not copied from that base file and
+its backing chain.  When streaming completes the image file will have the base
+file as its backing file.  This can be used to stream a subset of the backing
+file chain instead of flattening the entire image.
+
+On successful completion the image file is updated to drop the backing file
+and the BLOCK_JOB_COMPLETED event is emitted.
+
+Arguments:
+
+- device: the device name (json-string)
+- speed:  the rate limit, bytes per second (json-int, optional)
+- base:   the common backing file name (json-string, optional)
+
+Returns:
+
+Nothing on success.
+If streaming is already active on this device, DeviceInUse.
+If device does not exist, DeviceNotFound.
+If image streaming is not supported by this device, NotSupported.
+If base does not exist, BaseNotFound
+
+EQMP
+
+    {
+        .name       = "block-job-set-speed",
+        .args_type  = "device:B,speed:o",
+        .params     = "device speed",
+        .help       = "set maximum speed for a background block operation",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_job_set_speed,
+    },
+
+STEXI
+@item block-job-set-speed
+@findex block-job-set-speed
+Set maximum speed for a background block operation.
+ETEXI
+
+SQMP
+block-job-set-speed
+-------------------
+
+Set maximum speed for a background block operation.
+
+This command can only be issued when there is an active block job.
+
+Throttling can be disabled by setting the speed to 0.
+
+Arguments:
+
+- device: the device name
+- value:  the maximum speed, in bytes per second
+
+Returns:
+
+Nothing on success
+If the job type does not support throttling, NotSupported
+If streaming is not active on this device, DeviceNotActive
+
+Example:
+
+-> { "execute": "block-job-set-speed",
+    "arguments": { "device": "virtio0", "value": 1024 } }
+EQMP
+
+    {
+        .name       = "block-job-cancel",
+        .args_type  = "device:B",
+        .params     = "device",
+        .help       = "stop an active block streaming operation",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_job_cancel,
+    },
+
+STEXI
+@item block-job-cancel
+@findex block-job-cancel
+Stop an active block streaming operation.
+ETEXI
+
+SQMP
+block-job-cancel
+----------------
+
+Stop an active block streaming operation.
+
+This command returns immediately after marking the active block streaming
+operation for cancellation.  It is an error to call this command if no
+operation is in progress.
+
+The operation will cancel as soon as possible and then emit the
+BLOCK_JOB_CANCELLED event.  Before that happens the job is still visible when
+enumerated using query-block-jobs.
+
+The image file retains its backing file unless the streaming operation happens
+to complete just as it is being cancelled.
+
+A new block streaming operation can be started at a later time to finish
+copying all data from the backing file.
+
+Arguments:
+
+- device: the device name
+
+Returns:
+
+Nothing on success
+If streaming is not active on this device, DeviceNotActive
+If cancellation already in progress, DeviceInUse
 EQMP
 
 HXCOMM Keep the 'info' command at the end!
@@ -2244,6 +2455,10 @@ Each json-object contain the following:
                                 "tftp", "vdi", "vmdk", "vpc", "vvfat"
          - "backing_file": backing file name (json-string, optional)
          - "encrypted": true if encrypted, false otherwise (json-bool)
+- "io-status": I/O operation status, only present if the device supports it
+               and the VM is configured to stop on errors. It's always reset
+               to "ok" when the "cont" command is issued (json_string, optional)
+             - Possible values: "ok", "failed", "nospace"
 
 Example:
 
@@ -2251,6 +2466,7 @@ Example:
 <- {
       "return":[
          {
+            "io-status": "ok",
             "device":"ide0-hd0",
             "locked":false,
             "removable":false,
@@ -2263,6 +2479,7 @@ Example:
             "type":"unknown"
          },
          {
+            "io-status": "ok",
             "device":"ide1-cd0",
             "locked":false,
             "removable":true,
@@ -2896,41 +3113,26 @@ show qdev device model list
 @item info roms
 show roms
 @item info block-jobs
-show progress of background block device operations
-@end table
+show long-running block device operations
 ETEXI
 
 SQMP
 query-block-jobs
 ----------------
 
-Show progress of ongoing block device operations.
+Return a list of block job objects for each active block job containing the
+following fields:
 
-Return a json-array of all block device operations.  If no operation is
-active then return an empty array.  Each operation is a json-object with the
-following data:
-
-- type:     job type ("stream" for image streaming, json-string)
-- device:   device name (json-string)
-- end:      maximum progress value (json-int)
-- position: current progress value (json-int)
-- speed:    rate limit, bytes per second (json-int)
-
-Progress can be observed as position increases and it reaches end when
-the operation completes.  Position and end have undefined units but can be
-used to calculate a percentage indicating the progress that has been made.
-
-Example:
-
--> { "execute": "query-block-jobs" }
-<- { "return":[
-      { "type": "stream", "device": "virtio0",
-        "end": 10737418240, "position": 709632,
-        "speed": 0 }
-   ]
- }
-
+- type: the job type (json-string, 'stream' for image streaming)
+- device: the block device name (json-string)
+- len: the maximum progress value (json-int)
+- offset: the current progress value (json-int)
+- speed: the rate limit, bytes per second (json-int)
 EQMP
+
+STEXI
+@end table
+ETEXI
 
 HXCOMM DO NOT add new commands after 'info', move your addition before it!
 

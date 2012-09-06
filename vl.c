@@ -294,7 +294,6 @@ static int icount_time_shift;
 static int64_t qemu_icount_bias;
 static QEMUTimer *icount_rt_timer;
 static QEMUTimer *icount_vm_timer;
-static QEMUTimer *nographic_timer;
 
 uint8_t qemu_uuid[16];
 
@@ -553,7 +552,7 @@ static void check_mode_change(void)
 
     if (is_absolute != current_is_absolute ||
         has_absolute != current_has_absolute) {
-        notifier_list_notify(&mouse_mode_notifiers);
+        notifier_list_notify(&mouse_mode_notifiers, NULL);
     }
 
     current_is_absolute = is_absolute;
@@ -623,6 +622,9 @@ void qemu_remove_led_event_handler(QEMUPutLEDEntry *entry)
 
 void kbd_put_keycode(int keycode)
 {
+    if (!runstate_is_running()) {
+        return;
+    }
     if (qemu_put_kbd_event) {
         qemu_put_kbd_event(qemu_put_kbd_event_opaque, keycode);
     }
@@ -650,6 +652,9 @@ void kbd_mouse_event(int dx, int dy, int dz, int buttons_state)
     void *mouse_event_opaque;
     int width;
 
+    if (!runstate_is_running()) {
+        return;
+    }
     if (QTAILQ_EMPTY(&mouse_handlers)) {
         return;
     }
@@ -967,6 +972,9 @@ void cpu_disable_ticks(void)
 struct QEMUClock {
     int type;
     /* XXX: add frequency */
+
+    NotifierList reset_notifiers;
+    int64_t last;
 };
 
 struct QEMUTimer {
@@ -1200,8 +1208,14 @@ static QEMUTimer *active_timers[QEMU_NUM_CLOCKS];
 static QEMUClock *qemu_new_clock(int type)
 {
     QEMUClock *clock;
+
     clock = qemu_mallocz(sizeof(QEMUClock));
     clock->type = type;
+    notifier_list_init(&clock->reset_notifiers);
+    /* required to detect & report backward jumps */
+    if (type == QEMU_CLOCK_HOST) {
+        clock->last = get_clock_realtime();
+    }
     return clock;
 }
 
@@ -1312,6 +1326,8 @@ static void qemu_run_timers(QEMUTimer **ptimer_head, int64_t current_time)
 
 int64_t qemu_get_clock(QEMUClock *clock)
 {
+    int64_t now, last;
+
     switch(clock->type) {
     case QEMU_CLOCK_REALTIME:
         return get_clock() / 1000000;
@@ -1323,8 +1339,24 @@ int64_t qemu_get_clock(QEMUClock *clock)
             return cpu_get_clock();
         }
     case QEMU_CLOCK_HOST:
-        return get_clock_realtime();
+        now = get_clock_realtime();
+        last = clock->last;
+        clock->last = now;
+        if (now < last) {
+            notifier_list_notify(&clock->reset_notifiers, &now);
+        }
+        return now;
     }
+}
+
+void qemu_register_clock_reset_notifier(QEMUClock *clock, Notifier *notifier)
+{
+    notifier_list_add(&clock->reset_notifiers, notifier);
+}
+
+void qemu_unregister_clock_reset_notifier(QEMUClock *clock, Notifier *notifier)
+{
+    notifier_list_remove(&clock->reset_notifiers, notifier);
 }
 
 static void init_clocks(void)
@@ -2332,8 +2364,8 @@ char *get_boot_devices_list(uint32_t *size)
         } else if (devpath) {
             bootpath = devpath;
         } else {
+            assert(i->suffix);
             bootpath = qemu_strdup(i->suffix);
-            assert(bootpath);
         }
 
         if (total) {
@@ -2432,19 +2464,13 @@ static void smp_parse(const char *optarg)
         threads = threads > 0 ? threads : 1;
         if (smp == 0) {
             smp = cores * threads * sockets;
-        } else {
-            sockets = smp / (cores * threads);
         }
     } else {
         if (cores == 0) {
             threads = threads > 0 ? threads : 1;
             cores = smp / (sockets * threads);
         } else {
-            if (sockets == 0) {
-                sockets = smp / (cores * threads);
-            } else {
-                threads = smp / (cores * sockets);
-            }
+            threads = smp / (cores * sockets);
         }
     }
     smp_cpus = smp;
@@ -2715,85 +2741,6 @@ int qemu_set_fd_handler(int fd,
     return qemu_set_fd_handler2(fd, NULL, fd_read, fd_write, opaque);
 }
 
-#ifdef _WIN32
-/***********************************************************/
-/* Polling handling */
-
-typedef struct PollingEntry {
-    PollingFunc *func;
-    void *opaque;
-    struct PollingEntry *next;
-} PollingEntry;
-
-static PollingEntry *first_polling_entry;
-
-int qemu_add_polling_cb(PollingFunc *func, void *opaque)
-{
-    PollingEntry **ppe, *pe;
-    pe = qemu_mallocz(sizeof(PollingEntry));
-    pe->func = func;
-    pe->opaque = opaque;
-    for(ppe = &first_polling_entry; *ppe != NULL; ppe = &(*ppe)->next);
-    *ppe = pe;
-    return 0;
-}
-
-void qemu_del_polling_cb(PollingFunc *func, void *opaque)
-{
-    PollingEntry **ppe, *pe;
-    for(ppe = &first_polling_entry; *ppe != NULL; ppe = &(*ppe)->next) {
-        pe = *ppe;
-        if (pe->func == func && pe->opaque == opaque) {
-            *ppe = pe->next;
-            qemu_free(pe);
-            break;
-        }
-    }
-}
-
-/***********************************************************/
-/* Wait objects support */
-typedef struct WaitObjects {
-    int num;
-    HANDLE events[MAXIMUM_WAIT_OBJECTS + 1];
-    WaitObjectFunc *func[MAXIMUM_WAIT_OBJECTS + 1];
-    void *opaque[MAXIMUM_WAIT_OBJECTS + 1];
-} WaitObjects;
-
-static WaitObjects wait_objects = {0};
-
-int qemu_add_wait_object(HANDLE handle, WaitObjectFunc *func, void *opaque)
-{
-    WaitObjects *w = &wait_objects;
-
-    if (w->num >= MAXIMUM_WAIT_OBJECTS)
-        return -1;
-    w->events[w->num] = handle;
-    w->func[w->num] = func;
-    w->opaque[w->num] = opaque;
-    w->num++;
-    return 0;
-}
-
-void qemu_del_wait_object(HANDLE handle, WaitObjectFunc *func, void *opaque)
-{
-    int i, found;
-    WaitObjects *w = &wait_objects;
-
-    found = 0;
-    for (i = 0; i < w->num; i++) {
-        if (w->events[i] == handle)
-            found = 1;
-        if (found) {
-            w->events[i] = w->events[i + 1];
-            w->func[i] = w->func[i + 1];
-            w->opaque[i] = w->opaque[i + 1];
-        }
-    }
-    if (found)
-        w->num--;
-}
-#endif
 
 /***********************************************************/
 /* ram save/restore */
@@ -2827,7 +2774,7 @@ static int ram_save_block(QEMUFile *f)
     RAMBlock *block = last_block;
     ram_addr_t offset = last_offset;
     ram_addr_t current_addr;
-    int found = 0;
+    int bytes_sent = 0;
 
     if (!block)
         block = QLIST_FIRST(&ram_list.blocks);
@@ -2862,6 +2809,7 @@ static int ram_save_block(QEMUFile *f)
                                     strlen(block->idstr));
                 }
                 qemu_put_byte(f, *p);
+                bytes_sent = 1;
             } else {
                 qemu_put_be64(f, offset | cont | RAM_SAVE_FLAG_PAGE);
                 if (!cont) {
@@ -2870,9 +2818,9 @@ static int ram_save_block(QEMUFile *f)
                                     strlen(block->idstr));
                 }
                 qemu_put_buffer(f, p, TARGET_PAGE_SIZE);
+                bytes_sent = TARGET_PAGE_SIZE;
             }
 
-            found = 1;
             break;
         }
 
@@ -2891,7 +2839,7 @@ static int ram_save_block(QEMUFile *f)
     last_block = block;
     last_offset = offset;
 
-    return found;
+    return bytes_sent;
 }
 
 static uint64_t bytes_transferred;
@@ -2974,9 +2922,11 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 
     i = 0;
     while ((ret = qemu_file_rate_limit(f)) == 0) {
-        ret = ram_save_block(f);
-        bytes_transferred += ret * TARGET_PAGE_SIZE;
-        if (ret == 0) /* no more blocks */
+        int bytes_sent;
+
+        bytes_sent = ram_save_block(f);
+        bytes_transferred += bytes_sent;
+        if (bytes_sent == 0) /* no more blocks */
             break;
        /* we want to check in the 1st loop, just in case it was the 1st time
            and we had to sync the dirty bitmap.
@@ -2985,7 +2935,7 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
        */
         if ((i & 63) == 0) {
             uint64_t t1 = (get_clock() - t0) / 1000000;
-            if (t1 > 50000000) { /* 50 ms */
+            if (t1 > 50) { /* 50 ms */
                break;
             }
         }
@@ -2997,7 +2947,7 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     }
 
     t0 = get_clock() - t0;
-    bwidth = (bytes_transferred - bytes_transferred_last) / t0;
+    bwidth = ((double)bytes_transferred - bytes_transferred_last) / t0;
 
     /* if we haven't transferred anything this round, force expected_time to a
      * a very high value, but without crashing */
@@ -3006,9 +2956,11 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 
     /* try transferring iterative blocks of memory */
     if (stage == 3) {
+        int bytes_sent;
+
         /* flush all remaining blocks regardless of rate limiting */
-        while (ram_save_block(f) != 0) {
-            bytes_transferred += TARGET_PAGE_SIZE;
+        while ((bytes_sent = ram_save_block(f)) != 0) {
+            bytes_transferred += bytes_sent;
         }
         cpu_physical_memory_set_dirty_tracking(0);
     }
@@ -3211,13 +3163,6 @@ static void gui_update(void *opaque)
     qemu_mod_timer(ds->gui_timer, interval + qemu_get_clock(rt_clock));
 }
 
-static void nographic_update(void *opaque)
-{
-    uint64_t interval = GUI_REFRESH_INTERVAL;
-
-    qemu_mod_timer(nographic_timer, interval + qemu_get_clock(rt_clock));
-}
-
 struct vm_change_state_entry {
     VMChangeStateHandler *cb;
     void *opaque;
@@ -3256,9 +3201,6 @@ static void vm_state_notify(int running, RunState state)
     }
 }
 
-static void resume_all_vcpus(void);
-static void pause_all_vcpus(void);
-
 void vm_start(void)
 {
     if (!runstate_is_running()) {
@@ -3286,6 +3228,13 @@ static int shutdown_requested, shutdown_signal = -1;
 static pid_t shutdown_pid;
 static int powerdown_requested;
 static int debug_requested;
+static int suspend_requested;
+static bool is_suspended;
+static NotifierList suspend_notifiers =
+    NOTIFIER_LIST_INITIALIZER(suspend_notifiers);
+static NotifierList wakeup_notifiers =
+    NOTIFIER_LIST_INITIALIZER(wakeup_notifiers);
+static uint32_t wakeup_reason_mask = ~0;
 static int vmstop_requested = RUN_STATE_NO_STATE;
 
 int qemu_no_shutdown(void)
@@ -3321,6 +3270,13 @@ int qemu_reset_requested(void)
 {
     int r = reset_requested;
     reset_requested = 0;
+    return r;
+}
+
+int qemu_suspend_requested(void)
+{
+    int r = suspend_requested;
+    suspend_requested = 0;
     return r;
 }
 
@@ -3401,6 +3357,66 @@ void qemu_system_reset_request(void)
         cpu_exit(cpu_single_env);
     }
     qemu_notify_event();
+}
+
+void qemu_system_suspend(void)
+{
+    pause_all_vcpus();
+    notifier_list_notify(&suspend_notifiers, NULL);
+    monitor_protocol_event(QEVENT_SUSPEND, NULL);
+    is_suspended = true;
+}
+
+void qemu_system_suspend_request(void)
+{
+    if (is_suspended) {
+        return;
+    }
+    suspend_requested = 1;
+    if (cpu_single_env) {
+        cpu_single_env->stopped = 1;
+        cpu_exit(cpu_single_env);
+    }
+    qemu_notify_event();
+}
+
+void qemu_register_suspend_notifier(Notifier *notifier)
+{
+    notifier_list_add(&suspend_notifiers, notifier);
+}
+
+void qemu_unregister_suspend_notifier(Notifier *notifier)
+{
+    notifier_list_remove(&suspend_notifiers, notifier);
+}
+
+void qemu_system_wakeup_request(WakeupReason reason)
+{
+    if (!is_suspended) {
+        return;
+    }
+    if (!(wakeup_reason_mask & (1 << reason))) {
+        return;
+    }
+    monitor_protocol_event(QEVENT_WAKEUP, NULL);
+    notifier_list_notify(&wakeup_notifiers, &reason);
+    reset_requested = 1;
+    qemu_notify_event();
+    is_suspended = false;
+}
+
+void qemu_system_wakeup_enable(WakeupReason reason, bool enabled)
+{
+    if (enabled) {
+        wakeup_reason_mask |= (1 << reason);
+    } else {
+        wakeup_reason_mask &= ~(1 << reason);
+    }
+}
+
+void qemu_register_wakeup_notifier(Notifier *notifier)
+{
+    notifier_list_add(&wakeup_notifiers, notifier);
 }
 
 void qemu_system_killed(int signal, pid_t pid)
@@ -3548,14 +3564,14 @@ int qemu_cpu_self(void *env)
     return 1;
 }
 
-static void resume_all_vcpus(void)
+void resume_all_vcpus(void)
 {
     if (kvm_allowed) {
         kvm_resume_all_threads();
     }
 }
 
-static void pause_all_vcpus(void)
+void pause_all_vcpus(void)
 {
     if (kvm_allowed) {
         kvm_pause_all_threads();
@@ -3821,7 +3837,7 @@ static int all_vcpus_paused(void)
     return 1;
 }
 
-static void pause_all_vcpus(void)
+void pause_all_vcpus(void)
 {
     CPUState *penv = first_cpu;
 
@@ -3842,7 +3858,7 @@ static void pause_all_vcpus(void)
     }
 }
 
-static void resume_all_vcpus(void)
+void resume_all_vcpus(void)
 {
     CPUState *penv = first_cpu;
 
@@ -3924,56 +3940,6 @@ void vm_stop(RunState reason)
 #endif
 
 
-#ifdef _WIN32
-static void host_main_loop_wait(int *timeout)
-{
-    int ret, ret2, i;
-    PollingEntry *pe;
-
-
-    /* XXX: need to suppress polling by better using win32 events */
-    ret = 0;
-    for(pe = first_polling_entry; pe != NULL; pe = pe->next) {
-        ret |= pe->func(pe->opaque);
-    }
-    if (ret == 0) {
-        int err;
-        WaitObjects *w = &wait_objects;
-
-        ret = WaitForMultipleObjects(w->num, w->events, FALSE, *timeout);
-        if (WAIT_OBJECT_0 + 0 <= ret && ret <= WAIT_OBJECT_0 + w->num - 1) {
-            if (w->func[ret - WAIT_OBJECT_0])
-                w->func[ret - WAIT_OBJECT_0](w->opaque[ret - WAIT_OBJECT_0]);
-
-            /* Check for additional signaled events */
-            for(i = (ret - WAIT_OBJECT_0 + 1); i < w->num; i++) {
-
-                /* Check if event is signaled */
-                ret2 = WaitForSingleObject(w->events[i], 0);
-                if(ret2 == WAIT_OBJECT_0) {
-                    if (w->func[i])
-                        w->func[i](w->opaque[i]);
-                } else if (ret2 == WAIT_TIMEOUT) {
-                } else {
-                    err = GetLastError();
-                    fprintf(stderr, "WaitForSingleObject error %d %d\n", i, err);
-                }
-            }
-        } else if (ret == WAIT_TIMEOUT) {
-        } else {
-            err = GetLastError();
-            fprintf(stderr, "WaitForMultipleObjects error %d %d\n", ret, err);
-        }
-    }
-
-    *timeout = 0;
-}
-#else
-static void host_main_loop_wait(int *timeout)
-{
-}
-#endif
-
 void main_loop_wait(int timeout)
 {
     IOHandlerRecord *ioh;
@@ -3983,7 +3949,7 @@ void main_loop_wait(int timeout)
 
     qemu_bh_update_timeout(&timeout);
 
-    host_main_loop_wait(&timeout);
+    os_host_main_loop_wait(&timeout);
 
     /* poll any events */
     /* XXX: separate device handlers from system ones */
@@ -4221,6 +4187,8 @@ static int vm_can_run(void)
         return 0;
     if (debug_requested)
         return 0;
+    if (suspend_requested)
+        return 0;
     return 1;
 }
 
@@ -4260,6 +4228,9 @@ static void main_loop(void)
 
         if (qemu_debug_requested()) {
             vm_stop(RUN_STATE_DEBUG);
+        }
+        if (qemu_suspend_requested()) {
+            qemu_system_suspend();
         }
         if (qemu_shutdown_requested()) {
             monitor_protocol_event(QEVENT_SHUTDOWN, NULL);
@@ -4312,7 +4283,7 @@ static void help(int exitcode)
 #define DEF(option, opt_arg, opt_enum, opt_help)        \
            opt_help
 #define DEFHEADING(text) stringify(text) "\n"
-#include "qemu-options.h"
+#include "qemu-options.def"
 #undef DEF
 #undef DEFHEADING
 #undef GEN_DOCS
@@ -4342,7 +4313,7 @@ enum {
 #define DEF(option, opt_arg, opt_enum, opt_help)        \
     opt_enum,
 #define DEFHEADING(text)
-#include "qemu-options.h"
+#include "qemu-options.def"
 #undef DEF
 #undef DEFHEADING
 #undef GEN_DOCS
@@ -4359,7 +4330,7 @@ static const QEMUOption qemu_options[] = {
 #define DEF(option, opt_arg, opt_enum, opt_help)        \
     { option, opt_arg, opt_enum },
 #define DEFHEADING(text)
-#include "qemu-options.h"
+#include "qemu-options.def"
 #undef DEF
 #undef DEFHEADING
 #undef GEN_DOCS
@@ -4570,13 +4541,6 @@ static int balloon_parse(const char *arg)
 }
 #endif
 
-#ifdef _WIN32
-static BOOL WINAPI qemu_ctrl_handler(DWORD type)
-{
-    exit(STATUS_CONTROL_C_EXIT);
-    return TRUE;
-}
-#endif
 
 int qemu_uuid_parse(const char *str, uint8_t *uuid)
 {
@@ -4842,6 +4806,7 @@ struct device_config {
         DEV_SERIAL,    /* -serial        */
         DEV_PARALLEL,  /* -parallel      */
         DEV_VIRTCON,   /* -virtioconsole */
+        DEV_DEBUGCON,  /* -debugcon */
     } type;
     const char *cmdline;
     QTAILQ_ENTRY(device_config) next;
@@ -4949,6 +4914,23 @@ static int virtcon_parse(const char *devname)
     return 0;
 }
 
+static int debugcon_parse(const char *devname)
+{   
+    QemuOpts *opts;
+
+    if (!qemu_chr_open("debugcon", devname, NULL)) {
+        exit(1);
+    }
+    opts = qemu_opts_create(&qemu_device_opts, "debugcon", 1);
+    if (!opts) {
+        fprintf(stderr, "qemu: already have a debugcon device\n");
+        exit(1);
+    }
+    qemu_opt_set(opts, "driver", "isa-debugcon");
+    qemu_opt_set(opts, "chardev", "debugcon");
+    return 0;
+}
+
 void qemu_add_machine_init_done_notifier(Notifier *notify)
 {
     notifier_list_add(&machine_init_done_notifiers, notify);
@@ -4956,7 +4938,7 @@ void qemu_add_machine_init_done_notifier(Notifier *notify)
 
 static void qemu_run_machine_init_done_notifiers(void)
 {
-    notifier_list_notify(&machine_init_done_notifiers);
+    notifier_list_notify(&machine_init_done_notifiers, NULL);
 }
 
 void qemu_add_exit_notifier(Notifier *notify)
@@ -4971,7 +4953,7 @@ void qemu_remove_exit_notifier(Notifier *notify)
 
 static void qemu_run_exit_notifiers(void)
 {
-    notifier_list_notify(&exit_notifiers);
+    notifier_list_notify(&exit_notifiers, NULL);
 }
 
 static const QEMUOption *lookup_opt(int argc, char **argv,
@@ -5059,35 +5041,7 @@ int main(int argc, char **argv, char **envp)
     qemu_cache_utils_init(envp);
 
     QLIST_INIT (&vm_change_state_head);
-#ifndef _WIN32
-    {
-        struct sigaction act;
-        sigfillset(&act.sa_mask);
-        act.sa_flags = 0;
-        act.sa_handler = SIG_IGN;
-        sigaction(SIGPIPE, &act, NULL);
-    }
-#else
-    SetConsoleCtrlHandler(qemu_ctrl_handler, TRUE);
-    /* Note: cpu_interrupt() is currently not SMP safe, so we force
-       QEMU to run on a single CPU */
-    {
-        HANDLE h;
-        DWORD mask, smask;
-        int i;
-        h = GetCurrentProcess();
-        if (GetProcessAffinityMask(h, &mask, &smask)) {
-            for(i = 0; i < 32; i++) {
-                if (mask & (1 << i))
-                    break;
-            }
-            if (i != 32) {
-                mask = 1 << i;
-                SetProcessAffinityMask(h, mask);
-            }
-        }
-    }
-#endif
+    os_setup_early_signal_handling();
 
     module_call_init(MODULE_INIT_MACHINE);
     machine = find_default_machine();
@@ -5262,7 +5216,9 @@ int main(int argc, char **argv, char **envp)
                           HD_OPTS);
                 break;
             case QEMU_OPTION_drive:
-                drive_def(optarg);
+                if (drive_def(optarg) == NULL) {
+                    exit(1);
+                }
 	        break;
             case QEMU_OPTION_set:
                 if (qemu_set_option(optarg) != 0)
@@ -5629,6 +5585,9 @@ int main(int argc, char **argv, char **envp)
                 if (strncmp(optarg, "mon:", 4) == 0) {
                     default_monitor = 0;
                 }
+                break;
+            case QEMU_OPTION_debugcon:
+                add_device_config(DEV_DEBUGCON, optarg);
                 break;
 	    case QEMU_OPTION_loadvm:
 		loadvm = optarg;
@@ -6239,6 +6198,8 @@ int main(int argc, char **argv, char **envp)
         exit(1);
     if (foreach_device_config(DEV_VIRTCON, virtcon_parse) < 0)
         exit(1);
+    if (foreach_device_config(DEV_DEBUGCON, debugcon_parse) < 0)
+        exit(1);
 
     module_call_init(MODULE_INIT_DEVICE);
 
@@ -6351,10 +6312,6 @@ int main(int argc, char **argv, char **envp)
             qemu_mod_timer(ds->gui_timer, qemu_get_clock(rt_clock));
         }
         dcl = dcl->next;
-    }
-    if (ds->gui_timer == NULL) {
-        nographic_timer = qemu_new_timer(rt_clock, nographic_update, NULL);
-        qemu_mod_timer(nographic_timer, qemu_get_clock(rt_clock));
     }
     text_consoles_set_display(ds);
 

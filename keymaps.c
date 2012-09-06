@@ -52,10 +52,33 @@ static void add_to_key_range(struct key_range **krp, int code) {
 	}
     }
     if (kr == NULL) {
-	kr = qemu_mallocz(sizeof(*kr));
+	kr = g_malloc0(sizeof(*kr));
         kr->start = kr->end = code;
         kr->next = *krp;
         *krp = kr;
+    }
+}
+
+static void add_keysym(char *line, int keysym, int keycode, kbd_layout_t *k) {
+    if (keysym < MAX_NORMAL_KEYCODE) {
+	//fprintf(stderr,"Setting keysym %s (%d) to %d\n",line,keysym,keycode);
+	k->keysym2keycode[keysym] = keycode;
+    } else {
+	if (k->extra_count >= MAX_EXTRA_COUNT) {
+	    fprintf(stderr,
+		    "Warning: Could not assign keysym %s (0x%x) because of memory constraints.\n",
+		    line, keysym);
+	} else {
+#if 0
+	    fprintf(stderr, "Setting %d: %d,%d\n",
+		    k->extra_count, keysym, keycode);
+#endif
+	    k->keysym2keycode_extra[k->extra_count].
+		keysym = keysym;
+	    k->keysym2keycode_extra[k->extra_count].
+		keycode = keycode;
+	    k->extra_count++;
+	}
     }
 }
 
@@ -69,15 +92,17 @@ static kbd_layout_t *parse_keyboard_layout(const name2keysym_t *table,
     int len;
 
     filename = qemu_find_file(QEMU_FILE_TYPE_KEYMAP, language);
-
-    if (!k)
-	k = qemu_mallocz(sizeof(kbd_layout_t));
-    if (!(filename && (f = fopen(filename, "r")))) {
+    f = filename ? fopen(filename, "r") : NULL;
+    g_free(filename);
+    if (!f) {
 	fprintf(stderr,
 		"Could not read keymap file: '%s'\n", language);
 	return NULL;
     }
-    qemu_free(filename);
+
+    if (!k)
+	k = g_malloc0(sizeof(kbd_layout_t));
+
     for(;;) {
 	if (fgets(line, 1024, f) == NULL)
             break;
@@ -111,27 +136,22 @@ static kbd_layout_t *parse_keyboard_layout(const name2keysym_t *table,
 			//fprintf(stderr, "keypad keysym %04x keycode %d\n", keysym, keycode);
 		    }
 
-		    /* if(keycode&0x80)
-		       keycode=(keycode<<8)^0x80e0; */
-		    if (keysym < MAX_NORMAL_KEYCODE) {
-			//fprintf(stderr,"Setting keysym %s (%d) to %d\n",line,keysym,keycode);
-			k->keysym2keycode[keysym] = keycode;
-		    } else {
-			if (k->extra_count >= MAX_EXTRA_COUNT) {
-			    fprintf(stderr,
-				    "Warning: Could not assign keysym %s (0x%x) because of memory constraints.\n",
-				    line, keysym);
-			} else {
-#if 0
-			    fprintf(stderr, "Setting %d: %d,%d\n",
-				    k->extra_count, keysym, keycode);
-#endif
-			    k->keysym2keycode_extra[k->extra_count].
-				keysym = keysym;
-			    k->keysym2keycode_extra[k->extra_count].
-				keycode = keycode;
-			    k->extra_count++;
-			}
+		    if (rest && strstr(rest, "shift"))
+			keycode |= SCANCODE_SHIFT;
+		    if (rest && strstr(rest, "altgr"))
+			keycode |= SCANCODE_ALTGR;
+		    if (rest && strstr(rest, "ctrl"))
+			keycode |= SCANCODE_CTRL;
+
+		    add_keysym(line, keysym, keycode, k);
+
+		    if (rest && strstr(rest, "addupper")) {
+			char *c;
+			for (c = line; *c; c++)
+			    *c = toupper(*c);
+			keysym = get_keysym(table, line);
+			if (keysym)
+			    add_keysym(line, keysym, keycode | SCANCODE_SHIFT, k);
 		    }
 		}
 	    }

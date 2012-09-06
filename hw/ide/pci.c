@@ -53,7 +53,7 @@ void bmdma_cmd_writeb(void *opaque, uint32_t addr, uint32_t val)
 	 * aio operation with preadv/pwritev.
 	 */
 	if (bm->aiocb) {
-		qemu_aio_flush();
+		bdrv_drain_all();
 		if (bm->aiocb)
 			printf("ide_dma_cancel: aiocb still pending\n");
 		if (bm->status & BM_STATUS_DMAING)

@@ -407,7 +407,7 @@ static bool vmstate_xsave_needed(void *opaque)
 }
 
 static const VMStateDescription vmstate_xsave ={
-    .name = "xsave",
+    .name = "cpu/xsave",
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,

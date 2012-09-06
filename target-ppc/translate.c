@@ -8920,7 +8920,7 @@ void cpu_dump_statistics (CPUState *env, FILE*f,
                         if (handler->count == 0)
                             continue;
                         cpu_fprintf(f, "%02x %02x %02x (%02x %04d) %16s: "
-                                    "%016llx %lld\n",
+                                    "%016" PRIx64 " %" PRId64 "\n",
                                     op1, op2, op3, op1, (op3 << 5) | op2,
                                     handler->oname,
                                     handler->count, handler->count);
@@ -8929,7 +8929,7 @@ void cpu_dump_statistics (CPUState *env, FILE*f,
                     if (handler->count == 0)
                         continue;
                     cpu_fprintf(f, "%02x %02x    (%02x %04d) %16s: "
-                                "%016llx %lld\n",
+                                "%016" PRIx64 " %" PRId64 "\n",
                                 op1, op2, op1, op2, handler->oname,
                                 handler->count, handler->count);
                 }
@@ -8937,7 +8937,8 @@ void cpu_dump_statistics (CPUState *env, FILE*f,
         } else {
             if (handler->count == 0)
                 continue;
-            cpu_fprintf(f, "%02x       (%02x     ) %16s: %016llx %lld\n",
+            cpu_fprintf(f, "%02x       (%02x     ) %16s: %016" PRIx64
+                        " %" PRId64 "\n",
                         op1, op1, handler->oname,
                         handler->count, handler->count);
         }

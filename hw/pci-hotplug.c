@@ -90,7 +90,8 @@ static int scsi_hot_add(Monitor *mon, DeviceState *adapter,
      * specified).
      */
     dinfo->unit = qemu_opt_get_number(dinfo->opts, "unit", -1);
-    scsidev = scsi_bus_legacy_add_drive(scsibus, dinfo->bdrv, dinfo->unit);
+    scsidev = scsi_bus_legacy_add_drive(scsibus, dinfo->bdrv, dinfo->unit,
+                                        false, -1);
     dinfo->unit = scsidev->id;
 
     if (printinfo)
@@ -103,7 +104,7 @@ void drive_hot_add(Monitor *mon, const QDict *qdict)
 {
     int dom, pci_bus;
     unsigned slot;
-    int type, bus;
+    int type;
     PCIDevice *dev;
     DriveInfo *dinfo = NULL;
     const char *pci_addr = qdict_get_str(qdict, "pci_addr");
@@ -117,7 +118,6 @@ void drive_hot_add(Monitor *mon, const QDict *qdict)
         goto err;
     }
     type = dinfo->type;
-    bus = drive_get_max_bus (type);
 
     switch (type) {
     case IF_SCSI:
@@ -144,7 +144,7 @@ void drive_hot_add(Monitor *mon, const QDict *qdict)
 
 err:
     if (dinfo)
-        drive_uninit(dinfo);
+        drive_put_ref(dinfo);
     return;
 }
 

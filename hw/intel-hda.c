@@ -84,7 +84,7 @@ HDACodecDevice *hda_codec_find(HDACodecBus *bus, uint32_t cad)
     DeviceState *qdev;
     HDACodecDevice *cdev;
 
-    QLIST_FOREACH(qdev, &bus->qbus.children, sibling) {
+    QTAILQ_FOREACH(qdev, &bus->qbus.children, sibling) {
         cdev = DO_UPCAST(HDACodecDevice, qdev, qdev);
         if (cdev->cad == cad) {
             return cdev;
@@ -492,7 +492,7 @@ static void intel_hda_notify_codecs(IntelHDAState *d, uint32_t stream, bool runn
     DeviceState *qdev;
     HDACodecDevice *cdev;
 
-    QLIST_FOREACH(qdev, &d->codecs.qbus.children, sibling) {
+    QTAILQ_FOREACH(qdev, &d->codecs.qbus.children, sibling) {
         cdev = DO_UPCAST(HDACodecDevice, qdev, qdev);
         if (cdev->info->stream) {
             cdev->info->stream(cdev, stream, running, output);
@@ -1120,7 +1120,7 @@ static void intel_hda_reset(DeviceState *dev)
     d->wall_base_ns = qemu_get_clock(vm_clock);
 
     /* reset codecs */
-    QLIST_FOREACH(qdev, &d->codecs.qbus.children, sibling) {
+    QTAILQ_FOREACH(qdev, &d->codecs.qbus.children, sibling) {
         cdev = DO_UPCAST(HDACodecDevice, qdev, qdev);
         if (qdev->info->reset) {
             qdev->info->reset(qdev);

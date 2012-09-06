@@ -19,6 +19,7 @@
 #include "virtio-blk.h"
 #include "virtio-net.h"
 #include "virtio-serial.h"
+#include "virtio-scsi.h"
 #include "pci.h"
 #include "qemu-error.h"
 #include "msix.h"
@@ -88,6 +89,15 @@
 #define VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT 1
 #define VIRTIO_PCI_FLAG_USE_IOEVENTFD   (1 << VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT)
 
+/* Enabled work-arounds for migration with macvtap backend */
+#define VIRTIO_PCI_FLAG_MACVTAP_BIT 2
+#define VIRTIO_PCI_FLAG_MACVTAP (1 << VIRTIO_PCI_FLAG_MACVTAP_BIT)
+
+/* Enabled compatibility for migration for rhel6.2.0 and older */
+#define VIRTIO_PCI_FLAG_RHEL620_BIT 3
+#define VIRTIO_PCI_FLAG_RHEL620 (1 << VIRTIO_PCI_FLAG_RHEL620_BIT)
+
+
 /* QEMU doesn't strictly need write barriers since everything runs in
  * lock-step.  We'll leave the calls to wmb() in though to make it obvious for
  * KVM or if kqemu gets SMP support.
@@ -105,6 +115,7 @@ typedef struct {
     uint32_t nvectors;
     BlockConf block;
     NICConf nic;
+    VirtIOSCSIConf scsi;
     uint32_t host_features;
     virtio_serial_conf serial;
     virtio_net_conf net;
@@ -555,6 +566,12 @@ static unsigned virtio_pci_get_features(void *opaque)
     return proxy->host_features;
 }
 
+static void virtio_pci_force_features(void *opaque, uint32_t extra_features)
+{
+    VirtIOPCIProxy *proxy = opaque;
+    proxy->host_features |= extra_features;
+}
+
 static void virtio_pci_guest_notifier_read(void *opaque)
 {
     VirtQueue *vq = opaque;
@@ -741,6 +758,7 @@ static const VirtIOBindings virtio_pci_bindings = {
     .save_queue = virtio_pci_save_queue,
     .load_queue = virtio_pci_load_queue,
     .get_features = virtio_pci_get_features,
+    .force_features = virtio_pci_force_features,
     .query_guest_notifiers = virtio_pci_query_guest_notifiers,
     .set_host_notifier = virtio_pci_set_host_notifier,
     .set_guest_notifiers = virtio_pci_set_guest_notifiers,
@@ -808,11 +826,10 @@ static int virtio_blk_init_pci(PCIDevice *pci_dev)
         proxy->class_code != PCI_CLASS_STORAGE_OTHER)
         proxy->class_code = PCI_CLASS_STORAGE_SCSI;
 
-    if (!proxy->block.bs) {
-        error_report("virtio-blk-pci: drive property not set");
+    vdev = virtio_blk_init(&pci_dev->qdev, &proxy->block);
+    if (!vdev) {
         return -1;
     }
-    vdev = virtio_blk_init(&pci_dev->qdev, &proxy->block);
     vdev->nvectors = proxy->nvectors;
     virtio_init_pci(proxy, vdev,
                     PCI_VENDOR_ID_REDHAT_QUMRANET,
@@ -876,6 +893,11 @@ static int virtio_net_init_pci(PCIDevice *pci_dev)
     VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
     VirtIODevice *vdev;
 
+    /* Set rhel6.2 or older compatibility mode for macvtap. */
+    proxy->net.macvtap_rhel620_compat =
+        (proxy->flags & VIRTIO_PCI_FLAG_RHEL620) &&
+        (proxy->flags & VIRTIO_PCI_FLAG_MACVTAP);
+
     vdev = virtio_net_init(&pci_dev->qdev, &proxy->nic, &proxy->net);
 
     vdev->nvectors = proxy->nvectors;
@@ -925,6 +947,36 @@ static int virtio_balloon_exit_pci(PCIDevice *pci_dev)
     return virtio_exit_pci(pci_dev);
 }
 
+static int virtio_scsi_init_pci(PCIDevice *pci_dev)
+{
+    VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
+    VirtIODevice *vdev;
+
+    vdev = virtio_scsi_init(&pci_dev->qdev, &proxy->scsi);
+    if (!vdev) {
+        return -EINVAL;
+    }
+
+    vdev->nvectors = proxy->nvectors;
+    virtio_init_pci(proxy, vdev,
+                    PCI_VENDOR_ID_REDHAT_QUMRANET,
+                    PCI_DEVICE_ID_VIRTIO_SCSI,
+                    PCI_CLASS_STORAGE_SCSI,
+                    0x00);
+
+    /* make the actual value visible */
+    proxy->nvectors = vdev->nvectors;
+    return 0;
+}
+
+static int virtio_scsi_exit_pci(PCIDevice *pci_dev)
+{
+    VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
+
+    virtio_scsi_exit(proxy->vdev);
+    return virtio_exit_pci(pci_dev);
+}
+
 static PCIDeviceInfo virtio_info[] = {
     {
         .qdev.name = "virtio-blk-pci",
@@ -951,6 +1003,10 @@ static PCIDeviceInfo virtio_info[] = {
         .qdev.props = (Property[]) {
             DEFINE_PROP_BIT("ioeventfd", VirtIOPCIProxy, flags,
                             VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT, false),
+            DEFINE_PROP_BIT("__com_redhat_macvtap_compat", VirtIOPCIProxy,
+                            flags, VIRTIO_PCI_FLAG_MACVTAP_BIT, false),
+            DEFINE_PROP_BIT("x-__com_redhat_rhel620_compat", VirtIOPCIProxy,
+                            flags, VIRTIO_PCI_FLAG_RHEL620_BIT, false),
             DEFINE_PROP_UINT32("vectors", VirtIOPCIProxy, nvectors, 3),
             DEFINE_VIRTIO_NET_FEATURES(VirtIOPCIProxy, host_features),
             DEFINE_NIC_PROPERTIES(VirtIOPCIProxy, nic),
@@ -991,6 +1047,17 @@ static PCIDeviceInfo virtio_info[] = {
         },
         .qdev.reset = virtio_pci_reset,
     },{
+        .qdev.name = "virtio-scsi-pci",
+        .qdev.alias = "virtio-scsi",
+        .qdev.size = sizeof(VirtIOPCIProxy),
+        .init      = virtio_scsi_init_pci,
+        .exit      = virtio_scsi_exit_pci,
+        .qdev.props = (Property[]) {
+            DEFINE_PROP_UINT32("vectors", VirtIOPCIProxy, nvectors, 2),
+            DEFINE_VIRTIO_SCSI_PROPERTIES(VirtIOPCIProxy, host_features, scsi),
+            DEFINE_PROP_END_OF_LIST(),
+        },
+    }, {
         /* end of list */
     }
 };

@@ -1,10 +1,17 @@
 # Makefile for QEMU.
 
-# This needs to be defined before rules.mak
+# useful for passing ' ' and ',' into Makefile functional calls,
+# as these characters cannot be passed otherwise
+_empty :=  
+_space := $(_empty) $(_empty)
+_comma := ,
+
+qapi-dir := qapi-generated
 GENERATED_HEADERS = config-host.h trace.h config-all-devices.h
 ifeq ($(TRACE_BACKEND),dtrace)
 GENERATED_HEADERS += trace-dtrace.h
 endif
+GENERATED_HEADERS += qmp-commands.h
 
 ifneq ($(wildcard config-host.mak),)
 # Put the all: rule here so that config-host.mak can contain dependencies.
@@ -18,6 +25,16 @@ else
 config-host.mak:
 	@echo "Please call configure before running make!"
 	@exit 1
+endif
+
+ifeq ($(CONFIG_LIVE_SNAPSHOTS),y)
+rhel_rhev_qmp_commands.h = rhev-qmp-commands.h
+GENERATED_HEADERS += rhev-qmp-commands.h rhev-qapi-types.h rhev-qapi-visit.h
+GENERATED_SOURCES += rhev-qmp-marshal.c rhev-qapi-types.c rhev-qapi-visit.c
+else
+rhel_rhev_qmp_commands.h = rhel-qmp-commands.h
+GENERATED_HEADERS += rhel-qmp-commands.h rhel-qapi-types.h rhel-qapi-visit.h
+GENERATED_SOURCES += rhel-qmp-marshal.c rhel-qapi-types.c rhel-qapi-visit.c
 endif
 
 # Don't try to regenerate Makefile or configure
@@ -84,7 +101,10 @@ endif
 subdir-%: $(GENERATED_HEADERS)
 	$(call quiet-command,$(MAKE) $(SUBDIR_MAKEFLAGS) -C $* V="$(V)" TARGET_DIR="$*/" all,)
 
-$(filter %-softmmu,$(SUBDIR_RULES)): libqemu_common.a
+include $(SRC_PATH)/Makefile.objs
+
+$(common-obj-y): $(GENERATED_HEADERS)
+$(filter %-softmmu,$(SUBDIR_RULES)): $(common-obj-y)
 
 $(filter %-user,$(SUBDIR_RULES)): libuser.a
 
@@ -99,145 +119,10 @@ ALL_SUBDIRS=$(TARGET_DIRS) $(patsubst %,pc-bios/%, $(ROMS))
 
 recurse-all: $(SUBDIR_RULES) $(ROMSUBDIR_RULES)
 
-#######################################################################
-# QObject
-qobject-obj-y = qint.o qstring.o qdict.o qlist.o qfloat.o qbool.o
-qobject-obj-y += qjson.o json-lexer.o json-streamer.o json-parser.o
-qobject-obj-y += qerror.o
-
-#######################################################################
-# block-obj-y is code used by both qemu system emulation and qemu-img
-
-block-obj-y = cutils.o cache-utils.o qemu-malloc.o qemu-option.o module.o
-block-obj-y += nbd.o block.o aio.o aes.o osdep.o qemu-config.o qemu-progress.o
-block-obj-$(CONFIG_POSIX) += posix-aio-compat.o
-block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
-block-obj-$(CONFIG_POSIX) += compatfd.o
-
-block-nested-y += raw.o cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
-block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow2-cache.o
-block-nested-y += qed.o qed-gencb.o qed-l2-cache.o qed-table.o qed-cluster.o
-block-nested-y += qed-check.o
-block-nested-y += parallels.o nbd.o blkdebug.o
-block-nested-$(CONFIG_WIN32) += raw-win32.o
-block-nested-$(CONFIG_POSIX) += raw-posix.o
-block-nested-$(CONFIG_CURL) += curl.o
-
-block-obj-y +=  $(addprefix block/, $(block-nested-y))
-
-net-obj-y = net.o
-net-nested-y = queue.o checksum.o util.o
-net-nested-y += socket.o
-net-nested-y += dump.o
-net-nested-$(CONFIG_POSIX) += tap.o
-net-nested-$(CONFIG_LINUX) += tap-linux.o
-net-nested-$(CONFIG_WIN32) += tap-win32.o
-net-nested-$(CONFIG_BSD) += tap-bsd.o
-net-nested-$(CONFIG_SOLARIS) += tap-solaris.o
-net-nested-$(CONFIG_AIX) += tap-aix.o
-net-nested-$(CONFIG_SLIRP) += slirp.o
-net-nested-$(CONFIG_VDE) += vde.o
-net-obj-y += $(addprefix net/, $(net-nested-y))
-
-ifeq ($(TRACE_BACKEND),dtrace)
-trace-obj-y = trace-dtrace.o
-else
-trace-obj-y = trace.o
-endif
-
-######################################################################
-# shared-obj-y has the object that are shared by qemu binary and tools
-shared-obj-y = qemu-error.o $(trace-obj-y) $(block-obj-y) $(qobject-obj-y)
-
-######################################################################
-# libqemu_common.a: Target independent part of system emulation. The
-# long term path is to suppress *all* target specific code in case of
-# system emulation, i.e. a single QEMU executable should support all
-# CPUs and machines.
-
-obj-y = $(shared-obj-y)
-obj-y += qemu-thread.o
-obj-y += blockdev.o
-obj-y += $(net-obj-y)
-obj-y += readline.o console.o cursor.o
-
-obj-y += tcg-runtime.o host-utils.o
-obj-y += irq.o ioport.o
-obj-$(CONFIG_PTIMER) += ptimer.o
-obj-$(CONFIG_MAX7310) += max7310.o
-obj-$(CONFIG_WM8750) += wm8750.o
-obj-$(CONFIG_TWL92230) += twl92230.o
-obj-$(CONFIG_TSC2005) += tsc2005.o
-obj-$(CONFIG_LM832X) += lm832x.o
-obj-$(CONFIG_TMP105) += tmp105.o
-obj-$(CONFIG_STELLARIS_INPUT) += stellaris_input.o
-obj-$(CONFIG_SSD0303) += ssd0303.o
-obj-$(CONFIG_SSD0323) += ssd0323.o
-obj-$(CONFIG_ADS7846) += ads7846.o
-obj-$(CONFIG_MAX111X) += max111x.o
-obj-$(CONFIG_DS1338) += ds1338.o
-obj-y += i2c.o smbus.o smbus_eeprom.o
-obj-y += eeprom93xx.o
-obj-y += cdrom.o
-obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o
-obj-y += usb-bus.o usb-desc.o
-obj-y += usb-msd.o scsi-bus.o scsi-disk.o
-obj-$(CONFIG_SSI) += ssi.o
-obj-$(CONFIG_SSI_SD) += ssi-sd.o
-obj-$(CONFIG_SD) += sd.o
-obj-y += buffered_file.o migration.o migration-tcp.o qemu-sockets.o
-obj-y += qemu-char.o aio.o savevm.o
-obj-y += msmouse.o ps2.o
-obj-y += qdev.o qdev-properties.o
-obj-y += block-migration.o iohandler.o
-obj-y += pflib.o
-
-obj-$(CONFIG_BRLAPI) += baum.o
-obj-$(CONFIG_POSIX) += migration-exec.o migration-unix.o migration-fd.o
-
-obj-$(CONFIG_SPICE) += ui/spice-core.o ui/spice-input.o ui/spice-display.o spice-qemu-char.o
-
-obj-$(CONFIG_SMARTCARD) += usb-ccid.o ccid-card-passthru.o
-obj-$(CONFIG_SMARTCARD_NSS) += ccid-card-emulated.o
-
 audio/audio.o audio/fmodaudio.o: QEMU_CFLAGS += $(FMOD_CFLAGS)
-
-audio-obj-y = audio.o noaudio.o wavaudio.o mixeng.o
-audio-obj-$(CONFIG_SDL) += sdlaudio.o
-audio-obj-$(CONFIG_OSS) += ossaudio.o
-audio-obj-$(CONFIG_SPICE) += spiceaudio.o
-audio-obj-$(CONFIG_COREAUDIO) += coreaudio.o
-audio-obj-$(CONFIG_ALSA) += alsaaudio.o
-audio-obj-$(CONFIG_DSOUND) += dsoundaudio.o
-audio-obj-$(CONFIG_FMOD) += fmodaudio.o
-audio-obj-$(CONFIG_ESD) += esdaudio.o
-audio-obj-$(CONFIG_PA) += paaudio.o
-audio-obj-$(CONFIG_WINWAVE) += winwaveaudio.o
-audio-obj-$(CONFIG_AUDIO_PT_INT) += audio_pt_int.o
-audio-obj-$(CONFIG_AUDIO_WIN_INT) += audio_win_int.o
-audio-obj-y += wavcapture.o
-obj-y += $(addprefix audio/, $(audio-obj-y))
-
-obj-y += keymaps.o
-obj-$(CONFIG_SDL) += sdl.o sdl_zoom.o x_keymap.o
-obj-$(CONFIG_CURSES) += curses.o
-obj-y += vnc.o acl.o d3des.o
-obj-$(CONFIG_VNC_TLS) += vnc-tls.o vnc-auth-vencrypt.o
-obj-$(CONFIG_VNC_SASL) += vnc-auth-sasl.o
-obj-$(CONFIG_COCOA) += cocoa.o
-obj-$(CONFIG_IOTHREAD) += qemu-thread.o
-obj-y += notify.o
-
-slirp-obj-y = cksum.o if.o ip_icmp.o ip_input.o ip_output.o
-slirp-obj-y += slirp.o mbuf.o misc.o sbuf.o socket.o tcp_input.o tcp_output.o
-slirp-obj-y += tcp_subr.o tcp_timer.o udp.o bootp.o tftp.o
-obj-$(CONFIG_SLIRP) += $(addprefix slirp/, $(slirp-obj-y))
-
-# xen backend driver support
-obj-$(CONFIG_XEN) += xen_backend.o xen_devconfig.o
-obj-$(CONFIG_XEN) += xen_console.o xenfb.o xen_disk.o xen_nic.o
-
 QEMU_CFLAGS+=$(CURL_CFLAGS)
+
+QEMU_CFLAGS+=$(GLIB_CFLAGS)
 
 cocoa.o: cocoa.m
 
@@ -266,8 +151,6 @@ vnc-auth-sasl.o: vnc-auth-sasl.c vnc.h
 curses.o: curses.c keymaps.h curses_keys.h
 
 bt-host.o: QEMU_CFLAGS += $(BLUEZ_CFLAGS)
-
-libqemu_common.a: $(obj-y)
 
 ifeq ($(TRACE_BACKEND),dtrace)
 trace.h: trace.h-timestamp trace-dtrace.h
@@ -302,8 +185,9 @@ trace-dtrace.o: trace-dtrace.dtrace $(GENERATED_HEADERS)
 ######################################################################
 
 qemu-img.o: qemu-img-cmds.h
+qemu-img.o qemu-tool.o qemu-nbd.o qemu-io.o: $(GENERATED_HEADERS)
 
-TOOLS_OBJ=qemu-tool.o $(shared-obj-y)
+TOOLS_OBJ=qemu-tool.o qerror.o $(shared-obj-y) $(trace-obj-y)
 
 qemu-img$(EXESUF): qemu-img.o $(TOOLS_OBJ)
 
@@ -314,24 +198,135 @@ qemu-io$(EXESUF): qemu-io.o cmd.o $(TOOLS_OBJ)
 qemu-img-cmds.h: $(SRC_PATH)/qemu-img-cmds.hx
 	$(call quiet-command,sh $(SRC_PATH)/hxtool -h < $< > $@,"  GEN   $@")
 
-check-qint: check-qint.o qint.o qemu-malloc.o
-check-qstring: check-qstring.o qstring.o qemu-malloc.o
-check-qdict: check-qdict.o qdict.o qfloat.o qint.o qstring.o qbool.o qemu-malloc.o qlist.o
-check-qlist: check-qlist.o qlist.o qint.o qemu-malloc.o
-check-qfloat: check-qfloat.o qfloat.o qemu-malloc.o
-check-qjson: check-qjson.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o qjson.o json-streamer.o json-lexer.o json-parser.o qemu-malloc.o
+check-qint: check-qint.o qint.o qemu-malloc.o qemu-tool.o
+check-qstring: check-qstring.o qstring.o qemu-malloc.o qemu-tool.o
+check-qdict: check-qdict.o qdict.o qfloat.o qint.o qstring.o qbool.o qemu-malloc.o qlist.o qemu-tool.o
+check-qlist: check-qlist.o qlist.o qint.o qemu-malloc.o qemu-tool.o
+check-qfloat: check-qfloat.o qfloat.o qemu-malloc.o qemu-tool.o
+check-qjson: check-qjson.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o qjson.o json-streamer.o json-lexer.o json-parser.o qemu-malloc.o error.o qerror.o qemu-error.o qemu-tool.o
+
+$(qapi-obj-y): $(GENERATED_HEADERS) 
+qapi-dir := qapi-generated
+$(qga-obj-y): $(qapi-dir)/qga-qapi-types.h $(qapi-dir)/qga-qapi-visit.h $(qapi-dir)/qga-qmp-commands.h
+test-visitor.o test-qmp-commands.o qemu-ga$(EXESUF): QEMU_CFLAGS += -I $(qapi-dir)
+qemu-ga$(EXESUF): LIBS = $(LIBS_QGA)
+
+gen-out-type = $(subst .,-,$(suffix $@))
+
+qga-suspend-dep-$(CONFIG_POSIX) = $(qga-nested-api-y .o=.c) qga-suspend-qapi-types.h qga-suspend-qmp-commands.h qga-suspend-qapi-visit.h 
+
+$(qapi-dir)/test-qapi-types.c $(qapi-dir)/test-qapi-types.h :\
+$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-types.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "$(qapi-dir)" -p "test-" < $<, "  GEN   $@")
+$(qapi-dir)/test-qapi-visit.c $(qapi-dir)/test-qapi-visit.h :\
+$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-visit.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "$(qapi-dir)" -p "test-" < $<, "  GEN   $@")
+$(qapi-dir)/test-qmp-commands.h $(qapi-dir)/test-qmp-marshal.c :\
+$(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-commands.py
+	    $(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o "$(qapi-dir)" -p "test-" < $<, "  GEN   $@")
+
+$(qapi-dir)/qga-qapi-types.c $(qapi-dir)/qga-qapi-types.h :\
+$(SRC_PATH)/qapi-schema-guest.json $(SRC_PATH)/scripts/qapi-types.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-" < $<, "  GEN   $@")
+$(qapi-dir)/qga-qapi-visit.c $(qapi-dir)/qga-qapi-visit.h :\
+$(SRC_PATH)/qapi-schema-guest.json $(SRC_PATH)/scripts/qapi-visit.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-" < $<, "  GEN   $@")
+$(qapi-dir)/qga-qmp-commands.h $(qapi-dir)/qga-qmp-marshal.c :\
+$(SRC_PATH)/qapi-schema-guest.json $(SRC_PATH)/scripts/qapi-commands.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-" < $<, "  GEN   $@")
+
+$(qapi-dir)/qga-suspend-qapi-types.c $(qapi-dir)/qga-suspend-qapi-types.h :\
+$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-types.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
+$(qapi-dir)/qga-suspend-qapi-visit.c $(qapi-dir)/qga-suspend-qapi-visit.h :\
+$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-visit.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
+$(qapi-dir)/qga-suspend-qmp-commands.h $(qapi-dir)/qga-suspend-qmp-marshal.c :\
+$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-commands.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
+
+rhev-qapi-types.c rhev-qapi-types.h :\
+qapi-schema-rhev.json $(SRC_PATH)/scripts/qapi-types.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "." -p "rhev-" < $<, "  GEN   $@")
+rhev-qapi-visit.c rhev-qapi-visit.h :\
+qapi-schema-rhev.json $(SRC_PATH)/scripts/qapi-visit.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "." -p "rhev-" < $<, "  GEN   $@")
+rhev-qmp-commands.h rhev-qmp-marshal.c :\
+qapi-schema-rhev.json $(SRC_PATH)/scripts/qapi-commands.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -m -o "." -p "rhev-" < $<, "  GEN   $@")
+
+# if there are multiple config items to be RHEV-only, simply add it to
+# RHEV_CONFIGS, like so: RHEV_CONFIGS = CONFIG_LIVE_SNAPSHOTS CONFIG_SOME_FEATURE
+RHEV_CONFIGS = CONFIG_LIVE_SNAPSHOTS
+# Turn $(RHEV_CONFIGS) into a regex with logical OR, and whole word matching
+RHEV_ONLY_CONFIG_ITEMS = (\b$(subst $(_space),\b|\b,$(strip $(RHEV_CONFIGS)))\b)
+
+GENERATED_JSON_FILES = $(addprefix $(SRC_PATH)/, qapi-schema-rhel.json qapi-schema-rhev.json)
+
+qapi-schema-rhev.json: $(SRC_PATH)/qapi-schema.json
+	-@echo "# THIS FILE IS AUTOMATICALLY GENERATED, DO NOT MODIFY" > $@
+	-@echo "#" >> $@
+	$(call quiet-command,sed -r "/^#ifdef +$(RHEV_ONLY_CONFIG_ITEMS)/d;/^#endif/d" $< >> $@, "  GEN   $@")
+
+qapi-schema-rhel.json: $(SRC_PATH)/qapi-schema.json
+	-@echo "# THIS FILE IS AUTOMATICALLY GENERATED, DO NOT MODIFY" > $@
+	-@echo "#" >> $@
+	$(call quiet-command,sed -r "/^#ifdef +$(RHEV_ONLY_CONFIG_ITEMS)/$(_comma)/^#endif/d" $< >> $@, "  GEN   $@")
+
+rhel-qapi-types.c rhel-qapi-types.h :\
+qapi-schema-rhel.json $(SRC_PATH)/scripts/qapi-types.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "." -p "rhel-" < $<, "  GEN   $@")
+rhel-qapi-visit.c rhel-qapi-visit.h :\
+qapi-schema-rhel.json $(SRC_PATH)/scripts/qapi-visit.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "." -p "rhel-" < $<, "  GEN   $@")
+rhel-qmp-commands.h rhel-qmp-marshal.c :\
+qapi-schema-rhel.json $(SRC_PATH)/scripts/qapi-commands.py
+	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -m -o "." -p "rhel-" < $<, "  GEN   $@")
+
+define QMP_COMMANDS_H
+/* THIS FILE IS AUTOMATICALLY GENERATED, DO NOT MODIFY */
+
+#ifndef QMP_COMMANDS_H
+#define QMP_COMMANDS_H
+
+#include "$(rhel_rhev_qmp_commands.h)"
+
+
+#endif
+endef
+
+export QMP_COMMANDS_H
+qmp-commands.h: $(rhel_rhev_qmp_commands.h)
+	$(call quiet-command, echo "$$QMP_COMMANDS_H" > $@, "  GEN   $@")
+
+
+test-visitor.o: $(addprefix $(qapi-dir)/, test-qapi-types.c test-qapi-types.h test-qapi-visit.c test-qapi-visit.h) $(qapi-obj-y)
+test-visitor: test-visitor.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o $(qapi-obj-y) error.o osdep.o qemu-malloc.o $(oslib-obj-y) qjson.o json-streamer.o json-lexer.o json-parser.o qerror.o qemu-error.o qemu-tool.o $(qapi-dir)/test-qapi-visit.o $(qapi-dir)/test-qapi-types.o
+
+test-qmp-commands.o: $(addprefix $(qapi-dir)/, test-qapi-types.c test-qapi-types.h test-qapi-visit.c test-qapi-visit.h test-qmp-marshal.c test-qmp-commands.h) $(qapi-obj-y)
+test-qmp-commands: test-qmp-commands.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o $(qapi-obj-y) error.o osdep.o qemu-malloc.o $(oslib-obj-y) qjson.o json-streamer.o json-lexer.o json-parser.o qerror.o qemu-error.o qemu-tool.o $(qapi-dir)/test-qapi-visit.o $(qapi-dir)/test-qapi-types.o $(qapi-dir)/test-qmp-marshal.o module.o
+
+QGALIB_GEN=$(addprefix $(qapi-dir)/, qga-qapi-types.c qga-qapi-types.h qga-qapi-visit.c qga-qmp-marshal.c $(qga-suspend-dep-y))
+$(QGALIB_GEN): $(GENERATED_HEADERS)
+qemu-ga.o: $(QGALIB_GEN) $(qapi-obj-y)
+
+qemu-ga$(EXESUF): qemu-ga.o $(qga-obj-y) $(qapi-obj-y) $(trace-obj-y) $(qobject-obj-y) $(version-obj-y) $(addprefix $(qapi-dir)/, qga-qapi-visit.o qga-qapi-types.o qga-qmp-marshal.o $(qga-suspend-y)) 
 
 QEMULIBS=libhw32 libhw64 libuser
 
 clean:
 # avoid old build problems by removing potentially incorrect old files
 	rm -f config.mak op-i386.h opc-i386.h gen-op-i386.h op-arm.h opc-arm.h gen-op-arm.h
-	rm -f *.o *.d *.a $(TOOLS) TAGS cscope.* *.pod *~ */*~
-	rm -f slirp/*.o slirp/*.d audio/*.o audio/*.d block/*.o block/*.d net/*.o net/*.d
+	rm -f *.o *.d *.a $(TOOLS) qemu-ga TAGS cscope.* *.pod *~ */*~
+	rm -f slirp/*.o slirp/*.d audio/*.o audio/*.d block/*.o block/*.d net/*.o net/*.d ui/*.o ui/*.d qapi/*.o qapi/*.d qga/*.o qga/*.d
 	rm -f qemu-img-cmds.h
 	rm -f trace.c trace.h trace.c-timestamp trace.h-timestamp
 	rm -f trace-dtrace.dtrace trace-dtrace.dtrace-timestamp
 	rm -f trace-dtrace.h trace-dtrace.h-timestamp
+	rm -rf $(qapi-dir)
+	rm -rf $(GENERATED_HEADERS)
+	rm -rf $(GENERATED_SOURCES)
+	rm -rf $(GENERATED_JSON_FILES)
 	$(MAKE) -C tests clean
 	for d in $(ALL_SUBDIRS) $(QEMULIBS) libcacard; do \
 	if test -d $$d; then $(MAKE) -C $$d $@ || exit 1; fi; \
@@ -536,4 +531,4 @@ tarbin:
 	$(mandir)/man8/qemu-nbd.8
 
 # Include automatically generated dependency files
--include $(wildcard *.d audio/*.d slirp/*.d block/*.d net/*.d)
+-include $(wildcard *.d audio/*.d slirp/*.d block/*.d net/*.d ui/*.d qapi/*.d qga/*.d)

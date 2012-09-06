@@ -93,7 +93,9 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     MigrationState *s = NULL;
     const char *p;
-    int detach = qdict_get_int(qdict, "detach");
+    int detach = qdict_get_try_bool_or_int(qdict, "detach", 0);
+    int blk = qdict_get_try_bool_or_int(qdict, "blk", 0);
+    int inc = qdict_get_try_bool_or_int(qdict, "inc", 0);
     const char *uri = qdict_get_str(qdict, "uri");
 
     if (current_migration &&
@@ -109,21 +111,17 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
     START_MIGRATION_CLOCK();
     if (strstart(uri, "tcp:", &p)) {
         s = tcp_start_outgoing_migration(mon, p, max_throttle, detach,
-                                         (int)qdict_get_int(qdict, "blk"), 
-                                         (int)qdict_get_int(qdict, "inc"));
+                                         blk, inc);
 #if !defined(WIN32)
     } else if (strstart(uri, "exec:", &p)) {
         s = exec_start_outgoing_migration(mon, p, max_throttle, detach,
-                                          (int)qdict_get_int(qdict, "blk"), 
-                                          (int)qdict_get_int(qdict, "inc"));
+                                          blk, inc);
     } else if (strstart(uri, "unix:", &p)) {
         s = unix_start_outgoing_migration(mon, p, max_throttle, detach,
-					  (int)qdict_get_int(qdict, "blk"), 
-                                          (int)qdict_get_int(qdict, "inc"));
+                                          blk, inc);
     } else if (strstart(uri, "fd:", &p)) {
         s = fd_start_outgoing_migration(mon, p, max_throttle, detach, 
-                                        (int)qdict_get_int(qdict, "blk"), 
-                                        (int)qdict_get_int(qdict, "inc"));
+                                        blk, inc);
 #endif
     } else {
         monitor_printf(mon, "unknown migration protocol: %s\n", uri);
@@ -140,7 +138,7 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
     }
 
     current_migration = s;
-    notifier_list_notify(&migration_state_notifiers);
+    notifier_list_notify(&migration_state_notifiers, NULL);
     return 0;
 }
 
@@ -294,7 +292,7 @@ void migrate_fd_error(FdMigrationState *s)
     DPRINTF("setting error state\n");
     s->state = MIG_STATE_ERROR;
     migrate_fd_cleanup(s);
-    notifier_list_notify(&migration_state_notifiers);
+    notifier_list_notify(&migration_state_notifiers, NULL);
 }
 
 int migrate_fd_cleanup(FdMigrationState *s)
@@ -399,9 +397,10 @@ void migrate_fd_put_ready(void *opaque)
         int old_vm_running = runstate_is_running();
 
         DPRINTF("done iterating\n");
+        qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
         vm_stop_force_state(RUN_STATE_FINISH_MIGRATE);
 
-        qemu_aio_flush();
+        bdrv_drain_all();
         bdrv_flush_all();
         if ((qemu_savevm_state_complete(s->mon, s->file)) < 0) {
             if (old_vm_running) {
@@ -422,7 +421,7 @@ void migrate_fd_put_ready(void *opaque)
             s->state = MIG_STATE_COMPLETED;
             runstate_set(RUN_STATE_POSTMIGRATE);
         }
-        notifier_list_notify(&migration_state_notifiers);
+        notifier_list_notify(&migration_state_notifiers, NULL);
     }
 }
 
@@ -444,7 +443,7 @@ void migrate_fd_cancel(MigrationState *mig_state)
     s->state = MIG_STATE_CANCELLED;
     qemu_savevm_state_cancel(s->mon, s->file);
     migrate_fd_cleanup(s);
-    notifier_list_notify(&migration_state_notifiers);
+    notifier_list_notify(&migration_state_notifiers, NULL);
 }
 
 void migrate_fd_release(MigrationState *mig_state)
@@ -456,7 +455,7 @@ void migrate_fd_release(MigrationState *mig_state)
     if (s->state == MIG_STATE_ACTIVE) {
         s->state = MIG_STATE_CANCELLED;
         migrate_fd_cleanup(s);
-        notifier_list_notify(&migration_state_notifiers);
+        notifier_list_notify(&migration_state_notifiers, NULL);
     }
     free(s);
 }

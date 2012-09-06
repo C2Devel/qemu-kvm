@@ -71,7 +71,7 @@
 #define MAX_IDE_BUS 2
 
 static fdctrl_t *floppy_controller;
-static RTCState *rtc_state;
+RTCState *rtc_state;
 static PITState *pit;
 static PCII440FXState *i440fx_state;
 
@@ -990,6 +990,10 @@ CPUState *pc_new_cpu(const char *cpu_model)
 {
     CPUState *env;
 
+    if (runstate_is_running()) {
+        pause_all_vcpus();
+    }
+
     env = cpu_init(cpu_model);
     if (!env) {
         fprintf(stderr, "Unable to support requested x86 CPU definition\n");
@@ -1008,6 +1012,11 @@ CPUState *pc_new_cpu(const char *cpu_model)
      * it can access invalid state and crash.
      */
     qemu_init_vcpu(env);
+
+    if (runstate_is_running()) {
+        resume_all_vcpus();
+    }
+
     return env;
 }
 
@@ -1058,9 +1067,7 @@ static void pc_init1(ram_addr_t ram_size,
     ram_addr_t below_4g_mem_size, above_4g_mem_size = 0;
     int bios_size, isa_bios_size;
     PCIBus *pci_bus;
-    ISADevice *isa_dev;
     int piix3_devfn = -1;
-    CPUState *env;
     qemu_irq *cpu_irq;
     qemu_irq *isa_irq;
     qemu_irq *i8259;
@@ -1090,7 +1097,7 @@ static void pc_init1(ram_addr_t ram_size,
         kvm_set_boot_cpu_id(0);
     }
     for (i = 0; i < smp_cpus; i++) {
-        env = pc_new_cpu(cpu_model);
+        pc_new_cpu(cpu_model);
     }
 
 #if TARGET_PHYS_ADDR_BITS == 32
@@ -1313,7 +1320,7 @@ static void pc_init1(ram_addr_t ram_size,
         }
     }
 
-    isa_dev = isa_create_simple("i8042");
+    isa_create_simple("i8042");
     DMA_init(0);
 #ifdef HAS_AUDIO
     audio_init(pci_enabled ? pci_bus : NULL, isa_irq);
@@ -1407,14 +1414,6 @@ static void pc_init_isa(ram_addr_t ram_size,
              initrd_filename, cpu_model, 0);
 }
 #endif
-
-/* set CMOS shutdown status register (index 0xF) as S3_resume(0xFE)
-   BIOS will read it and start S3 resume at POST Entry */
-void cmos_set_s3_resume(void)
-{
-    if (rtc_state)
-        rtc_set_memory(rtc_state, 0xF, 0xFE);
-}
 
 #if 0 /* Disabled for Red Hat Enterprise Linux */
 static QEMUMachine pc_machine = {
@@ -1562,6 +1561,12 @@ static void rhel_common_init(const char *type1_version,
                      strlen(buf) + 1, buf);
 }
 
+#define PC_RHEL6_2_COMPAT \
+        {\
+            .driver   = "virtio-net-pci",\
+            .property = "x-__com_redhat_rhel620_compat",\
+            .value    = "on",\
+        }
 #define PC_RHEL6_1_COMPAT \
         {\
             .driver   = "usb-tablet",\
@@ -1588,10 +1593,18 @@ static void rhel_common_init(const char *type1_version,
             .property = "event_idx",\
             .value    = "off",\
         },{\
+            .driver   = "qxl-vga",\
+            .property = "revision",\
+            .value    = stringify(2),\
+        },{\
+            .driver   = "qxl",\
+            .property = "revision",\
+            .value    = stringify(2),\
+        },{\
             .driver   = "virtio-balloon",\
             .property = "event_idx",\
             .value    = "off",\
-        }
+        }, PC_RHEL6_2_COMPAT
 
 #define PC_RHEL6_0_COMPAT \
         {\
@@ -1599,6 +1612,27 @@ static void rhel_common_init(const char *type1_version,
             .property = "flow_control",\
             .value    = stringify(0),\
         }, PC_RHEL6_1_COMPAT
+
+static void pc_init_rhel630(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 6.3.0 PC", 0);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel630 = {
+    .name = "rhel6.3.0",
+    .alias = "pc",
+    .desc = "RHEL 6.3.0 PC",
+    .init = pc_init_rhel630,
+    .max_cpus = 255,
+    .is_default = 1,
+};
 
 static void pc_init_rhel620(ram_addr_t ram_size,
                             const char *boot_device,
@@ -1608,17 +1642,20 @@ static void pc_init_rhel620(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.2.0 PC", 0);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
 
 static QEMUMachine pc_machine_rhel620 = {
     .name = "rhel6.2.0",
-    .alias = "pc",
     .desc = "RHEL 6.2.0 PC",
     .init = pc_init_rhel620,
     .max_cpus = 255,
-    .is_default = 1,
+    .compat_props = (GlobalProperty[]) {
+        PC_RHEL6_2_COMPAT,
+        { /* end of list */ }
+    },
 };
 
 static void pc_init_rhel610(ram_addr_t ram_size,
@@ -1629,6 +1666,7 @@ static void pc_init_rhel610(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.1.0 PC", 0);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
@@ -1652,6 +1690,7 @@ static void pc_init_rhel600(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.0.0 PC", 0);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
@@ -1722,6 +1761,7 @@ static void pc_init_rhel550(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.5.0 PC", 1);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1742,6 +1782,7 @@ static void pc_init_rhel544(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.4.4 PC", 1);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1762,6 +1803,7 @@ static void pc_init_rhel540(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.4.0 PC", 1);
+    disable_cpuid_leaf10();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1776,6 +1818,7 @@ static QEMUMachine pc_machine_rhel540 = {
 
 static void rhel_machine_init(void)
 {
+    qemu_register_machine(&pc_machine_rhel630);
     qemu_register_machine(&pc_machine_rhel620);
     qemu_register_machine(&pc_machine_rhel610);
     qemu_register_machine(&pc_machine_rhel600);

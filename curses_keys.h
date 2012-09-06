@@ -27,19 +27,35 @@
 
 #define KEY_RELEASE         0x80
 #define KEY_MASK            0x7f
-#define SHIFT_CODE          0x2a
-#define SHIFT               0x0080
 #define GREY_CODE           0xe0
-#define GREY                0x0100
+#define GREY                SCANCODE_GREY
+#define SHIFT_CODE          0x2a
+#define SHIFT               SCANCODE_SHIFT
 #define CNTRL_CODE          0x1d
-#define CNTRL               0x0200
+#define CNTRL               SCANCODE_CTRL
 #define ALT_CODE            0x38
-#define ALT                 0x0400
+#define ALT                 SCANCODE_ALT
+#define ALTGR               SCANCODE_ALTGR
+
+#define KEYSYM_MASK         0x0ffffff
+#define KEYSYM_SHIFT        (SCANCODE_SHIFT << 16)
+#define KEYSYM_CNTRL        (SCANCODE_CTRL  << 16)
+#define KEYSYM_ALT          (SCANCODE_ALT   << 16)
+#define KEYSYM_ALTGR        (SCANCODE_ALTGR << 16)
 
 /* curses won't detect a Control + Alt + 1, so use Alt + 1 */
 #define QEMU_KEY_CONSOLE0   (2 | ALT)   /* (curses2keycode['1'] | ALT) */
 
 #define CURSES_KEYS         KEY_MAX     /* KEY_MAX defined in <curses.h> */
+
+static const int curses2keysym[CURSES_KEYS] = {
+    [0 ... (CURSES_KEYS - 1)] = -1,
+
+    [0x7f] = KEY_BACKSPACE,
+    ['\r'] = KEY_ENTER,
+    ['\n'] = KEY_ENTER,
+    [KEY_BTAB] = '\t' | KEYSYM_SHIFT,
+};
 
 static const int curses2keycode[CURSES_KEYS] = {
     [0 ... (CURSES_KEYS - 1)] = -1,
@@ -220,7 +236,7 @@ static const int curses2keycode[CURSES_KEYS] = {
 
 };
 
-static const int curses2keysym[CURSES_KEYS] = {
+static const int curses2qemu[CURSES_KEYS] = {
     [0 ... (CURSES_KEYS - 1)] = -1,
 
     ['\n'] = '\n',
@@ -444,39 +460,43 @@ static const name2keysym_t name2keysym[] = {
     { "ydiaeresis", 0x0ff },
 
     /* Special keys */
-    { "BackSpace", 0x07f },
+    { "BackSpace", KEY_BACKSPACE },
     { "Tab", '\t' },
-    { "Return", '\r' },
-    { "Right", 0x105 },
-    { "Left", 0x104 },
-    { "Up", 0x103 },
-    { "Down", 0x102 },
-    { "Page_Down", 0x152 },
-    { "Page_Up", 0x153 },
-    { "Insert", 0x14b },
-    { "Delete", 0x14a },
-    { "Home", 0x106 },
-    { "End", 0x168 },
-    { "F1", 0x109 },
-    { "F2", 0x10a },
-    { "F3", 0x10b },
-    { "F4", 0x10c },
-    { "F5", 0x10d },
-    { "F6", 0x10e },
-    { "F7", 0x10f },
-    { "F8", 0x110 },
-    { "F9", 0x111 },
-    { "F10", 0x112 },
-    { "F11", 0x113 },
-    { "F12", 0x114 },
-    { "F13", 0x115 },
-    { "F14", 0x116 },
-    { "F15", 0x117 },
-    { "F16", 0x118 },
-    { "F17", 0x119 },
-    { "F18", 0x11a },
-    { "F19", 0x11b },
-    { "F20", 0x11c },
+    { "Return", KEY_ENTER },
+    { "Right", KEY_RIGHT },
+    { "Left", KEY_LEFT },
+    { "Up", KEY_UP },
+    { "Down", KEY_DOWN },
+    { "Page_Down", KEY_NPAGE },
+    { "Page_Up", KEY_PPAGE },
+    { "Insert", KEY_IC },
+    { "Delete", KEY_DC },
+    { "Home", KEY_HOME },
+    { "End", KEY_END },
+    { "F1", KEY_F(1) },
+    { "F2", KEY_F(2) },
+    { "F3", KEY_F(3) },
+    { "F4", KEY_F(4) },
+    { "F5", KEY_F(5) },
+    { "F6", KEY_F(6) },
+    { "F7", KEY_F(7) },
+    { "F8", KEY_F(8) },
+    { "F9", KEY_F(9) },
+    { "F10", KEY_F(10) },
+    { "F11", KEY_F(11) },
+    { "F12", KEY_F(12) },
+    { "F13", KEY_F(13) },
+    { "F14", KEY_F(14) },
+    { "F15", KEY_F(15) },
+    { "F16", KEY_F(16) },
+    { "F17", KEY_F(17) },
+    { "F18", KEY_F(18) },
+    { "F19", KEY_F(19) },
+    { "F20", KEY_F(20) },
+    { "F21", KEY_F(21) },
+    { "F22", KEY_F(22) },
+    { "F23", KEY_F(23) },
+    { "F24", KEY_F(24) },
     { "Escape", 27 },
 
     { NULL, 0 },

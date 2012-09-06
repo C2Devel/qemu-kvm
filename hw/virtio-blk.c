@@ -12,8 +12,10 @@
  */
 
 #include <qemu-common.h>
+#include "qemu-error.h"
 #include "trace.h"
 #include "virtio-blk.h"
+#include "scsi-defs.h"
 #ifdef __linux__
 # include <scsi/sg.h>
 #endif
@@ -66,7 +68,7 @@ static int virtio_blk_handle_rw_error(VirtIOBlockReq *req, int error,
     VirtIOBlock *s = req->dev;
 
     if (action == BLOCK_ERR_IGNORE) {
-        bdrv_mon_event(s->bs, BDRV_ACTION_IGNORE, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_IGNORE, error, is_read);
         return 0;
     }
 
@@ -74,13 +76,14 @@ static int virtio_blk_handle_rw_error(VirtIOBlockReq *req, int error,
             || action == BLOCK_ERR_STOP_ANY) {
         req->next = s->rq;
         s->rq = req;
-        bdrv_mon_event(s->bs, BDRV_ACTION_STOP, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_STOP, error, is_read);
         vm_stop(RUN_STATE_IO_ERROR);
+        bdrv_iostatus_set_err(s->bs, error);
     } else {
         virtio_blk_req_complete(req, VIRTIO_BLK_S_IOERR);
         bdrv_acct_done(s->bs, &req->acct);
         qemu_free(req);
-        bdrv_mon_event(s->bs, BDRV_ACTION_REPORT, error, is_read);
+        bdrv_emit_qmp_error_event(s->bs, BDRV_ACTION_REPORT, error, is_read);
     }
 
     return 1;
@@ -237,7 +240,19 @@ static void virtio_blk_handle_scsi(VirtIOBlockReq *req)
         status = VIRTIO_BLK_S_OK;
     }
 
-    req->scsi->errors = hdr.status;
+    /*
+     * From SCSI-Generic-HOWTO: "Some lower level drivers (e.g. ide-scsi)
+     * clear the masked_status field [hence status gets cleared too, see
+     * block/scsi_ioctl.c] even when a CHECK_CONDITION or COMMAND_TERMINATED
+     * status has occurred.  However they do set DRIVER_SENSE in driver_status
+     * field. Also a (sb_len_wr > 0) indicates there is a sense buffer.
+     */
+    if (hdr.status == 0 && hdr.sb_len_wr > 0) {
+        hdr.status = CHECK_CONDITION;
+    }
+
+    req->scsi->errors = hdr.status | (hdr.msg_status << 8) |
+        (hdr.host_status << 16) | (hdr.driver_status << 24);
     req->scsi->residual = hdr.resid;
     req->scsi->sense_len = hdr.sb_len_wr;
     req->scsi->data_len = hdr.dxfer_len;
@@ -460,7 +475,7 @@ static void virtio_blk_reset(VirtIODevice *vdev)
      * This should cancel pending requests, but can't do nicely until there
      * are per-device request lists.
      */
-    qemu_aio_flush();
+    bdrv_drain_all();
 }
 
 /* coalesce internal state, copy to pci i/o region 0
@@ -525,11 +540,26 @@ static void virtio_blk_save(QEMUFile *f, void *opaque)
 static int virtio_blk_load(QEMUFile *f, void *opaque, int version_id)
 {
     VirtIOBlock *s = opaque;
+    int ret;
 
     if (version_id != 2)
         return -EINVAL;
 
-    virtio_load(&s->vdev, f);
+    /* RHEL only.  Upstream we will fix this by ensuring that VIRTIO_BLK_F_SCSI
+     * is always set.  This however will cause migration from new QEMU to old
+     * QEMU to fail if both have scsi=off.  We cannot use compatibility
+     * properties because the scsi property is being overridden by management
+     * (libvirt).
+     *
+     * If RHEL7->RHEL6 migration will be supported, we'll have to disable
+     * VIRTIO_BLK_F_SCSI in the migration stream when running on a rhel6.x.0
+     * machine type with scsi=off.  Otherwise SG_IO will magically start
+     * working on the destination.
+     */
+    ret = virtio_load_with_features(&s->vdev, f, 1 << VIRTIO_BLK_F_SCSI);
+    if (ret) {
+        return ret;
+    }
     while (qemu_get_sbyte(f)) {
         VirtIOBlockReq *req = virtio_blk_alloc_request(s);
         qemu_get_buffer(f, (unsigned char*)&req->elem, sizeof(req->elem));
@@ -563,6 +593,15 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, BlockConf *conf)
     static int virtio_blk_id;
     DriveInfo *dinfo;
 
+    if (!conf->bs) {
+        error_report("drive property not set");
+        return NULL;
+    }
+    if (!bdrv_is_inserted(conf->bs)) {
+        error_report("Device needs media, but drive is empty");
+        return NULL;
+    }
+
     s = (VirtIOBlock *)virtio_common_init("virtio-blk", VIRTIO_ID_BLOCK,
                                           sizeof(struct virtio_blk_config),
                                           sizeof(VirtIOBlock));
@@ -592,6 +631,7 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, BlockConf *conf)
     bdrv_set_dev_ops(s->bs, &virtio_block_ops, s);
     s->bs->buffer_alignment = conf->logical_block_size;
 
+    bdrv_iostatus_enable(s->bs);
     add_boot_device_path(conf->bootindex, dev, "/disk@0,0");
 
     return &s->vdev;

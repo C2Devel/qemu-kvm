@@ -2,14 +2,8 @@
 #ifndef QEMU_COMMON_H
 #define QEMU_COMMON_H
 
+#include "compiler.h"
 #include "config-host.h"
-
-#define QEMU_NORETURN __attribute__ ((__noreturn__))
-#ifdef CONFIG_GCC_ATTRIBUTE_WARN_UNUSED_RESULT
-#define QEMU_WARN_UNUSED_RESULT __attribute__((warn_unused_result))
-#else
-#define QEMU_WARN_UNUSED_RESULT
-#endif
 
 typedef struct DeviceState DeviceState;
 
@@ -34,6 +28,7 @@ typedef struct DeviceState DeviceState;
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <assert.h>
+#include <glib.h>
 
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
@@ -67,6 +62,9 @@ struct iovec {
 #else
 #include <sys/uio.h>
 #endif
+
+typedef int (*fprintf_function)(FILE *f, const char *fmt, ...)
+    GCC_FMT_ATTR(2, 3);
 
 #ifdef _WIN32
 #define fsync _commit
@@ -103,10 +101,6 @@ static inline char *realpath(const char *path, char *resolved_path)
 typedef struct QEMUBH QEMUBH;
 
 typedef void QEMUBHFunc(void *opaque);
-
-void async_context_push(void);
-void async_context_pop(void);
-int get_async_context_id(void);
 
 QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque);
 void qemu_bh_schedule(QEMUBH *bh);
@@ -171,9 +165,6 @@ void *qemu_mallocz(size_t size);
 void qemu_free(void *ptr);
 char *qemu_strdup(const char *str);
 char *qemu_strndup(const char *str, size_t size);
-
-void *get_mmap_addr(unsigned long size);
-
 
 void qemu_mutex_lock_iothread(void);
 void qemu_mutex_unlock_iothread(void);
@@ -241,6 +232,7 @@ typedef struct SSIBus SSIBus;
 typedef struct EventNotifier EventNotifier;
 typedef struct VirtIODevice VirtIODevice;
 typedef struct BlockDriver BlockDriver;
+typedef struct QEMUSGList QEMUSGList;
 
 /* CPU save/load.  */
 void cpu_save(QEMUFile *f, void *opaque);
@@ -291,6 +283,8 @@ void qemu_iovec_memset(QEMUIOVector *qiov, int c, size_t count);
 void qemu_iovec_memset_skip(QEMUIOVector *qiov, int c, size_t count,
                             size_t skip);
 
+bool buffer_is_zero(const void *buf, size_t len);
+
 void qemu_progress_init(int enabled, float min_skip);
 void qemu_progress_end(void);
 void qemu_progress_print(float delta, int max);
@@ -308,6 +302,12 @@ static inline uint8_t from_bcd(uint8_t val)
 {
     return ((val >> 4) * 10) + (val & 0x0f);
 }
+
+/* Round number down to multiple */
+#define QEMU_ALIGN_DOWN(n, m) ((n) / (m) * (m))
+
+/* Round number up to multiple */
+#define QEMU_ALIGN_UP(n, m) QEMU_ALIGN_DOWN((n) + (m) - 1, (m))
 
 #include "module.h"
 

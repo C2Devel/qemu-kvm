@@ -1,0 +1,189 @@
+# -*- Mode: Python -*-
+#
+# QAPI Schema
+
+#ifdef CONFIG_LIVE_SNAPSHOTS
+##
+# @NewImageMode
+#
+# An enumeration that tells QEMU how to set the backing file path in
+# a new image file.
+#
+# @existing: QEMU should look for an existing image file.
+#
+# @absolute-paths: QEMU should create a new image with absolute paths
+# for the backing file.
+#
+# Since: 1.1
+##
+{ 'enum': 'NewImageMode'
+  'data': [ 'existing', 'absolute-paths' ] }
+
+##
+# @BlockdevSnapshot
+#
+# @device:  the name of the device to generate the snapshot from.
+#
+# @snapshot-file: the target of the new image. A new file will be created.
+#
+# @format: #optional the format of the snapshot image, default is 'qcow2'.
+#
+# @mode: #optional whether and how QEMU should create a new image, default is
+# 'absolute-paths'.
+##
+{ 'type': 'BlockdevSnapshot',
+  'data': { 'device': 'str', 'snapshot-file': 'str', '*format': 'str',
+            '*mode': 'NewImageMode' } }
+
+##
+# @BlockdevMirror
+#
+# @device:  the name of the device to start mirroring.
+#
+# @target: the image that will start receiving writes for @device. A new
+#          file will be created unless @mode is "existing".
+#
+# @format: #optional the format of the target image, default is 'qcow2'.
+#
+# @speed:  #optional the maximum speed, in bytes per second
+#
+# @mode: #optional whether and how QEMU should create a new image, default is
+# 'absolute-paths'.
+#
+# @full: whether the whole disk should be copied to the destination, or
+#        only the topmost image.
+##
+{ 'type': 'BlockdevMirror',
+  'data': { 'device': 'str', 'target': 'str', '*format': 'str',
+            '*speed': 'int', '*full': 'bool', '*mode': 'NewImageMode' } }
+
+##
+# @BlockdevAction
+#
+# A discriminated record of operations that can be performed with
+# @transaction.
+##
+{ 'union': 'BlockdevAction',
+  'data': {
+       'blockdev-snapshot-sync': 'BlockdevSnapshot',
+       '__com.redhat_drive-mirror': 'BlockdevMirror',
+   } }
+
+##
+# @transaction
+#
+# Atomically operate on a group of one or more block devices.  If
+# any operation fails, then the entire set of actions will be
+# abandoned and the appropriate error returned.  The only operation
+# supported is currently blockdev-snapshot-sync.
+#
+#  List of:
+#  @BlockdevAction: information needed for the device snapshot
+#
+# Returns: nothing on success
+#          If @device is not a valid block device, DeviceNotFound
+#          If @device is busy, DeviceInUse will be returned
+#          If @snapshot-file can't be created, OpenFileFailed
+#          If @snapshot-file can't be opened, OpenFileFailed
+#          If @format is invalid, InvalidBlockFormat
+#
+# Note: The transaction aborts on the first failure.  Therefore, there will
+# be only one device or snapshot file returned in an error condition, and
+# subsequent actions will not have been attempted.
+#
+# Since 1.1
+##
+{ 'command': 'transaction',
+  'data': { 'actions': [ 'BlockdevAction' ] } }
+
+##
+# @blockdev-snapshot-sync
+#
+# Generates a synchronous snapshot of a block device.
+#
+# @device:  the name of the device to generate the snapshot from.
+#
+# @snapshot-file: the target of the new image. If the file exists, or if it
+#                 is a device, the snapshot will be created in the existing
+#                 file/device. If does not exist, a new file will be created.
+#
+# @format: #optional the format of the snapshot image, default is 'qcow2'.
+#
+# @mode: #optional whether and how QEMU should create a new image, default is
+# 'absolute-paths'.
+#
+# Returns: nothing on success
+#          If @device is not a valid block device, DeviceNotFound
+#          If @snapshot-file can't be opened, OpenFileFailed
+#          If @format is invalid, InvalidBlockFormat
+#
+# Since 0.14.0
+##
+{ 'command': 'blockdev-snapshot-sync',
+  'data': { 'device': 'str', 'snapshot-file': 'str', '*format': 'str',
+            '*mode': 'NewImageMode'} }
+
+##
+# @__com.redhat_drive-reopen
+#
+# Assigns a new image file to a device.
+#
+# @device: the name of the device for which we are changing the image file.
+#
+# @new-image-file: the target of the new image. If the file doesn't exists the
+#                  command will fail.
+#
+# @format: #optional the format of the new image, default is to probe the
+#          image file
+#
+# @witness: A file descriptor name that was passed via getfd.  QEMU will write
+#   a single byte to this file descriptor before completing the command
+#   successfully.  If the byte is not written to the file, it is
+#   guaranteed that the guest has not issued any I/O to the new image.
+#   Failure to write the byte is fatal just like failure to open the new
+#   image, and will cause the guest to revert to the currently open file.
+#
+# Returns: nothing on success
+#          If @device is not a valid block device, DeviceNotFound
+#          If @new-image-file can't be opened, OpenFileFailed
+#          If @format is invalid, InvalidBlockFormat
+#
+# Since 1.1
+##
+{ 'command': '__com.redhat_drive-reopen',
+  'data': { 'device': 'str', 'new-image-file': 'str', '*format': 'str',
+            '*witness': 'str' } }
+
+##
+# @__com.redhat_drive-mirror
+#
+# Start mirroring a block device's writes to a new destination.
+#
+# @device:  the name of the device whose writes should be mirrored.
+#
+# @target: the target of the new image. If the file exists, or if it
+#          is a device, the existing file/device will be used as the new
+#          destination.  If it does not exist, a new file will be created.
+#
+# @format: #optional the format of the new destination, default is the
+#          format of the source
+#
+# @speed:  #optional the maximum speed, in bytes per second
+#
+# @mode: #optional whether and how QEMU should create a new image, default is
+# 'absolute-paths'.
+#
+# @full: whether the whole disk should be copied to the destination, or
+#        only the topmost image.
+#
+# Returns: nothing on success
+#          If @device is not a valid block device, DeviceNotFound
+#          If @target can't be opened, OpenFileFailed
+#          If @format is invalid, InvalidBlockFormat
+#
+# Since 1.1
+##
+{ 'command': '__com.redhat_drive-mirror',
+  'data': { 'device': 'str', 'target': 'str', '*format': 'str',
+            '*speed': 'int', '*full': 'bool', '*mode': 'NewImageMode'} }
+#endif

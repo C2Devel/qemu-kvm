@@ -12,7 +12,6 @@
 
 #include "block.h"
 #include "qemu-queue.h"
-#include "monitor.h"
 
 void blockdev_mark_auto_del(BlockDriverState *bs);
 void blockdev_auto_del(BlockDriverState *bs);
@@ -41,6 +40,7 @@ typedef struct DriveInfo {
     int bdrv_flags;
     char *file;
     BlockDriver *drv;
+    int refcount;
 } DriveInfo;
 
 extern QTAILQ_HEAD(drivelist, DriveInfo) drives;
@@ -50,9 +50,10 @@ extern DriveInfo *drive_get(BlockInterfaceType type, int bus, int unit);
 extern DriveInfo *drive_get_by_id(const char *id);
 DriveInfo *drive_get_by_index(BlockInterfaceType type, int index);
 extern int drive_get_max_bus(BlockInterfaceType type);
-extern void drive_uninit(DriveInfo *dinfo);
 extern DriveInfo *drive_get_by_blockdev(BlockDriverState *bs);
 extern const char *drive_get_serial(BlockDriverState *bdrv);
+void drive_get_ref(DriveInfo *dinfo);
+void drive_put_ref(DriveInfo *dinfo);
 
 QemuOpts *drive_def(const char *optstr);
 QemuOpts *drive_add(BlockInterfaceType type, int index, const char *file,
@@ -72,12 +73,11 @@ int do_change_block(Monitor *mon, const char *device,
                     const char *filename, const char *fmt);
 int simple_drive_add(Monitor *mon, const QDict *qdict, QObject **ret_data);
 int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data);
-void monitor_print_block_jobs(Monitor *mon, const QObject *data);
-void do_info_block_jobs(Monitor *mon, QObject **ret_data);
-int do_block_stream(Monitor *mon, const QDict *params, QObject **ret_data);
-int do_block_job_cancel(Monitor *mon, const QDict *params,
-                        MonitorCompletion cb, void *opaque);
+int do_block_stream(Monitor *mon, const QDict *qdict, QObject **ret_data);
 int do_block_job_set_speed(Monitor *mon, const QDict *params,
                            QObject **ret_data);
+int do_block_job_cancel(Monitor *mon, const QDict *params, QObject **ret_data);
+void monitor_print_block_jobs(Monitor *mon, const QObject *data);
+void do_info_block_jobs(Monitor *mon, QObject **ret_data);
 
 #endif
