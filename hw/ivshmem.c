@@ -351,6 +351,10 @@ static void close_guest_eventfds(IVShmemState *s, int posn)
 {
     int i, guest_curr_max;
 
+    if (!ivshmem_has_feature(s, IVSHMEM_IOEVENTFD)) {
+        return;
+    }
+
     guest_curr_max = s->peers[posn].nb_eventfds;
 
     for (i = 0; i < guest_curr_max; i++) {
@@ -361,22 +365,6 @@ static void close_guest_eventfds(IVShmemState *s, int posn)
 
     g_free(s->peers[posn].eventfds);
     s->peers[posn].nb_eventfds = 0;
-}
-
-static void setup_ioeventfds(IVShmemState *s) {
-
-    int i, j;
-
-    for (i = 0; i <= s->max_peer; i++) {
-        for (j = 0; j < s->peers[i].nb_eventfds; j++) {
-            memory_region_add_eventfd(&s->ivshmem_mmio,
-                                      DOORBELL,
-                                      4,
-                                      true,
-                                      (i << 16) | j,
-                                      s->peers[i].eventfds[j]);
-        }
-    }
 }
 
 /* this function increase the dynamic storage need to store data about other
@@ -684,10 +672,6 @@ static int pci_ivshmem_init(PCIDevice *dev)
 
     memory_region_init_io(&s->ivshmem_mmio, &ivshmem_mmio_ops, s,
                           "ivshmem-mmio", IVSHMEM_REG_BAR_SIZE);
-
-    if (ivshmem_has_feature(s, IVSHMEM_IOEVENTFD)) {
-        setup_ioeventfds(s);
-    }
 
     /* region for registers*/
     pci_register_bar(&s->dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY,

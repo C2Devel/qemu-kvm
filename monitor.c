@@ -4522,13 +4522,13 @@ static void monitor_control_event(void *opaque, int event)
     switch (event) {
     case CHR_EVENT_OPENED:
         mon->mc->command_mode = 0;
-        json_message_parser_init(&mon->mc->parser, handle_qmp_command);
         data = get_qmp_greeting();
         monitor_json_emitter(mon, data);
         qobject_decref(data);
         break;
     case CHR_EVENT_CLOSED:
         json_message_parser_destroy(&mon->mc->parser);
+        json_message_parser_init(&mon->mc->parser, handle_qmp_command);
         break;
     }
 }
@@ -4626,6 +4626,8 @@ void monitor_init(CharDriverState *chr, int flags)
         qemu_chr_add_handlers(chr, monitor_can_read, monitor_control_read,
                               monitor_control_event, mon);
         qemu_chr_fe_set_echo(chr, true);
+
+        json_message_parser_init(&mon->mc->parser, handle_qmp_command);
     } else {
         qemu_chr_add_handlers(chr, monitor_can_read, monitor_read,
                               monitor_event, mon);

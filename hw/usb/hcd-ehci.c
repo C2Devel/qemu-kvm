@@ -348,6 +348,7 @@ struct EHCIQueue {
     QTAILQ_ENTRY(EHCIQueue) next;
     uint32_t seen;
     uint64_t ts;
+    int revalidate;
 
     /* cached data from guest - needs to be flushed
      * when guest removes an entry (doorbell, handshake sequence)
@@ -695,7 +696,18 @@ static EHCIQueue *ehci_find_queue_by_qh(EHCIState *ehci, uint32_t addr,
     return NULL;
 }
 
-static void ehci_queues_rip_unused(EHCIState *ehci, int async, int flush)
+static void ehci_queues_tag_unused_async(EHCIState *ehci)
+{
+    EHCIQueue *q;
+
+    QTAILQ_FOREACH(q, &ehci->aqueues, next) {
+        if (!q->seen) {
+            q->revalidate = 1;
+        }
+    }
+}
+
+static void ehci_queues_rip_unused(EHCIState *ehci, int async)
 {
     EHCIQueueHead *head = async ? &ehci->aqueues : &ehci->pqueues;
     EHCIQueue *q, *tmp;
@@ -706,7 +718,7 @@ static void ehci_queues_rip_unused(EHCIState *ehci, int async, int flush)
             q->ts = ehci->last_run_ns;
             continue;
         }
-        if (!flush && ehci->last_run_ns < q->ts + 250000000) {
+        if (ehci->last_run_ns < q->ts + 250000000) {
             /* allow 0.25 sec idle */
             continue;
         }
@@ -1064,6 +1076,12 @@ static void ehci_mem_writel(void *ptr, target_phys_addr_t addr, uint32_t val)
     /* Do any register specific pre-write processing here.  */
     switch(addr) {
     case USBCMD:
+        if (val & USBCMD_HCRESET) {
+            ehci_reset(s);
+            val = s->usbcmd;
+            break;
+        }
+
         if ((val & USBCMD_RUNSTOP) && !(s->usbcmd & USBCMD_RUNSTOP)) {
             qemu_mod_timer(s->frame_timer, qemu_get_clock_ns(vm_clock));
             SET_LAST_RUN_CLOCK(s);
@@ -1077,10 +1095,6 @@ static void ehci_mem_writel(void *ptr, target_phys_addr_t addr, uint32_t val)
             ehci_set_usbsts(s, USBSTS_HALT);
         }
 
-        if (val & USBCMD_HCRESET) {
-            ehci_reset(s);
-            val = s->usbcmd;
-        }
 
         /* not supporting dynamic frame list size at the moment */
         if ((val & USBCMD_FLS) && !(s->usbcmd & USBCMD_FLS)) {
@@ -1451,7 +1465,7 @@ static int ehci_process_itd(EHCIState *ehci,
 
             dev = ehci_find_device(ehci, devaddr);
             ep = usb_ep_get(dev, pid, endp);
-            if (ep->type == USB_ENDPOINT_XFER_ISOC) {
+            if (ep && ep->type == USB_ENDPOINT_XFER_ISOC) {
                 usb_packet_setup(&ehci->ipacket, pid, ep);
                 usb_packet_map(&ehci->ipacket, &ehci->isgl);
                 ret = usb_handle_packet(dev, &ehci->ipacket);
@@ -1519,7 +1533,7 @@ static int ehci_state_waitlisthead(EHCIState *ehci,  int async)
         ehci_set_usbsts(ehci, USBSTS_REC);
     }
 
-    ehci_queues_rip_unused(ehci, async, 0);
+    ehci_queues_rip_unused(ehci, async);
 
     /*  Find the head of the list (4.9.1.1) */
     for(i = 0; i < MAX_QH; i++) {
@@ -1603,6 +1617,7 @@ static EHCIQueue *ehci_state_fetchqh(EHCIState *ehci, int async)
 {
     uint32_t entry;
     EHCIQueue *q;
+    EHCIqh qh;
 
     entry = ehci_get_fetch_addr(ehci, async);
     q = ehci_find_queue_by_qh(ehci, entry, async);
@@ -1620,7 +1635,16 @@ static EHCIQueue *ehci_state_fetchqh(EHCIState *ehci, int async)
     }
 
     get_dwords(ehci, NLPTR_GET(q->qhaddr),
-               (uint32_t *) &q->qh, sizeof(EHCIqh) >> 2);
+               (uint32_t *) &qh, sizeof(EHCIqh) >> 2);
+    if (q->revalidate && (q->qh.epchar      != qh.epchar ||
+                          q->qh.epcap       != qh.epcap  ||
+                          q->qh.current_qtd != qh.current_qtd)) {
+        ehci_free_queue(q, async);
+        q = ehci_alloc_queue(ehci, async);
+        q->seen++;
+    }
+    q->qh = qh;
+    q->revalidate = 0;
     ehci_trace_qh(q, NLPTR_GET(q->qhaddr), &q->qh);
 
     if (q->async == EHCI_ASYNC_INFLIGHT) {
@@ -2045,7 +2069,7 @@ static void ehci_advance_async_state(EHCIState *ehci)
          */
         if (ehci->usbcmd & USBCMD_IAAD) {
             /* Remove all unseen qhs from the async qhs queue */
-            ehci_queues_rip_unused(ehci, async, 1);
+            ehci_queues_tag_unused_async(ehci);
             DPRINTF("ASYNC: doorbell request acknowledged\n");
             ehci->usbcmd &= ~USBCMD_IAAD;
             ehci_set_interrupt(ehci, USBSTS_IAA);
@@ -2100,7 +2124,7 @@ static void ehci_advance_periodic_state(EHCIState *ehci)
         ehci_set_fetch_addr(ehci, async,entry);
         ehci_set_state(ehci, async, EST_FETCHENTRY);
         ehci_advance_state(ehci, async);
-        ehci_queues_rip_unused(ehci, async, 0);
+        ehci_queues_rip_unused(ehci, async);
         break;
 
     default:
@@ -2300,6 +2324,7 @@ static int usb_ehci_initfn(PCIDevice *dev)
     s->frame_timer = qemu_new_timer_ns(vm_clock, ehci_frame_timer, s);
     QTAILQ_INIT(&s->aqueues);
     QTAILQ_INIT(&s->pqueues);
+    usb_packet_init(&s->ipacket);
 
     qemu_register_reset(ehci_reset, s);
 
