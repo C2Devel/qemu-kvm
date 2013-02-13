@@ -25,7 +25,6 @@
 struct ISABus {
     BusState qbus;
     qemu_irq *irqs;
-    uint32_t assigned;
 };
 static ISABus *isabus;
 
@@ -60,36 +59,25 @@ void isa_bus_irqs(qemu_irq *irqs)
 }
 
 /*
- * isa_reserve_irq() reserves the ISA irq and returns the corresponding
- * qemu_irq entry for the i8259.
+ * isa_get_irq() returns the corresponding qemu_irq entry for the i8259.
  *
  * This function is only for special cases such as the 'ferr', and
  * temporary use for normal devices until they are converted to qdev.
  */
-qemu_irq isa_reserve_irq(int isairq)
+qemu_irq isa_get_irq(int isairq)
 {
     if (isairq < 0 || isairq > 15) {
         fprintf(stderr, "isa irq %d invalid\n", isairq);
         exit(1);
     }
-    if (isabus->assigned & (1 << isairq)) {
-        fprintf(stderr, "isa irq %d already assigned\n", isairq);
-        exit(1);
-    }
-    isabus->assigned |= (1 << isairq);
     return isabus->irqs[isairq];
 }
 
 void isa_init_irq(ISADevice *dev, qemu_irq *p, int isairq)
 {
     assert(dev->nirqs < ARRAY_SIZE(dev->isairq));
-    if (isabus->assigned & (1 << isairq)) {
-        fprintf(stderr, "isa irq %d already assigned\n", isairq);
-        exit(1);
-    }
-    isabus->assigned |= (1 << isairq);
     dev->isairq[dev->nirqs] = isairq;
-    *p = isabus->irqs[isairq];
+    *p = isa_get_irq(isairq);
     dev->nirqs++;
 }
 

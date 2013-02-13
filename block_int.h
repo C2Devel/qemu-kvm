@@ -29,6 +29,7 @@
 #include "qemu-queue.h"
 #include "qemu-coroutine.h"
 #include "qemu-timer.h"
+#include "hbitmap.h"
 
 #define BLOCK_FLAG_ENCRYPT	1
 #define BLOCK_FLAG_COMPAT6	4
@@ -274,8 +275,7 @@ struct BlockDriverState {
     BlockErrorAction on_read_error, on_write_error;
     BlockIOStatus iostatus;
     char device_name[32];
-    unsigned long *dirty_bitmap;
-    int64_t dirty_count;
+    HBitmap *dirty_bitmap;
     int in_use; /* users other than guest access, eg. block migration */
     QTAILQ_ENTRY(BlockDriverState) list;
     void *private;

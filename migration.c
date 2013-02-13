@@ -77,8 +77,6 @@ void process_incoming_migration(QEMUFile *f)
     qemu_announce_self();
     DPRINTF("successfully loaded vm state\n");
 
-    monitor_protocol_event(QEVENT_INCOMING_FINISHED, NULL);
-
     if (drives_reopen() != 0) {
         fprintf(stderr, "reopening of drives failed\n");
         exit(1);

@@ -61,9 +61,11 @@
 #include "osdep.h"
 #include "exec-all.h"
 #include "qemu-kvm.h"
+#include "trace.h"
 #include "ui/qemu-spice.h"
 #include "qmp-commands.h"
 #include "hmp.h"
+#include "qemu-thread.h"
 
 //#define DEBUG
 //#define DEBUG_COMPLETION
@@ -143,6 +145,19 @@ typedef struct MonitorControl {
     JSONMessageParser parser;
     int command_mode;
 } MonitorControl;
+
+/*
+ * To prevent flooding clients, events can be throttled. The
+ * throttling is calculated globally, rather than per-Monitor
+ * instance.
+ */
+typedef struct MonitorEventState {
+    MonitorEvent event; /* Event being tracked */
+    int64_t rate;       /* Period over which to throttle. 0 to disable */
+    int64_t last;       /* Time at which event was last emitted */
+    QEMUTimer *timer;   /* Timer for handling delayed events */
+    QObject *data;      /* Event pending delayed dispatch */
+} MonitorEventState;
 
 struct Monitor {
     CharDriverState *chr;
@@ -353,6 +368,11 @@ static inline bool monitor_cmd_user_only(const mon_cmd_t *cmd)
     return (cmd->flags & MONITOR_CMD_USER_ONLY);
 }
 
+static inline bool cmd_is_qmp_only(const mon_cmd_t *cmd)
+{
+    return cmd->flags & MONITOR_CMD_QMP_ONLY;
+}
+
 static inline int monitor_has_error(const Monitor *mon)
 {
     return mon->error != NULL;
@@ -374,6 +394,8 @@ static void monitor_json_emitter(Monitor *mon, const QObject *data)
 static void monitor_protocol_emitter(Monitor *mon, QObject *data)
 {
     QDict *qmp;
+
+    trace_monitor_protocol_emitter(mon);
 
     qmp = qdict_new();
 
@@ -420,6 +442,167 @@ static void timestamp_put(QDict *qdict)
     qdict_put_obj(qdict, "timestamp", obj);
 }
 
+
+static const char *monitor_event_names[] = {
+    [QEVENT_SHUTDOWN] = "SHUTDOWN",
+    [QEVENT_RESET] = "RESET",
+    [QEVENT_POWERDOWN] = "POWERDOWN",
+    [QEVENT_STOP] = "STOP",
+    [QEVENT_RESUME] = "RESUME",
+    [QEVENT_VNC_CONNECTED] = "VNC_CONNECTED",
+    [QEVENT_VNC_INITIALIZED] = "VNC_INITIALIZED",
+    [QEVENT_VNC_DISCONNECTED] = "VNC_DISCONNECTED",
+    [QEVENT_BLOCK_IO_ERROR] = "BLOCK_IO_ERROR",
+    [QEVENT_RTC_CHANGE] = "RTC_CHANGE",
+    [QEVENT_WATCHDOG] = "WATCHDOG",
+    [QEVENT_SPICE_CONNECTED] = "SPICE_CONNECTED",
+    [QEVENT_SPICE_INITIALIZED] = "SPICE_INITIALIZED",
+    [QEVENT_SPICE_DISCONNECTED] = "SPICE_DISCONNECTED",
+    [QEVENT_RH_SPICE_INITIALIZED] = RFQDN_REDHAT "SPICE_INITIALIZED",
+    [QEVENT_RH_SPICE_DISCONNECTED] = RFQDN_REDHAT "SPICE_DISCONNECTED",
+    [QEVENT_BLOCK_JOB_COMPLETED] = "BLOCK_JOB_COMPLETED",
+    [QEVENT_BLOCK_JOB_CANCELLED] = "BLOCK_JOB_CANCELLED",
+    [QEVENT_DEVICE_TRAY_MOVED] = "DEVICE_TRAY_MOVED",
+    [QEVENT_SUSPEND] = "SUSPEND",
+    [QEVENT_WAKEUP] = "WAKEUP",
+    [QEVENT_BALLOON_CHANGE] = "BALLOON_CHANGE",
+};
+QEMU_BUILD_BUG_ON(ARRAY_SIZE(monitor_event_names) != QEVENT_MAX)
+
+MonitorEventState monitor_event_state[QEVENT_MAX];
+QemuMutex monitor_event_state_lock;
+
+/*
+ * Emits the event to every monitor instance
+ */
+static void
+monitor_protocol_event_emit(MonitorEvent event,
+                            QObject *data)
+{
+    Monitor *mon;
+
+    trace_monitor_protocol_event_emit(event, data);
+    QLIST_FOREACH(mon, &mon_list, entry) {
+        if (monitor_ctrl_mode(mon) && qmp_cmd_mode(mon)) {
+            monitor_json_emitter(mon, data);
+        }
+    }
+}
+
+
+/*
+ * Queue a new event for emission to Monitor instances,
+ * applying any rate limiting if required.
+ */
+static void
+monitor_protocol_event_queue(MonitorEvent event,
+                             QObject *data)
+{
+    MonitorEventState *evstate;
+    int64_t now = qemu_get_clock(rt_clock);
+    assert(event < QEVENT_MAX);
+
+    qemu_mutex_lock(&monitor_event_state_lock);
+    evstate = &(monitor_event_state[event]);
+    trace_monitor_protocol_event_queue(event,
+                                       data,
+                                       evstate->rate,
+                                       evstate->last,
+                                       now);
+
+    /* Rate limit of 0 indicates no throttling */
+    if (!evstate->rate) {
+        monitor_protocol_event_emit(event, data);
+        evstate->last = now;
+    } else {
+        int64_t delta = now - evstate->last;
+        if (evstate->data ||
+            delta < evstate->rate) {
+            /* If there's an existing event pending, replace
+             * it with the new event, otherwise schedule a
+             * timer for delayed emission
+             */
+            if (evstate->data) {
+                qobject_decref(evstate->data);
+            } else {
+                int64_t then = evstate->last + evstate->rate;
+                qemu_mod_timer(evstate->timer, then);
+            }
+            evstate->data = data;
+            qobject_incref(evstate->data);
+        } else {
+            monitor_protocol_event_emit(event, data);
+            evstate->last = now;
+        }
+    }
+    qemu_mutex_unlock(&monitor_event_state_lock);
+}
+
+
+/*
+ * The callback invoked by QemuTimer when a delayed
+ * event is ready to be emitted
+ */
+static void monitor_protocol_event_handler(void *opaque)
+{
+    MonitorEventState *evstate = opaque;
+    int64_t now = qemu_get_clock(rt_clock);
+
+    qemu_mutex_lock(&monitor_event_state_lock);
+
+    trace_monitor_protocol_event_handler(evstate->event,
+                                         evstate->data,
+                                         evstate->last,
+                                         now);
+    if (evstate->data) {
+        monitor_protocol_event_emit(evstate->event, evstate->data);
+        qobject_decref(evstate->data);
+        evstate->data = NULL;
+    }
+    evstate->last = now;
+    qemu_mutex_unlock(&monitor_event_state_lock);
+}
+
+
+/*
+ * @event: the event ID to be limited
+ * @rate: the rate limit in milliseconds
+ *
+ * Sets a rate limit on a particular event, so no
+ * more than 1 event will be emitted within @rate
+ * milliseconds
+ */
+static void
+monitor_protocol_event_throttle(MonitorEvent event,
+                                int64_t rate)
+{
+    MonitorEventState *evstate;
+    assert(event < QEVENT_MAX);
+
+    evstate = &(monitor_event_state[event]);
+
+    trace_monitor_protocol_event_throttle(event, rate);
+    evstate->event = event;
+    evstate->rate = rate;
+    evstate->timer = qemu_new_timer(rt_clock,
+                                    monitor_protocol_event_handler,
+                                    evstate);
+    evstate->last = 0;
+    evstate->data = NULL;
+}
+
+
+/* Global, one-time initializer to configure the rate limiting
+ * and initialize state */
+static void monitor_protocol_event_init(void)
+{
+    qemu_mutex_init(&monitor_event_state_lock);
+    /* Limit RTC & BALLOON events to 1 per second */
+    monitor_protocol_event_throttle(QEVENT_RTC_CHANGE, 1000);
+    monitor_protocol_event_throttle(QEVENT_BALLOON_CHANGE, 1000);
+    monitor_protocol_event_throttle(QEVENT_WATCHDOG, 1000);
+}
+
 /**
  * monitor_protocol_event(): Generate a Monitor event
  *
@@ -429,81 +612,11 @@ void monitor_protocol_event(MonitorEvent event, QObject *data)
 {
     QDict *qmp;
     const char *event_name;
-    Monitor *mon;
 
     assert(event < QEVENT_MAX);
 
-    switch (event) {
-        case QEVENT_SHUTDOWN:
-            event_name = "SHUTDOWN";
-            break;
-        case QEVENT_RESET:
-            event_name = "RESET";
-            break;
-        case QEVENT_POWERDOWN:
-            event_name = "POWERDOWN";
-            break;
-        case QEVENT_STOP:
-            event_name = "STOP";
-            break;
-        case QEVENT_RESUME:
-            event_name = "RESUME";
-            break;
-        case QEVENT_VNC_CONNECTED:
-            event_name = "VNC_CONNECTED";
-            break;
-        case QEVENT_VNC_INITIALIZED:
-            event_name = "VNC_INITIALIZED";
-            break;
-        case QEVENT_VNC_DISCONNECTED:
-            event_name = "VNC_DISCONNECTED";
-            break;
-        case QEVENT_BLOCK_IO_ERROR:
-            event_name = "BLOCK_IO_ERROR";
-            break;
-        case QEVENT_RTC_CHANGE:
-            event_name = "RTC_CHANGE";
-            break;
-        case QEVENT_WATCHDOG:
-            event_name = "WATCHDOG";
-            break;
-        case QEVENT_SPICE_CONNECTED:
-            event_name = "SPICE_CONNECTED";
-            break;
-        case QEVENT_SPICE_INITIALIZED:
-            event_name = "SPICE_INITIALIZED";
-            break;
-        case QEVENT_SPICE_DISCONNECTED:
-            event_name = "SPICE_DISCONNECTED";
-            break;
-        case QEVENT_DEVICE_TRAY_MOVED:
-             event_name = "DEVICE_TRAY_MOVED";
-            break;
-        case QEVENT_BLOCK_JOB_COMPLETED:
-            event_name = "BLOCK_JOB_COMPLETED";
-            break;
-        case QEVENT_BLOCK_JOB_CANCELLED:
-            event_name = "BLOCK_JOB_CANCELLED";
-            break;
-        case QEVENT_RH_SPICE_INITIALIZED:
-            event_name = RFQDN_REDHAT "SPICE_INITIALIZED";
-            break;
-        case QEVENT_RH_SPICE_DISCONNECTED:
-            event_name = RFQDN_REDHAT "SPICE_DISCONNECTED";
-            break;
-        case QEVENT_SUSPEND:
-            event_name = "SUSPEND";
-            break;
-        case QEVENT_WAKEUP:
-            event_name = "WAKEUP";
-            break;
-        case QEVENT_INCOMING_FINISHED:
-            event_name = "INCOMING_FINISHED";
-            break;
-        default:
-            abort();
-            break;
-    }
+    event_name = monitor_event_names[event];
+    assert(event_name != NULL);
 
     qmp = qdict_new();
     timestamp_put(qmp);
@@ -513,11 +626,8 @@ void monitor_protocol_event(MonitorEvent event, QObject *data)
         qdict_put_obj(qmp, "data", data);
     }
 
-    QLIST_FOREACH(mon, &mon_list, entry) {
-        if (monitor_ctrl_mode(mon) && qmp_cmd_mode(mon)) {
-            monitor_json_emitter(mon, QOBJECT(qmp));
-        }
-    }
+    trace_monitor_protocol_event(event, event_name, qmp);
+    monitor_protocol_event_queue(event, QOBJECT(qmp));
     QDECREF(qmp);
 }
 
@@ -600,6 +710,9 @@ static void help_cmd_dump(Monitor *mon, const mon_cmd_t *cmds,
     const mon_cmd_t *cmd;
 
     for(cmd = cmds; cmd->name != NULL; cmd++) {
+        if (cmd_is_qmp_only(cmd)) {
+            continue;
+        }
         if (!name || !strcmp(name, cmd->name))
             monitor_printf(mon, "%s%s %s -- %s\n", prefix, cmd->name,
                            cmd->params, cmd->help);
@@ -852,6 +965,25 @@ static void do_info_commands(Monitor *mon, QObject **ret_data)
 static void do_info_uuid_print(Monitor *mon, const QObject *data)
 {
     monitor_printf(mon, "%s\n", qdict_get_str(qobject_to_qdict(data), "UUID"));
+}
+
+EventInfoList *qmp_query_events(Error **errp)
+{
+    EventInfoList *info, *ev_list = NULL;
+    MonitorEvent e;
+
+    for (e = 0 ; e < QEVENT_MAX ; e++) {
+        const char *event_name = monitor_event_names[e];
+        assert(event_name != NULL);
+        info = g_malloc0(sizeof(*info));
+        info->value = g_malloc0(sizeof(*info->value));
+        info->value->name = g_strdup(event_name);
+
+        info->next = ev_list;
+        ev_list = info;
+    }
+
+    return ev_list;
 }
 
 static void do_info_uuid(Monitor *mon, QObject **ret_data)
@@ -3736,13 +3868,27 @@ static int is_valid_option(const char *c, const char *typestr)
     return (typestr != NULL);
 }
 
-static const mon_cmd_t *search_dispatch_table(const mon_cmd_t *disp_table,
-                                              const char *cmdname)
+static const mon_cmd_t *hmp_search_dispatch_table(const mon_cmd_t *disp_table,
+                                                  const char *cmdname)
 {
     const mon_cmd_t *cmd;
 
     for (cmd = disp_table; cmd->name != NULL; cmd++) {
-        if (compare_cmd(cmdname, cmd->name)) {
+        if (compare_cmd(cmdname, cmd->name) && !cmd_is_qmp_only(cmd)) {
+            return cmd;
+        }
+    }
+
+    return NULL;
+}
+
+static const mon_cmd_t *qmp_search_dispatch_table(const mon_cmd_t *disp_table,
+                                                  const char *cmdname)
+{
+    const mon_cmd_t *cmd;
+
+    for (cmd = disp_table; cmd->name != NULL; cmd++) {
+        if (compare_cmd(cmdname, cmd->name) && !monitor_cmd_user_only(cmd)) {
             return cmd;
         }
     }
@@ -3752,17 +3898,17 @@ static const mon_cmd_t *search_dispatch_table(const mon_cmd_t *disp_table,
 
 static const mon_cmd_t *monitor_find_command(const char *cmdname)
 {
-    return search_dispatch_table(mon_cmds, cmdname);
+    return hmp_search_dispatch_table(mon_cmds, cmdname);
 }
 
 static const mon_cmd_t *qmp_find_query_cmd(const char *info_item)
 {
-    return search_dispatch_table(info_cmds, info_item);
+    return qmp_search_dispatch_table(info_cmds, info_item);
 }
 
 static const mon_cmd_t *qmp_find_cmd(const char *cmdname)
 {
-    return search_dispatch_table(mon_cmds, cmdname);
+    return qmp_search_dispatch_table(mon_cmds, cmdname);
 }
 
 static const mon_cmd_t *monitor_parse_command(Monitor *mon,
@@ -4398,7 +4544,9 @@ static void monitor_find_completion(const char *cmdline)
             cmdname = args[0];
         readline_set_completion_index(cur_mon->rs, strlen(cmdname));
         for(cmd = mon_cmds; cmd->name != NULL; cmd++) {
-            cmd_completion(cmdname, cmd->name);
+            if (!cmd_is_qmp_only(cmd)) {
+                cmd_completion(cmdname, cmd->name);
+            }
         }
     } else {
         /* find the command */
@@ -4449,7 +4597,9 @@ static void monitor_find_completion(const char *cmdline)
             } else if (!strcmp(cmd->name, "help|?")) {
                 readline_set_completion_index(cur_mon->rs, strlen(str));
                 for (cmd = mon_cmds; cmd->name != NULL; cmd++) {
-                    cmd_completion(str, cmd->name);
+                    if (!cmd_is_qmp_only(cmd)) {
+                        cmd_completion(str, cmd->name);
+                    }
                 }
             }
             break;
@@ -4767,6 +4917,7 @@ static void handle_qmp_command(JSONMessageParser *parser, QList *tokens)
     qobject_incref(mon->mc->id);
 
     cmd_name = qdict_get_str(input, "execute");
+    trace_handle_qmp_command(mon, cmd_name);
     if (invalid_qmp_mode(mon, cmd_name)) {
         qerror_report(QERR_COMMAND_NOT_FOUND, cmd_name);
         goto err_out;
@@ -4978,6 +5129,7 @@ void monitor_init(CharDriverState *chr, int flags)
 
     if (is_first_init) {
         key_timer = qemu_new_timer(vm_clock, release_keys, NULL);
+        monitor_protocol_event_init();
         is_first_init = 0;
     }
 

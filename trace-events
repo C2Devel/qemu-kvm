@@ -66,6 +66,7 @@ disable bdrv_co_do_copy_on_readv(void *bs, int64_t sector_num, int nb_sectors, i
 # block/mirror.c
 disable mirror_one_iteration(void *s, int64_t sector_num) "s %p sector_num %"PRId64""
 disable mirror_start(void *bs, void *s, void *co, void *opaque) "bs %p s %p co %p opaque %p"
+disable mirror_restart_iter(void *s, int64_t cnt) "s %p dirty count %"PRId64
 
 # block/stream.c
 disable stream_one_iteration(void *s, int64_t sector_num, int nb_sectors, int is_allocated) "s %p sector_num %"PRId64" nb_sectors %d is_allocated %d"
@@ -203,3 +204,17 @@ disable qemu_co_mutex_lock_entry(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_lock_return(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_unlock_entry(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_unlock_return(void *mutex, void *self) "mutex %p self %p"
+
+# monitor.c
+disable handle_qmp_command(void *mon, const char *cmd_name) "mon %p cmd_name \"%s\""
+disable monitor_protocol_emitter(void *mon) "mon %p"
+disable monitor_protocol_event(uint32_t event, const char *evname, void *data) "event=%d name \"%s\" data %p"
+disable monitor_protocol_event_handler(uint32_t event, void *data, uint64_t last, uint64_t now) "event=%d data=%p last=%" PRId64 " now=%" PRId64
+disable monitor_protocol_event_emit(uint32_t event, void *data) "event=%d data=%p"
+disable monitor_protocol_event_queue(uint32_t event, void *data, uint64_t rate, uint64_t last, uint64_t now) "event=%d data=%p rate=%" PRId64 " last=%" PRId64 " now=%" PRId64
+disable monitor_protocol_event_throttle(uint32_t event, uint64_t rate) "event=%d rate=%" PRId64
+
+# hbitmap.c
+disable hbitmap_iter_skip_words(const void *hb, void *hbi, uint64_t pos, unsigned long cur) "hb %p hbi %p pos %"PRId64" cur 0x%lx" 
+disable hbitmap_reset(void *hb, uint64_t start, uint64_t count, uint64_t sbit, uint64_t ebit) "hb %p items %"PRIu64",%"PRIu64" bits %"PRIu64"..%"PRIu64
+disable hbitmap_set(void *hb, uint64_t start, uint64_t count, uint64_t sbit, uint64_t ebit) "hb %p items %"PRIu64",%"PRIu64" bits %"PRIu64"..%"PRIu64

@@ -2381,6 +2381,45 @@ Note: This example has been shortened as the real response is too long.
 
 EQMP
 
+SQMP
+query-events
+--------------
+
+List QMP available events.
+
+Each event is represented by a json-object, the returned value is a json-array
+of all events.
+
+Each json-object contains:
+
+- "name": event's name (json-string)
+
+Example:
+
+-> { "execute": "query-events" }
+<- {
+      "return":[
+         {
+            "name":"SHUTDOWN"
+         },
+         {
+            "name":"RESET"
+         }
+      ]
+   }
+
+Note: This example has been shortened as the real response is too long.
+
+EQMP
+
+    {
+        .name       = "query-events",
+        .args_type  = "",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_query_events,
+        .flags = MONITOR_CMD_QMP_ONLY
+    },
+
 STEXI
 @item info network
 show the various VLANs and the associated devices
