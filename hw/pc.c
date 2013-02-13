@@ -1217,7 +1217,7 @@ static void pc_init1(ram_addr_t ram_size,
     }
     isa_bus_irqs(isa_irq);
 
-    ferr_irq = isa_reserve_irq(13);
+    ferr_irq = isa_get_irq(13);
 
     /* init basic PC hardware */
     register_ioport_write(0x80, 1, 1, ioport80_write, NULL);
@@ -1272,10 +1272,10 @@ static void pc_init1(ram_addr_t ram_size,
     }
 #ifdef CONFIG_KVM_PIT
     if (kvm_enabled() && qemu_kvm_pit_in_kernel())
-	pit = kvm_pit_init(0x40, isa_reserve_irq(0));
+	pit = kvm_pit_init(0x40, isa_get_irq(0));
     else
 #endif
-	pit = pit_init(0x40, isa_reserve_irq(0));
+	pit = pit_init(0x40, isa_get_irq(0));
     pcspk_init(pit);
     if (!no_hpet) {
         hpet_init(isa_irq);
@@ -1343,7 +1343,7 @@ static void pc_init1(ram_addr_t ram_size,
 
         /* TODO: Populate SPD eeprom data.  */
         smbus = piix4_pm_init(pci_bus, piix3_devfn + 3, 0xb100,
-                              isa_reserve_irq(9));
+                              isa_get_irq(9));
         for (i = 0; i < 8; i++) {
             DeviceState *eeprom;
             eeprom = qdev_create((BusState *)smbus, "smbus-eeprom");

@@ -934,11 +934,54 @@ static bool is_version_1(void *opaque, int version_id)
     return version_id == 1;
 }
 
+static void e1000_set_status(E1000State *d, bool cap_list)
+{
+    uint8_t *pci_conf = d->dev.config;
+    uint16_t status = pci_get_word(pci_conf + PCI_STATUS);
+    /*
+     * We have no capabilities, so capability list bit should normally be 0.
+     * It was set by mistake in RHEL6.3 and older, so we have to set it
+     * before save/load and clear afterwards, to avoid breaking migration.
+     */
+    if (cap_list) {
+        status |= PCI_STATUS_CAP_LIST;
+    } else {
+        status &= ~PCI_STATUS_CAP_LIST;
+    }
+    pci_set_word(pci_conf + PCI_STATUS, status);
+}
+
+static void e1000_pre_save(void *opaque)
+{
+    e1000_set_status(opaque, true);
+}
+
+static void e1000_post_save(void *opaque)
+{
+    e1000_set_status(opaque, false);
+}
+
+static int e1000_pre_load(void *opaque)
+{
+    e1000_set_status(opaque, true);
+    return 0;
+}
+
+static int e1000_post_load(void *opaque, int version_id)
+{
+    e1000_set_status(opaque, false);
+    return 0;
+}
+
 static const VMStateDescription vmstate_e1000 = {
     .name = "e1000",
     .version_id = 2,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
+    .pre_load = e1000_pre_load,
+    .post_load = e1000_post_load,
+    .pre_save = e1000_pre_save,
+    .post_save = e1000_post_save,
     .fields      = (VMStateField []) {
         VMSTATE_PCI_DEVICE(dev, E1000State),
         VMSTATE_UNUSED_TEST(is_version_1, 4), /* was instance id */
@@ -1131,12 +1174,12 @@ static int pci_e1000_init(PCIDevice *pci_dev)
 
     pci_config_set_vendor_id(pci_conf, PCI_VENDOR_ID_INTEL);
     pci_config_set_device_id(pci_conf, E1000_DEVID);
-    *(uint16_t *)(pci_conf+0x06) = cpu_to_le16(0x0010);
-    pci_conf[0x08] = 0x03;
+    pci_conf[PCI_REVISION_ID] = 0x03;
     pci_config_set_class(pci_conf, PCI_CLASS_NETWORK_ETHERNET);
-    pci_conf[0x0c] = 0x10;
+    /* TODO: RST# value should be 0, PCI spec 6.2.4 */
+    pci_conf[PCI_CACHE_LINE_SIZE] = 0x10;
 
-    pci_conf[0x3d] = 1; // interrupt pin 0
+    pci_conf[PCI_INTERRUPT_PIN] = 1; /* interrupt pin A */
 
     d->mmio_index = cpu_register_io_memory(e1000_mmio_read,
             e1000_mmio_write, d);
