@@ -83,7 +83,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid %{nil}
+%define buildid .CROC1
 
 %define zrelease 3
 %define sublevel 0.12.1.2
@@ -129,8 +129,10 @@ Summary: Userspace component of KVM
 Name: %{pkgname}
 Version: %{rpmversion}
 Release: %{full_release}
-# Epoch because we pushed a qemu-1.0 package
-Epoch: 2
+# In earlier versions of CROC packages it was %(date +%s). For now it's
+# locked.
+Epoch: 1366118257
+Provides: %name = %version-%release
 License: GPLv2+ and LGPLv2+ and BSD
 Group: Development/Tools
 URL: http://www.linux-kvm.org
@@ -7736,6 +7738,8 @@ Patch4573: kvm-vmdk-Fix-vmdk_parse_extents.patch
 # For bz#1029331 - fix vmdk support to ESX images
 Patch4574: kvm-vmdk-fix-VMFS-extent-parsing.patch
 
+Patch9999: CROC.patch
+
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
 BuildRequires: rsync dev86 iasl
@@ -7758,6 +7762,7 @@ BuildRequires: systemtap-sdt-devel
 
 # 'stap' binary is required by configure detection of systemtap:
 BuildRequires: systemtap
+BuildRequires: gcc
 
 Requires(post): /usr/bin/getent
 Requires(post): /usr/sbin/groupadd
@@ -7814,6 +7819,7 @@ management code, not to run actual virtual machines.
 %if %{with qemu_kvm}
 %package -n qemu-img%{?pkgsuffix}
 Summary: QEMU command line tool for manipulating disk images
+Provides: qemu-img%{?pkgsuffix} = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-img
 
@@ -7822,6 +7828,7 @@ This package provides a command line tool for manipulating disk images
 
 %package -n %{pkgname}-tools
 Summary: KVM debugging and diagnostics tools
+Provides: %{pkgname}-tools = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-kvm-tools
 
@@ -11442,6 +11449,8 @@ ApplyOptionalPatch()
 %patch4573 -p1
 %patch4574 -p1
 
+%patch9999 -p1
+
 ApplyOptionalPatch qemu-kvm-test.patch
 
 %build
@@ -11798,6 +11807,11 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Wed Jan 29 2014 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.415.el6_5.3.CROC1
+- Set CROC specific Epoch
+- Add missing gcc to BuildRequires
+- Add CROC.patch
+
 * Tue Nov 12 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.3
 - kvm-monitor-monitor_puts-bail-out-when-mon-NULL.patch [bz#1015979 bz#1029329]
 - kvm-qcow2-Flush-image-after-creation.patch [bz#1029327]
