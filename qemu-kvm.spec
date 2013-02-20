@@ -89,7 +89,7 @@
 # by setting the define to ".local" or ".bz123456"
 
 %define zrelease 9
-%define buildid %{nil}
+%define buildid .CROC1
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.355
@@ -134,8 +134,10 @@ Summary: Userspace component of KVM
 Name: %{pkgname}
 Version: %{rpmversion}
 Release: %{full_release}
-# Epoch because we pushed a qemu-1.0 package
-Epoch: 2
+# In earlier versions of CROC packages it was %(date +%s). For now it's
+# locked.
+Epoch: 1366118257
+Provides: %name = %version-%release
 License: GPLv2+ and LGPLv2+ and BSD
 Group: Development/Tools
 URL: http://www.linux-kvm.org
@@ -6496,6 +6498,8 @@ Patch3919: kvm-uhci-egsm-fix.patch
 # For bz#996791 - Off-by-one error in page_l1_map() can lead to out-of-bounds access
 Patch3920: kvm-Fix-off-by-one-error-in-page_l1_map.patch
 
+Patch9999: CROC.patch
+
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
 BuildRequires: rsync dev86 iasl
@@ -6514,6 +6518,7 @@ BuildRequires: systemtap-sdt-devel
 
 # 'stap' binary is required by configure detection of systemtap:
 BuildRequires: systemtap
+BuildRequires: gcc
 
 # If we are building the guest agent, we also are building it for
 # windows
@@ -6574,6 +6579,7 @@ management code, not to run actual virtual machines.
 %if %{with qemu_kvm}
 %package -n qemu-img%{?pkgsuffix}
 Summary: QEMU command line tool for manipulating disk images
+Provides: qemu-img%{?pkgsuffix} = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-img
 
@@ -6582,6 +6588,7 @@ This package provides a command line tool for manipulating disk images
 
 %package -n %{pkgname}-tools
 Summary: KVM debugging and diagnostics tools
+Provides: %{pkgname}-tools = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-kvm-tools
 
@@ -9561,6 +9568,8 @@ ApplyOptionalPatch()
 %patch3919 -p1
 %patch3920 -p1
 
+%patch9999 -p1
+
 ApplyOptionalPatch qemu-kvm-test.patch
 
 %build
@@ -9918,6 +9927,11 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Thu Feb 13 2014 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.355.el6.9.CROC1
+- Set CROC specific Epoch
+- Add missing gcc to BuildRequires
+- Add CROC.patch
+
 * Mon Sep 16 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.9
 - kvm-Fix-off-by-one-error-in-page_l1_map.patch [bz#996791]
 - Resolves: bz#996791
