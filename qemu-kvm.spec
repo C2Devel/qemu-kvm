@@ -62,7 +62,7 @@
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.295
-%define zrelease 10
+%define zrelease 10.CROC1
 
 %define rpmversion %{sublevel}
 %define full_release %{pkgrelease}%{?dist}%{?buildid}.%{?zrelease}
@@ -75,12 +75,14 @@ Summary: Userspace component of KVM
 Name: %{pkgname}
 Version: %{rpmversion}
 Release: %{full_release}
-# Epoch because we pushed a qemu-1.0 package
-Epoch: 2
+# Before this release it was %(date +%s) for CROC packages - stop epoch
+# incrementing.
+Epoch: 1361370041
 License: GPLv2+ and LGPLv2+ and BSD
 Group: Development/Tools
 URL: http://www.linux-kvm.org
 ExclusiveArch: x86_64
+Provides: %name = %version-%release
 
 Source0: http://downloads.sourceforge.net/sourceforge/kvm/qemu-kvm-%{version}.tar.gz
 
@@ -5437,6 +5439,8 @@ Patch3437: kvm-Add-query-events-command-to-QMP-to-query-async-event-take2.patch
 Patch3438: kvm-Add-event-notification-for-guest-balloon-changes-take2.patch
 Patch3439: kvm-Add-rate-limiting-of-RTC_CHANGE-BALLOON_CHANGE-WATCH-take2.patch
 
+Patch9999: CROC.patch
+
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
 BuildRequires: rsync dev86 iasl
@@ -5453,6 +5457,7 @@ BuildRequires: systemtap-sdt-devel
 
 # 'stap' binary is required by configure detection of systemtap:
 BuildRequires: systemtap
+BuildRequires: gcc
 
 Requires(post): /usr/bin/getent
 Requires(post): /usr/sbin/groupadd
@@ -5510,6 +5515,7 @@ management code, not to run actual virtual machines.
 %package -n qemu-img%{?pkgsuffix}
 Summary: QEMU command line tool for manipulating disk images
 Group: Development/Tools
+Provides: qemu-img = %version-%release
 %if 0%{?addprovides}
 Provides: qemu-img = %{epoch}:%{version}-%{release}
 %if 0%{?obsoletes_ver:1}
@@ -8016,6 +8022,8 @@ ApplyOptionalPatch()
 %patch3438 -p1
 %patch3439 -p1
 
+%patch9999 -p1
+
 ApplyOptionalPatch qemu-kvm-test.patch
 
 %build
@@ -8276,6 +8284,9 @@ fi
 %{_mandir}/man1/qemu-img.1*
 
 %changelog
+* Wed Feb 20 2013 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.295.el6.10.CROC1
+- Added CROC.patch
+
 * Wed Dec 12 2012 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.295.el6_3.10
 - kvm-Revert-Add-rate-limiting-of-RTC_CHANGE-BALLOON_CHANG.patch [bz#886101]
 - kvm-Revert-Add-event-notification-for-guest-balloon-chan.patch [bz#886101]
