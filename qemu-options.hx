@@ -268,10 +268,12 @@ ETEXI
 
 DEF("boot", HAS_ARG, QEMU_OPTION_boot,
     "-boot [order=drives][,once=drives][,menu=on|off]\n"
-    "                'drives': floppy (a), hard disk (c), CD-ROM (d), network (n)\n")
+    "      [,reboot-timeout=rb_time]\n"
+    "                'drives': floppy (a), hard disk (c), CD-ROM (d), network (n)\n"
+    "                'rb_timeout': the timeout before guest reboot when boot failed, unit is ms\n")
 STEXI
-@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off]
-
+@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off][,reboot-timeout=@var{rb_timeout}]
+@findex -boot
 Specify boot order @var{drives} as a string of drive letters. Valid
 drive letters depend on the target achitecture. The x86 PC uses: a, b
 (floppy 1 and 2), c (first hard disk), d (first CD-ROM), n-p (Etherboot
@@ -281,6 +283,11 @@ particular boot order only on the first startup, specify it via
 
 Interactive boot menus/prompts can be enabled via @option{menu=on} as far
 as firmware/BIOS supports them. The default is non-interactive boot.
+
+A timeout could be passed to bios, guest will pause for @var{rb_timeout} ms
+when boot failed, then reboot. If @var{rb_timeout} is '-1', guest will not
+reboot, qemu passes '-1' to bios by default. Currently Seabios for X86
+system support it.
 
 @example
 # try to boot from network first, then from hard disk
@@ -560,7 +567,22 @@ Enable SDL.
 ETEXI
 
 DEF("spice", HAS_ARG, QEMU_OPTION_spice,
-    "-spice <args>   enable spice\n")
+    "-spice [port=port][,tls-port=secured-port][,x509-dir=<dir>]\n"
+    "       [,x509-key-file=<file>][,x509-key-password=<file>]\n"
+    "       [,x509-cert-file=<file>][,x509-cacert-file=<file>]\n"
+    "       [,x509-dh-key-file=<file>][,addr=addr][,ipv4|ipv6]\n"
+    "       [,tls-ciphers=<list>]\n"
+    "       [,tls-channel=[main|display|cursor|inputs|record|playback]]\n"
+    "       [,plaintext-channel=[main|display|cursor|inputs|record|playback]]\n"
+    "       [,sasl][,password=<secret>][,disable-ticketing]\n"
+    "       [,image-compression=[auto_glz|auto_lz|quic|glz|lz|off]]\n"
+    "       [,jpeg-wan-compression=[auto|never|always]]\n"
+    "       [,zlib-glz-wan-compression=[auto|never|always]]\n"
+    "       [,streaming-video=[off|all|filter]][,disable-copy-paste]\n"
+    "       [,agent-mouse=[on|off]][,playback-compression=[on|off]]\n"
+    "       [,seamless-migration=[on|off]]\n"
+    "   enable spice\n"
+    "   at least one of {port, tls-port} is mandatory\n")
 STEXI
 @item -spice @var{option}[,@var{option}[,...]]
 @findex -spice
@@ -628,6 +650,9 @@ Enable/disable passing mouse events via vdagent.  Default is on.
 
 @item playback-compression=[on|off]
 Enable/disable audio stream compression (using celt 0.5.1).  Default is on.
+
+@item seamless-migration=[on|off]
+Enable/disable spice seamless migration. Default is off.
 
 @end table
 ETEXI
@@ -732,8 +757,27 @@ is a TCP port number, not a display number.
 @item password
 
 Require that password based authentication is used for client connections.
-The password must be set separately using the @code{change} command in the
-@ref{pcsys_monitor}
+
+The password must be set separately using the @code{set_password} command in
+the @ref{pcsys_monitor}. The syntax to change your password is:
+@code{set_password <protocol> <password>} where <protocol> could be either
+"vnc" or "spice".
+
+If you would like to change <protocol> password expiration, you should use
+@code{expire_password <protocol> <expiration-time>} where expiration time could
+be one of the following options: now, never, +seconds or UNIX time of
+expiration, e.g. +60 to make password expire in 60 seconds, or 1335196800
+to make password expire on "Mon Apr 23 12:00:00 EDT 2012" (UNIX time for this
+date and time).
+
+You can also use keywords "now" or "never" for the expiration time to
+allow <protocol> password to expire immediately or never expire.
+
+Alternatively, you could use @code{__com.redhat_set_password <protocol> <password> <expiration>}
+command to set password and expiration which is the Red Hat preferred way of
+setting password - however in this case the <expiration> parameter is integer
+so to disable password expiration entirely (similar to setting up expiration
+to "never" with @code{set_password} command) you can use value 0 instead.
 
 @item tls
 
@@ -994,7 +1038,7 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
 STEXI
 @item -net nic[,vlan=@var{n}][,macaddr=@var{mac}][,model=@var{type}][,name=@var{name}][,addr=@var{addr}][,vectors=@var{v}]
 Create a new Network Interface Card and connect it to VLAN @var{n} (@var{n}
-= 0 is the default). The NIC is an e1000 by default on the PC
+= 0 is the default). The NIC is an rtl8139 by default on the PC
 target. Optionally, the MAC address can be changed to @var{mac}, the
 device address set to @var{addr} (PCI cards only),
 and a @var{name} can be assigned for use in monitor commands.
@@ -1852,6 +1896,26 @@ Enable KVM full virtualization support. This option is only available
 if KVM support is enabled when compiling.
 ETEXI
 
+DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
+    "-machine [type=]name[,prop[=value][,...]]\n"
+    "                selects emulated machine (-machine ? for list)\n"
+    "                property accel=accel1[:accel2[:...]] selects accelerator\n"
+    "                supported accelerators are kvm, tcg (default: kvm:tcg)\n"
+    "                dump-guest-core=on|off include guest memory in a core dump (default=on)\n")
+STEXI
+@item -machine [type=]@var{name}[,prop=@var{value}[,...]]
+@findex -machine
+Select the emulated machine by @var{name}. Use @code{-machine ?} to list
+available machines. Supported machine properties are:
+@table @option
+@item accel=@var{accels1}[:@var{accels2}[:...]]
+This is used to enable an accelerator. Depending on the target architecture,
+kvm or tcg can be available. By default, kvm is used if available, else tcg.
+@item dump-guest-core=on|off
+Include guest memory in a core dump. The default is on.
+@end table
+ETEXI
+
 #ifdef CONFIG_XEN
 DEF("xen-domid", HAS_ARG, QEMU_OPTION_xen_domid,
     "-xen-domid id   specify xen guest domain id\n")
@@ -2064,6 +2128,10 @@ ETEXI
 DEF("nodefaults", 0, QEMU_OPTION_nodefaults, \
     "-nodefaults     don't create default devices.\n")
 STEXI
+Don't create default devices. Normally, QEMU sets the default devices like serial
+port, parallel port, virtual console, monitor device, VGA adapter, floppy and
+CD-ROM drive and others. The @code{-nodefaults} option will disable all those
+default devices.
 ETEXI
 
 #ifndef _WIN32
@@ -2114,10 +2182,21 @@ DEF("old-param", 0, QEMU_OPTION_old_param,
 #endif
 DEF("readconfig", HAS_ARG, QEMU_OPTION_readconfig,
     "-readconfig <file>\n")
+STEXI
+@item -readconfig @var{file}
+Read device configuration from @var{file}. This approach is useful when you want to spawn
+QEMU process with many command line options but you don't want to exceed the command line
+character limit.
+ETEXI
 DEF("writeconfig", HAS_ARG, QEMU_OPTION_writeconfig,
     "-writeconfig <file>\n"
     "                read/write config file\n")
-
+STEXI
+@item -writeconfig @var{file}
+Write device configuration to @var{file}. The @var{file} can be either filename to save
+command line and device configuration into file or dash @code{-}) character to print the
+output to stdout. This can be later used as input file for @code{-readconfig} option.
+ETEXI
 DEF("no-kvm", 0, QEMU_OPTION_no_kvm,
     "-no-kvm         disable KVM hardware virtualization\n")
 DEF("no-kvm-irqchip", 0, QEMU_OPTION_no_kvm_irqchip,

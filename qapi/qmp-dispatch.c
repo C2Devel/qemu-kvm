@@ -94,8 +94,12 @@ static QObject *do_qmp_dispatch(QObject *request, Error **errp)
     switch (cmd->type) {
     case QCT_NORMAL:
         cmd->fn(args, &ret, errp);
-        if (!error_is_set(errp) && ret == NULL) {
-            ret = QOBJECT(qdict_new());
+        if (!error_is_set(errp)) {
+            if (cmd->options & QCO_NO_SUCCESS_RESP) {
+                g_assert(!ret);
+            } else if (!ret) {
+                ret = QOBJECT(qdict_new());
+            }
         }
         break;
     }
@@ -103,6 +107,14 @@ static QObject *do_qmp_dispatch(QObject *request, Error **errp)
     QDECREF(args);
 
     return ret;
+}
+
+QObject *qmp_build_error_object(Error *errp)
+{
+    return qobject_from_jsonf("{ 'class': %s, 'desc': %s, 'data': %p }",
+                              error_get_field(errp, "class"),
+                              error_get_pretty(errp),
+                              error_get_data(errp));
 }
 
 QObject *qmp_dispatch(QObject *request)
@@ -115,7 +127,7 @@ QObject *qmp_dispatch(QObject *request)
 
     rsp = qdict_new();
     if (err) {
-        qdict_put_obj(rsp, "error", error_get_qobject(err));
+        qdict_put_obj(rsp, "error", qmp_build_error_object(err));
         error_free(err);
     } else if (ret) {
         qdict_put_obj(rsp, "return", ret);

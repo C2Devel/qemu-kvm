@@ -395,6 +395,9 @@ QemuOptsList qemu_spice_opts = {
         },{
             .name = "playback-compression",
             .type = QEMU_OPT_BOOL,
+        },{
+            .name = "seamless-migration",
+            .type = QEMU_OPT_BOOL,
         },
         { /* end if list */ }
     },
@@ -416,6 +419,52 @@ QemuOptsList qemu_option_rom_opts = {
     },
 };
 
+static QemuOptsList qemu_machine_opts = {
+    .name = "machine",
+    .implied_opt_name = "type",
+    .merge_lists = true,
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_machine_opts.head),
+    .desc = {
+        {
+            .name = "type",
+            .type = QEMU_OPT_STRING,
+            .help = "emulated machine"
+        }, {
+            .name = "accel",
+            .type = QEMU_OPT_STRING,
+            .help = "accelerator list",
+        }, {
+            .name = "dump-guest-core",
+            .type = QEMU_OPT_BOOL,
+            .help = "Include guest memory in  a core dump",
+        },
+        { /* End of list */ }
+    },
+};
+
+QemuOptsList qemu_boot_opts = {
+    .name = "boot-opts",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_boot_opts.head),
+    .desc = {
+        /* the three names below are not used now */
+        {
+            .name = "order",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "once",
+            .type = QEMU_OPT_STRING,
+        }, {
+            .name = "menu",
+            .type = QEMU_OPT_STRING,
+        /* following are really used */
+        }, {
+            .name = "reboot-timeout",
+            .type = QEMU_OPT_STRING,
+        },
+        { /*End of list */ }
+    },
+};
+
 static QemuOptsList *vm_config_groups[] = {
     &qemu_drive_opts,
     &qemu_simple_drive_opts,
@@ -429,6 +478,8 @@ static QemuOptsList *vm_config_groups[] = {
     &qemu_cpudef_opts,
     &qemu_spice_opts,
     &qemu_option_rom_opts,
+    &qemu_machine_opts,
+    &qemu_boot_opts,
     NULL,
 };
 

@@ -109,6 +109,7 @@ extern int fd_bootchk;
 void ioport_set_a20(int enable);
 int ioport_get_a20(void);
 CPUState *pc_new_cpu(const char *cpu_model);
+uint32_t apic_id_for_cpu(int cpu_index);
 
 /* acpi.c */
 extern int acpi_enabled;
@@ -120,7 +121,7 @@ int acpi_table_add(const char *table_desc);
 
 /* acpi_piix.c */
 i2c_bus *piix4_pm_init(PCIBus *bus, int devfn, uint32_t smb_io_base,
-                       qemu_irq sci_irq);
+                       qemu_irq sci_irq, void *fw_cfg);
 void piix4_smbus_register_device(SMBusDevice *dev, uint8_t addr);
 void piix4_acpi_system_hot_add_init(PCIBus *bus, const char *model);
 
@@ -178,5 +179,10 @@ void extboot_init(BlockDriverState *bs, int cmd);
 
 int cpu_is_bsp(CPUState *env);
 
-void disable_cpuid_leaf10(void);
+/* machine-type CPU compatibility functions: */
+void set_pmu_passthrough(bool enable);
+void disable_kvm_pv_eoi(void);
+void disable_tsc_deadline(void);
+void set_cpu_model_level(const char *name, int level);
+
 #endif

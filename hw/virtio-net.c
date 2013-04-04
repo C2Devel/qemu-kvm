@@ -426,10 +426,6 @@ static void virtio_net_handle_rx(VirtIODevice *vdev, VirtQueue *vq)
     VirtIONet *n = to_virtio_net(vdev);
 
     qemu_flush_queued_packets(&n->nic->nc);
-
-    /* We now have RX buffers, signal to the IO thread to break out of the
-     * select to re-poll the tap file descriptor */
-    qemu_notify_event();
 }
 
 static int virtio_net_can_receive(VLANClientState *nc)
@@ -948,6 +944,11 @@ static int virtio_net_load(QEMUFile *f, void *opaque, int version_id)
             qemu_bh_schedule(n->tx_bh);
         }
     }
+
+    /* nc.link_down can't be migrated, so infer link_down according
+     * to link status bit in n->status */
+    n->nic->nc.link_down = (n->status & VIRTIO_NET_S_LINK_UP) == 0;
+
     return 0;
 }
 

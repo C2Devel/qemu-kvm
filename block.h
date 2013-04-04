@@ -6,6 +6,7 @@
 #include "qemu-option.h"
 #include "qemu-coroutine.h"
 #include "qobject.h"
+#include "error.h"
 
 /* block.c */
 typedef struct BlockDriverInfo {
@@ -71,6 +72,7 @@ typedef struct BlockDevOps {
 #define BDRV_O_NO_FLUSH    0x0200 /* disable flushing on this disk */
 #define BDRV_O_COPY_ON_READ 0x0400 /* copy read backing sectors into image */
 #define BDRV_O_INCOMING    0x0800 /* consistency hint for incoming migration */
+#define BDRV_O_ALLOW_RDWR  0x2000  /* allow reopen to change from r/o to r/w */
 
 #define BDRV_O_CACHE_MASK  (BDRV_O_NOCACHE | BDRV_O_CACHE_WB)
 
@@ -91,6 +93,15 @@ typedef enum {
     BDRV_IOS_INVAL, BDRV_IOS_OK, BDRV_IOS_FAILED, BDRV_IOS_ENOSPC,
     BDRV_IOS_MAX
 } BlockIOStatus;
+
+typedef QSIMPLEQ_HEAD(BlockReopenQueue, BlockReopenQueueEntry) BlockReopenQueue;
+
+typedef struct BDRVReopenState {
+    BlockDriverState *bs;
+    int flags;
+    void *opaque;
+} BDRVReopenState;
+
 
 void bdrv_iostatus_enable(BlockDriverState *bs);
 void bdrv_iostatus_reset(BlockDriverState *bs);
@@ -123,6 +134,14 @@ void bdrv_delete(BlockDriverState *bs);
 int bdrv_file_open(BlockDriverState **pbs, const char *filename, int flags);
 int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
               BlockDriver *drv);
+BlockReopenQueue *bdrv_reopen_queue(BlockReopenQueue *bs_queue,
+                                    BlockDriverState *bs, int flags);
+int bdrv_reopen_multiple(BlockReopenQueue *bs_queue, Error **errp);
+int bdrv_reopen(BlockDriverState *bs, int bdrv_flags, Error **errp);
+int bdrv_reopen_prepare(BDRVReopenState *reopen_state,
+                        BlockReopenQueue *queue, Error **errp);
+void bdrv_reopen_commit(BDRVReopenState *reopen_state);
+void bdrv_reopen_abort(BDRVReopenState *reopen_state);
 void bdrv_close(BlockDriverState *bs);
 int bdrv_attach_dev(BlockDriverState *bs, void *dev);
 void bdrv_attach_dev_nofail(BlockDriverState *bs, void *dev);
@@ -160,6 +179,10 @@ int coroutine_fn bdrv_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
     int nb_sectors);
 int coroutine_fn bdrv_co_is_allocated(BlockDriverState *bs, int64_t sector_num,
     int nb_sectors, int *pnum);
+int coroutine_fn bdrv_co_is_allocated_above(BlockDriverState *top,
+                                            BlockDriverState *base,
+                                            int64_t sector_num,
+                                            int nb_sectors, int *pnum);
 BlockDriverState *bdrv_find_backing_image(BlockDriverState *bs,
     const char *backing_file);
 int bdrv_truncate(BlockDriverState *bs, int64_t offset);
@@ -170,7 +193,13 @@ int bdrv_commit(BlockDriverState *bs);
 int bdrv_change_backing_file(BlockDriverState *bs,
     const char *backing_file, const char *backing_fmt);
 void bdrv_register(BlockDriver *bdrv);
+int bdrv_drop_intermediate(BlockDriverState *active, BlockDriverState *top,
+                           BlockDriverState *base);
+BlockDriverState *bdrv_find_overlay(BlockDriverState *active,
+                                    BlockDriverState *bs);
+BlockDriverState *bdrv_find_base(BlockDriverState *bs);
 
+bool bdrv_qiov_is_aligned(BlockDriverState *bs, QEMUIOVector *qiov);
 
 typedef struct BdrvCheckResult {
     int corruptions;
@@ -271,6 +300,7 @@ int bdrv_query_missing_keys(void);
 void bdrv_iterate_format(void (*it)(void *opaque, const char *name),
                          void *opaque);
 const char *bdrv_get_device_name(BlockDriverState *bs);
+int bdrv_get_flags(BlockDriverState *bs);
 int bdrv_write_compressed(BlockDriverState *bs, int64_t sector_num,
                           const uint8_t *buf, int nb_sectors);
 int bdrv_get_info(BlockDriverState *bs, BlockDriverInfo *bdi);
@@ -320,6 +350,15 @@ void bdrv_disable_copy_on_read(BlockDriverState *bs);
 
 void bdrv_set_in_use(BlockDriverState *bs, int in_use);
 int bdrv_in_use(BlockDriverState *bs);
+
+#ifdef CONFIG_LINUX_AIO
+int raw_get_aio_fd(BlockDriverState *bs);
+#else
+static inline int raw_get_aio_fd(BlockDriverState *bs)
+{
+    return -ENOTSUP;
+}
+#endif
 
 enum BlockAcctType {
     BDRV_ACCT_READ,

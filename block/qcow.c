@@ -171,6 +171,15 @@ static int qcow_open(BlockDriverState *bs, int flags)
     return -1;
 }
 
+
+/* We have nothing to do for QCOW reopen, stubs just return
+ * success */
+static int qcow_reopen_prepare(BDRVReopenState *state,
+                               BlockReopenQueue *queue, Error **errp)
+{
+    return 0;
+}
+
 static int qcow_set_key(BlockDriverState *bs, const char *key)
 {
     BDRVQcowState *s = bs->opaque;
@@ -935,6 +944,7 @@ static BlockDriver bdrv_qcow = {
     .bdrv_probe		= qcow_probe,
     .bdrv_open		= qcow_open,
     .bdrv_close		= qcow_close,
+    .bdrv_reopen_prepare = qcow_reopen_prepare,
     .bdrv_create	= qcow_create,
     .bdrv_co_is_allocated = qcow_co_is_allocated,
     .bdrv_set_key	= qcow_set_key,

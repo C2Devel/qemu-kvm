@@ -29,6 +29,7 @@
 #include <sys/time.h>
 #include <grp.h>
 #include <zlib.h>
+#include "bitmap.h"
 
 /* Needed early for CONFIG_BSD etc. */
 #include "config-host.h"
@@ -281,7 +282,7 @@ QTAILQ_HEAD(, FWBootEntry) fw_boot_order = QTAILQ_HEAD_INITIALIZER(fw_boot_order
 
 int nb_numa_nodes;
 uint64_t node_mem[MAX_NODES];
-uint64_t node_cpumask[MAX_NODES];
+unsigned long *node_cpumask[MAX_NODES];
 
 static CPUState *cur_cpu;
 static CPUState *next_cpu;
@@ -303,7 +304,8 @@ static void *boot_set_opaque;
 static NotifierList exit_notifiers =
     NOTIFIER_LIST_INITIALIZER(exit_notifiers);
 
-int kvm_allowed = -1;
+static int tcg_allowed = 1;
+int kvm_allowed = 0;
 uint32_t xen_domid;
 enum xen_mode xen_mode = XEN_EMULATE;
 
@@ -1517,21 +1519,6 @@ static uint64_t qemu_next_deadline_dyntick(void)
 
 #ifndef _WIN32
 
-/* Sets a specific flag */
-static int fcntl_setfl(int fd, int flag)
-{
-    int flags;
-
-    flags = fcntl(fd, F_GETFL);
-    if (flags == -1)
-        return -errno;
-
-    if (fcntl(fd, F_SETFL, flags | flag) == -1)
-        return -errno;
-
-    return 0;
-}
-
 #if defined(__linux__)
 
 #define RTC_FREQ 1024
@@ -2409,27 +2396,21 @@ static void numa_add(const char *optarg)
             }
             node_mem[nodenr] = sval;
         }
-        if (get_param_value(option, 128, "cpus", optarg) == 0) {
-            node_cpumask[nodenr] = 0;
-        } else {
+        if (get_param_value(option, 128, "cpus", optarg) != 0) {
             value = strtoull(option, &endptr, 10);
-            if (value >= 64) {
-                value = 63;
-                fprintf(stderr, "only 64 CPUs in NUMA mode supported.\n");
+            if (*endptr == '-') {
+                endvalue = strtoull(endptr+1, &endptr, 10);
             } else {
-                if (*endptr == '-') {
-                    endvalue = strtoull(endptr+1, &endptr, 10);
-                    if (endvalue >= 63) {
-                        endvalue = 62;
-                        fprintf(stderr,
-                            "only 63 CPUs in NUMA mode supported.\n");
-                    }
-                    value = (2ULL << endvalue) - (1ULL << value);
-                } else {
-                    value = 1ULL << value;
-                }
+                endvalue = value;
             }
-            node_cpumask[nodenr] = value;
+            if (!(endvalue < MAX_CPUMASK_BITS)) {
+                endvalue = MAX_CPUMASK_BITS - 1;
+                fprintf(stderr,
+                    "A max of %d CPUs are supported in a guest\n",
+                     MAX_CPUMASK_BITS);
+            }
+
+            bitmap_set(node_cpumask[nodenr], value, endvalue-value+1);
         }
         nb_numa_nodes++;
     }
@@ -3229,6 +3210,7 @@ static pid_t shutdown_pid;
 static int powerdown_requested;
 static int debug_requested;
 static int suspend_requested;
+static int wakeup_requested;
 static bool is_suspended;
 static NotifierList suspend_notifiers =
     NOTIFIER_LIST_INITIALIZER(suspend_notifiers);
@@ -3277,6 +3259,13 @@ int qemu_suspend_requested(void)
 {
     int r = suspend_requested;
     suspend_requested = 0;
+    return r;
+}
+
+int qemu_wakeup_requested(void)
+{
+    int r = wakeup_requested;
+    wakeup_requested = 0;
     return r;
 }
 
@@ -3334,7 +3323,7 @@ void qemu_unregister_reset(QEMUResetHandler *func, void *opaque)
     }
 }
 
-void qemu_system_reset(void)
+void qemu_system_reset(bool report)
 {
     QEMUResetEntry *re, *nre;
 
@@ -3342,7 +3331,9 @@ void qemu_system_reset(void)
     QTAILQ_FOREACH_SAFE(re, &reset_handlers, entry, nre) {
         re->func(re->opaque);
     }
-    monitor_protocol_event(QEVENT_RESET, NULL);
+    if (report) {
+        monitor_protocol_event(QEVENT_RESET, NULL);
+    }
 }
 
 void qemu_system_reset_request(void)
@@ -3398,9 +3389,8 @@ void qemu_system_wakeup_request(WakeupReason reason)
     if (!(wakeup_reason_mask & (1 << reason))) {
         return;
     }
-    monitor_protocol_event(QEVENT_WAKEUP, NULL);
     notifier_list_notify(&wakeup_notifiers, &reason);
-    reset_requested = 1;
+    wakeup_requested = 1;
     qemu_notify_event();
     is_suspended = false;
 }
@@ -3566,14 +3556,14 @@ int qemu_cpu_self(void *env)
 
 void resume_all_vcpus(void)
 {
-    if (kvm_allowed) {
+    if (kvm_enabled()) {
         kvm_resume_all_threads();
     }
 }
 
 void pause_all_vcpus(void)
 {
-    if (kvm_allowed) {
+    if (kvm_enabled()) {
         kvm_pause_all_threads();
     }
 }
@@ -3595,11 +3585,6 @@ void qemu_notify_event(void)
         cpu_exit(env);
     }
 }
-
-#if defined(KVM_UPSTREAM) || !defined(CONFIG_KVM)
-void qemu_mutex_lock_iothread(void) {}
-void qemu_mutex_unlock_iothread(void) {}
-#endif
 
 void vm_stop(RunState state)
 {
@@ -4241,12 +4226,18 @@ static void main_loop(void)
         }
         if (qemu_reset_requested()) {
             pause_all_vcpus();
-            qemu_system_reset();
+            qemu_system_reset(VMRESET_REPORT);
             resume_all_vcpus();
             if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
                 runstate_check(RUN_STATE_SHUTDOWN)) {
                 runstate_set(RUN_STATE_PAUSED);
             }
+        }
+        if (qemu_wakeup_requested()) {
+            pause_all_vcpus();
+            qemu_system_reset(VMRESET_SILENT);
+            resume_all_vcpus();
+            monitor_protocol_event(QEVENT_WAKEUP, NULL);
         }
         if (qemu_powerdown_requested()) {
             monitor_protocol_event(QEVENT_POWERDOWN, NULL);
@@ -4931,6 +4922,117 @@ static int debugcon_parse(const char *devname)
     return 0;
 }
 
+static int kvm_available(void)
+{
+#ifdef CONFIG_KVM
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static int tcg_available(void)
+{
+    return 1;
+}
+
+static QEMUMachine *machine_parse(const char *name)
+{
+    QEMUMachine *m, *machine = NULL;
+
+    if (name) {
+        machine = find_machine(name);
+    }
+    if (machine) {
+        return machine;
+    }
+    printf("Supported machines are:\n");
+    for (m = first_machine; m != NULL; m = m->next) {
+        if (m->alias) {
+            printf("%-10s %s (alias of %s)\n", m->alias, m->desc, m->name);
+        }
+        printf("%-10s %s%s\n", m->name, m->desc,
+               m->is_default ? " (default)" : "");
+    }
+    exit(!name || *name != '?');
+}
+
+static int tcg_init(int smp_cpus)
+{
+    return 0;
+}
+
+static struct {
+    const char *opt_name;
+    const char *name;
+    int (*available)(void);
+    int (*init)(int);
+    int *allowed;
+} accel_list[] = {
+    { "tcg", "tcg", tcg_available, tcg_init, &tcg_allowed },
+    { "kvm", "KVM", kvm_available, kvm_init, &kvm_allowed },
+};
+
+static int configure_accelerator(void)
+{
+    const char *p = NULL;
+    char buf[10];
+    int i, ret;
+    bool accel_initalised = 0;
+    bool init_failed = 0;
+
+    QemuOptsList *list = qemu_find_opts("machine");
+    if (!QTAILQ_EMPTY(&list->head)) {
+        p = qemu_opt_get(QTAILQ_FIRST(&list->head), "accel");
+    }
+
+    if (p == NULL) {
+        /* RHEL6 default "accelerator", kvm:tcg */
+        p = "kvm:tcg";
+    }
+
+    while (!accel_initalised && *p != '\0') {
+        if (*p == ':') {
+            p++;
+        }
+        p = get_opt_name(buf, sizeof (buf), p, ':');
+        for (i = 0; i < ARRAY_SIZE(accel_list); i++) {
+            if (strcmp(accel_list[i].opt_name, buf) == 0) {
+                ret = accel_list[i].init(smp_cpus);
+                if (ret < 0) {
+                    init_failed = 1;
+                    if (!accel_list[i].available()) {
+                        printf("%s not supported for this target\n",
+                               accel_list[i].name);
+                    } else {
+                        fprintf(stderr, "failed to initialize %s: %s\n",
+                                accel_list[i].name,
+                                strerror(-ret));
+                    }
+                } else {
+                    accel_initalised = 1;
+                    *(accel_list[i].allowed) = 1;
+                }
+                break;
+            }
+        }
+        if (i == ARRAY_SIZE(accel_list)) {
+            fprintf(stderr, "\"%s\" accelerator does not exist.\n", buf);
+        }
+    }
+
+    if (!accel_initalised) {
+        fprintf(stderr, "No accelerator found!\n");
+        exit(1);
+    }
+
+    if (init_failed) {
+        fprintf(stderr, "Back to %s accelerator.\n", accel_list[i].name);
+    }
+
+    return !accel_initalised;
+}
+
 void qemu_add_machine_init_done_notifier(Notifier *notify)
 {
     notifier_list_add(&machine_init_done_notifiers, notify);
@@ -5056,7 +5158,7 @@ int main(int argc, char **argv, char **envp)
 
     for (i = 0; i < MAX_NODES; i++) {
         node_mem[i] = 0;
-        node_cpumask[i] = 0;
+        node_cpumask[i] = bitmap_new(MAX_CPUMASK_BITS);
     }
 
     assigned_devices_index = 0;
@@ -5111,14 +5213,6 @@ int main(int argc, char **argv, char **envp)
         }
     }
 
-    /* load local cpu config
-     */
-    if (qemu_read_config_file(
-        CONFIG_QEMU_CPUCONFDIR "/cpu-" TARGET_ARCH ".conf",
-        defconfig_verbose) == -EINVAL) {
-            exit(1);
-    }
-
     /* second pass of CLI options -- bring in any -readconfig flags
      */
     optind = 1;
@@ -5161,20 +5255,7 @@ int main(int argc, char **argv, char **envp)
             popt = lookup_opt(argc, argv, &optarg, &optind);
             switch(popt->index) {
             case QEMU_OPTION_M:
-                machine = find_machine(optarg);
-                if (!machine) {
-                    QEMUMachine *m;
-                    printf("Supported machines are:\n");
-                    for(m = first_machine; m != NULL; m = m->next) {
-                        if (m->alias)
-                            printf("%-10s %s (alias of %s)\n",
-                                   m->alias, m->desc, m->name);
-                        printf("%-10s %s%s\n",
-                               m->name, m->desc,
-                               m->is_default ? " (default)" : "");
-                    }
-                    exit(*optarg != '?');
-                }
+                machine = machine_parse(optarg);
                 break;
             case QEMU_OPTION_cpu:
                 /* hw initialization will check this */
@@ -5319,7 +5400,8 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_boot:
                 {
                     static const char * const params[] = {
-                        "order", "once", "menu", NULL
+                        "order", "once", "menu",
+                        "reboot-timeout", NULL
                     };
                     char buf[sizeof(boot_devices)];
                     char *standard_boot_devices;
@@ -5362,6 +5444,8 @@ int main(int argc, char **argv, char **envp)
                                 exit(1);
                             }
                         }
+                        qemu_opts_parse(qemu_find_opts("boot-opts"),
+                                        optarg, 0);
                     }
                 }
                 break;
@@ -5424,9 +5508,11 @@ int main(int argc, char **argv, char **envp)
                 break;
             case QEMU_OPTION_m: {
                 int64_t value;
+                uint64_t sz;
+                char *end;
 
-                value = strtosz(optarg, NULL);
-                if (value < 0) {
+                value = strtosz(optarg, &end);
+                if (value < 0 || *end) {
                     fprintf(stderr, "qemu: invalid ram size: %s\n", optarg);
                     exit(1);
                 }
@@ -5436,11 +5522,13 @@ int main(int argc, char **argv, char **envp)
                     fprintf(stderr, "qemu: at most 2047 MB RAM can be simulated\n");
                     exit(1);
                 }
-                if (value != (uint64_t)(ram_addr_t)value) {
+                sz = QEMU_ALIGN_UP((uint64_t)value, 4096);
+                sz = MAX(sz, 2 * 1024 * 1024);
+                ram_size = sz;
+                if (ram_size != sz) {
                     fprintf(stderr, "qemu: ram size too large\n");
                     exit(1);
                 }
-                ram_size = value;
                 break;
             }
             case QEMU_OPTION_d:
@@ -5637,11 +5725,13 @@ int main(int argc, char **argv, char **envp)
 #endif
 #ifdef CONFIG_KVM
             case QEMU_OPTION_enable_kvm:
-                kvm_allowed = 1;
+                olist = qemu_find_opts("machine");
+                qemu_opts_parse(olist, "accel=kvm", 0);
                 break;
-	    case QEMU_OPTION_no_kvm:
-		kvm_allowed = 0;
-		break;
+            case QEMU_OPTION_no_kvm:
+                olist = qemu_find_opts("machine");
+                qemu_opts_parse(olist, "accel=tcg", 0);
+                break;
 	    case QEMU_OPTION_no_kvm_irqchip: {
 		kvm_irqchip = 0;
 		kvm_pit = 0;
@@ -5670,6 +5760,18 @@ int main(int argc, char **argv, char **envp)
                 break;
 #endif
 #endif
+            case QEMU_OPTION_machine:
+                olist = qemu_find_opts("machine");
+                opts = qemu_opts_parse(olist, optarg, 1);
+                if (!opts) {
+                    fprintf(stderr, "parse error: %s\n", optarg);
+                    exit(1);
+                }
+                optarg = qemu_opt_get(opts, "type");
+                if (optarg) {
+                    machine = machine_parse(optarg);
+                }
+                break;
             case QEMU_OPTION_usb:
                 usb_enabled = 1;
                 break;
@@ -6057,23 +6159,10 @@ int main(int argc, char **argv, char **envp)
 #endif
 
     if (fake_machine) {
-        kvm_allowed = 0;
+        olist = qemu_find_opts("machine");
+        qemu_opts_parse(olist, "accel=tcg", 0);
     }
-    if (kvm_allowed) {
-        int ret = kvm_init(smp_cpus);
-        if (ret < 0) {
-            if (kvm_allowed > 0) {
-#ifndef CONFIG_KVM
-                printf("KVM not supported for this target\n");
-#else
-                fprintf(stderr, "failed to initialize KVM: %s\n", strerror(-ret));
-#endif
-                exit(1);
-            }
-            fprintf(stderr, "Could not initialize KVM, will disable KVM support\n");
-        }
-        kvm_allowed = ret >= 0;
-    }
+    configure_accelerator();
 
     if (qemu_init_main_loop()) {
         fprintf(stderr, "qemu_init_main_loop failed\n");
@@ -6178,8 +6267,9 @@ int main(int argc, char **argv, char **envp)
         }
 
         for (i = 0; i < nb_numa_nodes; i++) {
-            if (node_cpumask[i] != 0)
+            if (!bitmap_empty(node_cpumask[i], MAX_CPUMASK_BITS)) {
                 break;
+            }
         }
         /* assigning the VCPUs round-robin is easier to implement, guest OSes
          * must cope with this anyway, because there are BIOSes out there in
@@ -6187,7 +6277,7 @@ int main(int argc, char **argv, char **envp)
          */
         if (i == nb_numa_nodes) {
             for (i = 0; i < smp_cpus; i++) {
-                node_cpumask[i % nb_numa_nodes] |= 1 << i;
+                set_bit(i, node_cpumask[i % nb_numa_nodes]);
             }
         }
     }
@@ -6223,7 +6313,7 @@ int main(int argc, char **argv, char **envp)
 
     for (env = first_cpu; env != NULL; env = env->next_cpu) {
         for (i = 0; i < nb_numa_nodes; i++) {
-            if (node_cpumask[i] & (1 << env->cpu_index)) {
+            if (test_bit(env->cpu_index, node_cpumask[i])) {
                 env->numa_node = i;
             }
         }
@@ -6290,8 +6380,11 @@ int main(int argc, char **argv, char **envp)
     /* init remote displays */
     if (vnc_display) {
         vnc_display_init(ds);
-        if (vnc_display_open(ds, vnc_display) < 0)
+        if (vnc_display_open(ds, vnc_display) < 0) {
+            fprintf(stderr, "Failed to start VNC server on `%s'\n",
+                    vnc_display);
             exit(1);
+        }
 
         if (show_vnc_port) {
             printf("VNC server running on `%s'\n", vnc_display_local_addr(ds));
@@ -6333,7 +6426,7 @@ int main(int argc, char **argv, char **envp)
 
     qemu_run_machine_init_done_notifiers();
 
-    qemu_system_reset();
+    qemu_system_reset(VMRESET_SILENT);
     if (loadvm) {
         if (load_vmstate(loadvm) < 0) {
             autostart = 0;
@@ -6342,8 +6435,13 @@ int main(int argc, char **argv, char **envp)
 
     if (incoming) {
         runstate_set(RUN_STATE_INMIGRATE);
-        int ret = qemu_start_incoming_migration(incoming);
+        Error *errp = NULL;
+        int ret = qemu_start_incoming_migration(incoming, &errp);
         if (ret < 0) {
+            if (error_is_set(&errp)) {
+                fprintf(stderr, "Migrate: %s\n", error_get_pretty(errp));
+                error_free(errp);
+            }
             fprintf(stderr, "Migration failed. Exit code %s(%d), exiting.\n",
                     incoming, ret);
             exit(ret);

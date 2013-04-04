@@ -4,6 +4,41 @@
 
 #ifdef CONFIG_LIVE_SNAPSHOTS
 ##
+# @__com.redhat_block-commit
+#
+# Live commit of data from overlay image nodes into backing nodes - i.e.,
+# writes data between 'top' and 'base' into 'base'.
+#
+# @device:  the name of the device
+#
+# @base:   #optional The file name of the backing image to write data into.
+#                    If not specified, this is the deepest backing image
+#
+# @top:              The file name of the backing image within the image chain,
+#                    which contains the topmost data to be committed down.
+#                    Note, the active layer as 'top' is currently unsupported.
+#
+#                    If top == base, that is an error.
+#
+#
+# @speed:  #optional the maximum speed, in bytes per second
+#
+# Returns: Nothing on success
+#          If commit or stream is already active on this device, DeviceInUse
+#          If @device does not exist, DeviceNotFound
+#          If image commit is not supported by this device, NotSupported
+#          If @base or @top is invalid, a generic error is returned
+#          If @top is the active layer, or omitted, a generic error is returned
+#          If @speed is invalid, InvalidParameter
+#
+# Since: 1.3
+#
+##
+{ 'command': '__com.redhat_block-commit',
+  'data': { 'device': 'str', '*base': 'str', 'top': 'str',
+            '*speed': 'int' } }
+
+##
 # @NewImageMode
 #
 # An enumeration that tells QEMU how to set the backing file path in
@@ -209,3 +244,55 @@
 # Since: 1.2.0
 ##
 { 'command': 'query-events', 'returns': ['EventInfo'] }
+
+##
+# @dump-guest-memory
+#
+# Dump guest's memory to vmcore. It is a synchronous operation that can take
+# very long depending on the amount of guest memory. This command is only
+# supported on i386 and x86_64.
+#
+# @paging: if true, do paging to get guest's memory mapping. This allows
+#          using gdb to process the core file.
+#
+#          IMPORTANT: this option can make QEMU allocate several gigabytes
+#                     of RAM. This can happen for a large guest, or a
+#                     malicious guest pretending to be large.
+#
+#          Also, paging=true has the following limitations:
+#
+#             1. The guest may be in a catastrophic state or can have corrupted
+#                memory, which cannot be trusted
+#             2. The guest can be in real-mode even if paging is enabled. For
+#                example, the guest uses ACPI to sleep, and ACPI sleep state
+#                goes in real-mode
+#
+# @protocol: the filename or file descriptor of the vmcore. The supported
+#            protocols are:
+#
+#            1. file: the protocol starts with "file:", and the following
+#               string is the file's path.
+#            2. fd: the protocol starts with "fd:", and the following string
+#               is the fd's name.
+#
+# @begin: #optional if specified, the starting physical address.
+#
+# @length: #optional if specified, the memory size, in bytes. If you don't
+#          want to dump all guest's memory, please specify the start @begin
+#          and @length
+#
+# Returns: nothing on success
+#          If @begin contains an invalid address, InvalidParameter
+#          If only one of @begin and @length is specified, MissingParameter
+#          If @protocol stats with "fd:", and the fd cannot be found, FdNotFound
+#          If @protocol starts with "file:", and the file cannot be
+#             opened, OpenFileFailed
+#          If @protocol does not start with "fd:" or "file:", InvalidParameter
+#          If an I/O error occurs while writing the file, IOError
+#          If the target does not support this command, Unsupported
+#
+# Since: 1.2
+##
+{ 'command': 'dump-guest-memory',
+  'data': { 'paging': 'bool', 'protocol': 'str', '*begin': 'int',
+            '*length': 'int' } }

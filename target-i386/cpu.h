@@ -43,6 +43,7 @@
 #endif
 
 #define CPUState struct CPUX86State
+#define CPUArchState struct CPUX86State
 
 #include "cpu-defs.h"
 
@@ -283,6 +284,7 @@
 #define MSR_IA32_APICBASE_BSP           (1<<8)
 #define MSR_IA32_APICBASE_ENABLE        (1<<11)
 #define MSR_IA32_APICBASE_BASE          (0xfffff<<12)
+#define MSR_IA32_TSCDEADLINE            0x6e0
 
 #define MSR_MTRRcap			0xfe
 #define MSR_MTRRcap_VCNT		8
@@ -376,6 +378,7 @@
 #define CPUID_PBE (1 << 31)
 
 #define CPUID_EXT_SSE3     (1 << 0)
+#define CPUID_EXT_PCLMULQDQ (1 << 1)
 #define CPUID_EXT_DTES64   (1 << 2)
 #define CPUID_EXT_MONITOR  (1 << 3)
 #define CPUID_EXT_DSCPL    (1 << 4)
@@ -385,23 +388,47 @@
 #define CPUID_EXT_TM2      (1 << 8)
 #define CPUID_EXT_SSSE3    (1 << 9)
 #define CPUID_EXT_CID      (1 << 10)
+#define CPUID_EXT_FMA      (1 << 12)
 #define CPUID_EXT_CX16     (1 << 13)
 #define CPUID_EXT_XTPR     (1 << 14)
 #define CPUID_EXT_PDCM     (1 << 15)
+#define CPUID_EXT_PCID     (1 << 17)
 #define CPUID_EXT_DCA      (1 << 18)
 #define CPUID_EXT_SSE41    (1 << 19)
 #define CPUID_EXT_SSE42    (1 << 20)
 #define CPUID_EXT_X2APIC   (1 << 21)
 #define CPUID_EXT_MOVBE    (1 << 22)
 #define CPUID_EXT_POPCNT   (1 << 23)
+#define CPUID_EXT_TSC_DEADLINE_TIMER (1 << 24)
+#define CPUID_EXT_AES      (1 << 25)
 #define CPUID_EXT_XSAVE    (1 << 26)
 #define CPUID_EXT_OSXSAVE  (1 << 27)
+#define CPUID_EXT_AVX      (1 << 28)
+#define CPUID_EXT_F16C     (1 << 29)
+#define CPUID_EXT_RDRAND   (1 << 30)
 #define CPUID_EXT_HYPERVISOR  (1 << 31)
 
+#define CPUID_EXT2_FPU     (1 << 0)
+#define CPUID_EXT2_DE      (1 << 2)
+#define CPUID_EXT2_PSE     (1 << 3)
+#define CPUID_EXT2_TSC     (1 << 4)
+#define CPUID_EXT2_MSR     (1 << 5)
+#define CPUID_EXT2_PAE     (1 << 6)
+#define CPUID_EXT2_MCE     (1 << 7)
+#define CPUID_EXT2_CX8     (1 << 8)
+#define CPUID_EXT2_APIC    (1 << 9)
 #define CPUID_EXT2_SYSCALL (1 << 11)
+#define CPUID_EXT2_MTRR    (1 << 12)
+#define CPUID_EXT2_PGE     (1 << 13)
+#define CPUID_EXT2_MCA     (1 << 14)
+#define CPUID_EXT2_CMOV    (1 << 15)
+#define CPUID_EXT2_PAT     (1 << 16)
+#define CPUID_EXT2_PSE36   (1 << 17)
 #define CPUID_EXT2_MP      (1 << 19)
 #define CPUID_EXT2_NX      (1 << 20)
 #define CPUID_EXT2_MMXEXT  (1 << 22)
+#define CPUID_EXT2_MMX     (1 << 23)
+#define CPUID_EXT2_FXSR    (1 << 24)
 #define CPUID_EXT2_FFXSR   (1 << 25)
 #define CPUID_EXT2_PDPE1GB (1 << 26)
 #define CPUID_EXT2_RDTSCP  (1 << 27)
@@ -420,7 +447,31 @@
 #define CPUID_EXT3_3DNOWPREFETCH (1 << 8)
 #define CPUID_EXT3_OSVW    (1 << 9)
 #define CPUID_EXT3_IBS     (1 << 10)
+#define CPUID_EXT3_XOP     (1 << 11)
 #define CPUID_EXT3_SKINIT  (1 << 12)
+#define CPUID_EXT3_WDT     (1 << 13)
+#define CPUID_EXT3_LWP     (1 << 15)
+#define CPUID_EXT3_FMA4    (1 << 16)
+#define CPUID_EXT3_TCE     (1 << 17)
+#define CPUID_EXT3_NODEID  (1 << 19)
+#define CPUID_EXT3_TBM     (1 << 21)
+#define CPUID_EXT3_TOPOEXT (1 << 22)
+#define CPUID_EXT3_PERFCORE (1 << 23)
+#define CPUID_EXT3_PERFNB  (1 << 24)
+
+
+#define CPUID_7_0_EBX_FSGSBASE (1 << 0)
+#define CPUID_7_0_EBX_BMI1     (1 << 3)
+#define CPUID_7_0_EBX_HLE      (1 << 4)
+#define CPUID_7_0_EBX_AVX2     (1 << 5)
+#define CPUID_7_0_EBX_SMEP     (1 << 7)
+#define CPUID_7_0_EBX_BMI2     (1 << 8)
+#define CPUID_7_0_EBX_ERMS     (1 << 9)
+#define CPUID_7_0_EBX_INVPCID  (1 << 10)
+#define CPUID_7_0_EBX_RTM      (1 << 11)
+#define CPUID_7_0_EBX_RDSEED   (1 << 18)
+#define CPUID_7_0_EBX_ADX      (1 << 19)
+#define CPUID_7_0_EBX_SMAP     (1 << 20)
 
 #define CPUID_VENDOR_INTEL_1 0x756e6547 /* "Genu" */
 #define CPUID_VENDOR_INTEL_2 0x49656e69 /* "ineI" */
@@ -670,8 +721,13 @@ typedef struct CPUX86State {
 #endif
     uint64_t system_time_msr;
     uint64_t wall_clock_msr;
+    uint64_t pv_eoi_en_msr;
+
+    uint64_t hyperv_guest_os_id;
+    uint64_t hyperv_hypercall;
 
     uint64_t tsc;
+    uint64_t tsc_deadline;
 
     uint64_t pat;
 
@@ -702,8 +758,10 @@ typedef struct CPUX86State {
     uint32_t cpuid_ext2_features;
     uint32_t cpuid_ext3_features;
     /* Flags from CPUID[EAX=7,ECX=0].EBX */
-    uint32_t cpuid_7_0_ebx;
+    uint32_t cpuid_7_0_ebx_features;
     uint32_t cpuid_apic_id;
+    /* Enables direct passthrough of PMU CPUID leaf (0xA) from the kernel */
+    bool cpuid_pmu_passthrough;
     int cpuid_vendor_override;
 
     /* MTRRs */

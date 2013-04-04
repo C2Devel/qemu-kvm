@@ -213,8 +213,6 @@ qemu-ga$(EXESUF): LIBS = $(LIBS_QGA)
 
 gen-out-type = $(subst .,-,$(suffix $@))
 
-qga-suspend-dep-$(CONFIG_POSIX) = $(qga-nested-api-y .o=.c) qga-suspend-qapi-types.h qga-suspend-qmp-commands.h qga-suspend-qapi-visit.h 
-
 $(qapi-dir)/test-qapi-types.c $(qapi-dir)/test-qapi-types.h :\
 $(SRC_PATH)/qapi-schema-test.json $(SRC_PATH)/scripts/qapi-types.py
 	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "$(qapi-dir)" -p "test-" < $<, "  GEN   $@")
@@ -234,16 +232,6 @@ $(SRC_PATH)/qapi-schema-guest.json $(SRC_PATH)/scripts/qapi-visit.py
 $(qapi-dir)/qga-qmp-commands.h $(qapi-dir)/qga-qmp-marshal.c :\
 $(SRC_PATH)/qapi-schema-guest.json $(SRC_PATH)/scripts/qapi-commands.py
 	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-" < $<, "  GEN   $@")
-
-$(qapi-dir)/qga-suspend-qapi-types.c $(qapi-dir)/qga-suspend-qapi-types.h :\
-$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-types.py
-	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-types.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
-$(qapi-dir)/qga-suspend-qapi-visit.c $(qapi-dir)/qga-suspend-qapi-visit.h :\
-$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-visit.py
-	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-visit.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
-$(qapi-dir)/qga-suspend-qmp-commands.h $(qapi-dir)/qga-suspend-qmp-marshal.c :\
-$(SRC_PATH)/qapi-schema-guest-suspend.json $(SRC_PATH)/scripts/qapi-commands.py
-	$(call quiet-command,python $(SRC_PATH)/scripts/qapi-commands.py $(gen-out-type) -o "$(qapi-dir)" -p "qga-suspend-" < $<, "  GEN   $@")
 
 rhev-qapi-types.c rhev-qapi-types.h :\
 qapi-schema-rhev.json $(SRC_PATH)/scripts/qapi-types.py
@@ -306,11 +294,12 @@ test-visitor: test-visitor.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o $
 test-qmp-commands.o: $(addprefix $(qapi-dir)/, test-qapi-types.c test-qapi-types.h test-qapi-visit.c test-qapi-visit.h test-qmp-marshal.c test-qmp-commands.h) $(qapi-obj-y)
 test-qmp-commands: test-qmp-commands.o qfloat.o qint.o qdict.o qstring.o qlist.o qbool.o $(qapi-obj-y) error.o osdep.o qemu-malloc.o $(oslib-obj-y) qjson.o json-streamer.o json-lexer.o json-parser.o qerror.o qemu-error.o qemu-tool.o $(qapi-dir)/test-qapi-visit.o $(qapi-dir)/test-qapi-types.o $(qapi-dir)/test-qmp-marshal.o module.o
 
-QGALIB_GEN=$(addprefix $(qapi-dir)/, qga-qapi-types.c qga-qapi-types.h qga-qapi-visit.c qga-qmp-marshal.c $(qga-suspend-dep-y))
+QGALIB_GEN=$(addprefix $(qapi-dir)/, qga-qapi-types.c qga-qapi-types.h qga-qapi-visit.c qga-qmp-marshal.c)
 $(QGALIB_GEN): $(GENERATED_HEADERS)
-qemu-ga.o: $(QGALIB_GEN) $(qapi-obj-y)
+$(QGALIB) qemu-ga.o: $(QGALIB_GEN) $(qapi-obj-y)
 
-qemu-ga$(EXESUF): qemu-ga.o $(qga-obj-y) $(qapi-obj-y) $(trace-obj-y) $(qobject-obj-y) $(version-obj-y) $(addprefix $(qapi-dir)/, qga-qapi-visit.o qga-qapi-types.o qga-qmp-marshal.o $(qga-suspend-y)) 
+
+qemu-ga$(EXESUF): qemu-ga.o $(qga-obj-y) $(qapi-obj-y) $(trace-obj-y) $(qobject-obj-y) $(version-obj-y) $(addprefix $(qapi-dir)/, qga-qapi-visit.o qga-qapi-types.o qga-qmp-marshal.o)
 
 QEMULIBS=libhw32 libhw64 libuser
 
@@ -370,11 +359,7 @@ ifdef CONFIG_POSIX
 	$(INSTALL_DATA) qemu-nbd.8 "$(DESTDIR)$(mandir)/man8"
 endif
 
-install-cpuconfig:
-	$(INSTALL_DIR) "$(DESTDIR)$(cpuconfdir)"
-	$(INSTALL_DATA) $(SRC_PATH)/sysconfigs/target/cpu-x86_64.conf "$(DESTDIR)$(cpuconfdir)"
-
-install: all $(if $(BUILD_DOCS),install-doc) install-cpuconfig
+install: all $(if $(BUILD_DOCS),install-doc)
 	$(INSTALL_DIR) "$(DESTDIR)$(bindir)"
 ifneq ($(TOOLS),)
 	$(INSTALL_PROG) $(STRIP_OPT) $(TOOLS) "$(DESTDIR)$(bindir)"

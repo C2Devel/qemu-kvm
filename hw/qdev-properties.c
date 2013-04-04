@@ -127,15 +127,19 @@ PropertyInfo qdev_prop_uint16 = {
 
 static int parse_uint32(DeviceState *dev, Property *prop, const char *str)
 {
+    int64_t val;
     uint32_t *ptr = qdev_get_prop_ptr(dev, prop);
     char *end;
 
     /* accept both hex and decimal */
-    *ptr = strtoul(str, &end, 0);
+    val = strtoll(str, &end, 0);
     if ((*end != '\0') || (end == str)) {
         return -EINVAL;
     }
-
+    if (val < 0 || val > UINT32_MAX) {
+        return -EINVAL;
+    }
+    *ptr = val;
     return 0;
 }
 

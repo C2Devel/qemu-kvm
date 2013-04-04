@@ -502,7 +502,8 @@ static SCSIDeviceInfo scsi_generic_info = {
     .destroy      = scsi_destroy,
     .alloc_req    = scsi_new_request,
     .qdev.props   = (Property[]) {
-        DEFINE_BLOCK_PROPERTIES(SCSIDevice, conf),
+        DEFINE_PROP_DRIVE("drive", SCSIDevice, conf.bs),
+        DEFINE_PROP_INT32("bootindex", SCSIDevice, conf.bootindex, -1),
         DEFINE_PROP_END_OF_LIST(),
     },
 };

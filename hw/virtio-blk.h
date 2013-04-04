@@ -34,6 +34,8 @@
 #define VIRTIO_BLK_F_WCACHE     9       /* write cache enabled */
 #define VIRTIO_BLK_F_TOPOLOGY   10      /* Topology information is available */
 
+#define VIRTIO_BLK_ID_BYTES     20      /* ID string length */
+
 struct virtio_blk_config
 {
     uint64_t capacity;
@@ -95,6 +97,14 @@ struct virtio_scsi_inhdr
     uint32_t residual;
 };
 
+struct VirtIOBlkConf
+{
+    BlockConf conf;
+    char *serial;
+    uint32_t scsi;
+    uint32_t data_plane;
+};
+
 #ifdef __linux__
 #define DEFINE_VIRTIO_BLK_FEATURES(_state, _field) \
         DEFINE_VIRTIO_COMMON_FEATURES(_state, _field), \
@@ -103,4 +113,5 @@ struct virtio_scsi_inhdr
 #define DEFINE_VIRTIO_BLK_FEATURES(_state, _field) \
         DEFINE_VIRTIO_COMMON_FEATURES(_state, _field)
 #endif
+
 #endif

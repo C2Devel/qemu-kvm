@@ -526,7 +526,12 @@ void qemu_flush_queued_packets(VLANClientState *vc)
         queue = vc->send_queue;
     }
 
-    qemu_net_queue_flush(queue);
+    if (qemu_net_queue_flush(queue)) {
+        /* We emptied the queue successfully, signal to the IO thread to repoll
+         * the file descriptor (for tap, for example).
+         */
+        qemu_notify_event();
+    }
 }
 
 static ssize_t qemu_send_packet_async_with_flags(VLANClientState *sender,

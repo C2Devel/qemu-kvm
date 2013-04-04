@@ -71,7 +71,7 @@
 
 #define FRAME_TIMER_FREQ 1000
 
-#define FRAME_MAX_LOOPS  100
+#define FRAME_MAX_LOOPS  256
 
 #define NB_PORTS 2
 
@@ -120,6 +120,7 @@ typedef struct UHCIAsync {
     uint32_t  td;
     uint32_t  token;
     int8_t    valid;
+    uint8_t   isoc;
     uint8_t   done;
     uint8_t   buffer[2048];
 } UHCIAsync;
@@ -139,7 +140,9 @@ struct UHCIState {
     uint32_t fl_base_addr; /* frame list base address */
     uint8_t sof_timing;
     uint8_t status2; /* bit 0 and 1 are used to generate UHCI_STS_USBINT */
+    int64_t expire_time;
     QEMUTimer *frame_timer;
+    uint32_t frame_bytes;
     UHCIPort ports[NB_PORTS];
 
     /* Interrupts that should be raised at the end of the current frame.  */
@@ -176,6 +179,7 @@ static UHCIAsync *uhci_async_alloc(UHCIState *s)
     async->td    = 0;
     async->token = 0;
     async->done  = 0;
+    async->isoc  = 0;
 
     return async;
 }
@@ -343,11 +347,13 @@ static void uhci_reset(void *opaque)
     uhci_async_cancel_all(s);
 }
 
-static void uhci_pre_save(void *opaque)
+static int uhci_post_load(void *opaque, int version_id)
 {
     UHCIState *s = opaque;
 
-    uhci_async_cancel_all(s);
+    s->expire_time = qemu_get_clock(vm_clock) +
+        (get_ticks_per_sec() / FRAME_TIMER_FREQ);
+    return 0;
 }
 
 static const VMStateDescription vmstate_uhci_port = {
@@ -366,7 +372,7 @@ static const VMStateDescription vmstate_uhci = {
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .pre_save = uhci_pre_save,
+    .post_load = uhci_post_load,
     .fields      = (VMStateField []) {
         VMSTATE_PCI_DEVICE(dev, UHCIState),
         VMSTATE_UINT8_EQUAL(num_ports_vmstate, UHCIState),
@@ -424,6 +430,8 @@ static void uhci_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
     case 0x00:
         if ((val & UHCI_CMD_RS) && !(s->cmd & UHCI_CMD_RS)) {
             /* start frame processing */
+            s->expire_time = qemu_get_clock(vm_clock) +
+                (get_ticks_per_sec() / FRAME_TIMER_FREQ);
             qemu_mod_timer(s->frame_timer, qemu_get_clock(vm_clock));
             s->status &= ~UHCI_STS_HCHALTED;
         } else if (!(val & UHCI_CMD_RS)) {
@@ -772,13 +780,25 @@ static int uhci_handle_td(UHCIState *s, uint32_t addr, UHCI_TD *td, uint32_t *in
 {
     UHCIAsync *async;
     int len = 0, max_len;
-    uint8_t pid;
+    uint8_t pid, isoc;
+    uint32_t token;
 
     /* Is active ? */
     if (!(td->ctrl & TD_CTRL_ACTIVE))
         return 1;
 
-    async = uhci_async_find_td(s, addr, td->token);
+    /* token field is not unique for isochronous requests,
+     * so use the destination buffer 
+     */
+    if (td->ctrl & TD_CTRL_IOS) {
+        token = td->buffer;
+        isoc = 1;
+    } else {
+        token = td->token;
+        isoc = 0;
+    }
+
+    async = uhci_async_find_td(s, addr, token);
     if (async) {
         /* Already submitted */
         async->valid = 32;
@@ -795,9 +815,13 @@ static int uhci_handle_td(UHCIState *s, uint32_t addr, UHCI_TD *td, uint32_t *in
     if (!async)
         return 1;
 
-    async->valid = 10;
+    /* valid needs to be large enough to handle 10 frame delay
+     * for initial isochronous requests
+     */
+    async->valid = 32;
     async->td    = addr;
-    async->token = td->token;
+    async->token = token;
+    async->isoc  = isoc;
 
     max_len = ((td->token >> 21) + 1) & 0x7ff;
     pid = td->token & 0xff;
@@ -807,6 +831,7 @@ static int uhci_handle_td(UHCIState *s, uint32_t addr, UHCI_TD *td, uint32_t *in
     async->packet.devep   = (td->token >> 15) & 0xf;
     async->packet.data    = async->buffer;
     async->packet.len     = max_len;
+    async->packet.id      = addr;
 
     switch(pid) {
     case USB_TOKEN_OUT:
@@ -849,9 +874,31 @@ static void uhci_async_complete(USBPort *port, USBPacket *packet)
 
     DPRINTF("uhci: async complete. td 0x%x token 0x%x\n", async->td, async->token);
 
-    async->done = 1;
+    if (async->isoc) {
+        UHCI_TD td;
+        uint32_t link = async->td;
+        uint32_t int_mask = 0, val;
+        int len;
+ 
+        cpu_physical_memory_read(link & ~0xf, (uint8_t *) &td, sizeof(td));
+        le32_to_cpus(&td.link);
+        le32_to_cpus(&td.ctrl);
+        le32_to_cpus(&td.token);
+        le32_to_cpus(&td.buffer);
 
-    uhci_process_frame(s);
+        uhci_async_unlink(s, async);
+        len = uhci_complete_td(s, &td, async, &int_mask);
+        s->pending_int_mask |= int_mask;
+
+        /* update the status bits of the TD */
+        val = cpu_to_le32(td.ctrl);
+        cpu_physical_memory_write((link & ~0xf) + 4,
+                                  (const uint8_t *)&val, sizeof(val));
+        uhci_async_free(s, async);
+    } else {
+        async->done = 1;
+        uhci_process_frame(s);
+    }
 }
 
 static int is_valid(uint32_t link)
@@ -899,7 +946,7 @@ static int qhdb_insert(QhDb *db, uint32_t addr)
 static void uhci_process_frame(UHCIState *s)
 {
     uint32_t frame_addr, link, old_td_ctrl, val, int_mask;
-    uint32_t curr_qh;
+    uint32_t curr_qh, td_count = 0;
     int cnt, ret;
     UHCI_TD td;
     UHCI_QH qh;
@@ -918,19 +965,32 @@ static void uhci_process_frame(UHCIState *s)
     qhdb_reset(&qhdb);
 
     for (cnt = FRAME_MAX_LOOPS; is_valid(link) && cnt; cnt--) {
+        if (s->frame_bytes >= 1280) {
+            /* We've reached the usb 1.1 bandwidth, which is
+               1280 bytes/frame, stop processing */
+            DPRINTF("uhci: bandwidth limit reached, stop\n");
+            break;
+        }
         if (is_qh(link)) {
             /* QH */
 
             if (qhdb_insert(&qhdb, link)) {
                 /*
                  * We're going in circles. Which is not a bug because
-                 * HCD is allowed to do that as part of the BW management. 
-                 * In our case though it makes no sense to spin here. Sync transations 
-                 * are already done, and async completion handler will re-process 
-                 * the frame when something is ready.
+                 * HCD is allowed to do that as part of the BW management.
+                 *
+                 * Stop processing here if no transaction has been done
+                 * since we've been here last time.
                  */
                 DPRINTF("uhci: detected loop. qh 0x%x\n", link);
-                break;
+                if (td_count == 0) {
+                    DPRINTF("uhci: no transaction last round, stop\n");
+                    break;
+                } else {
+                    td_count = 0;
+                    qhdb_reset(&qhdb);
+                    qhdb_insert(&qhdb, link);
+                }
             }
 
             cpu_physical_memory_read(link & ~0xf, (uint8_t *) &qh, sizeof(qh));
@@ -991,6 +1051,8 @@ static void uhci_process_frame(UHCIState *s)
                 link, td.link, td.ctrl, td.token, curr_qh);
 
         link = td.link;
+        td_count++;
+        s->frame_bytes += (td.ctrl & 0x7ff) + 1;
 
         if (curr_qh) {
 	    /* update QH element link */
@@ -1013,13 +1075,16 @@ static void uhci_process_frame(UHCIState *s)
         /* go to the next entry */
     }
 
-    s->pending_int_mask = int_mask;
+    s->pending_int_mask |= int_mask;
 }
 
 static void uhci_frame_timer(void *opaque)
 {
     UHCIState *s = opaque;
-    int64_t expire_time;
+
+    /* prepare the timer for the next frame */
+    s->expire_time += (get_ticks_per_sec() / FRAME_TIMER_FREQ);
+    s->frame_bytes = 0;
 
     if (!(s->cmd & UHCI_CMD_RS)) {
         /* Full stop */
@@ -1037,6 +1102,7 @@ static void uhci_frame_timer(void *opaque)
         s->status  |= UHCI_STS_USBINT;
         uhci_update_irq(s);
     }
+    s->pending_int_mask = 0;
 
     /* Start new frame */
     s->frnum = (s->frnum + 1) & 0x7ff;
@@ -1049,10 +1115,7 @@ static void uhci_frame_timer(void *opaque)
 
     uhci_async_validate_end(s);
 
-    /* prepare the timer for the next frame */
-    expire_time = qemu_get_clock(vm_clock) +
-        (get_ticks_per_sec() / FRAME_TIMER_FREQ);
-    qemu_mod_timer(s->frame_timer, expire_time);
+    qemu_mod_timer(s->frame_timer, s->expire_time);
 }
 
 static void uhci_map(PCIDevice *pci_dev, int region_num,

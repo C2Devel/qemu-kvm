@@ -171,6 +171,9 @@ static int vpc_open(BlockDriverState *bs, int flags)
         fprintf(stderr, "block-vpc: The header checksum of '%s' is "
             "incorrect.\n", bs->filename);
 
+    /* Write 'checksum' back to footer, or else will leave it with zero. */
+    footer->checksum = be32_to_cpu(checksum);
+
     // The visible size of a image in Virtual PC depends on the geometry
     // rather than on the size stored in the footer (the size in the footer
     // is too large usually)
@@ -225,6 +228,12 @@ static int vpc_open(BlockDriverState *bs, int flags)
     return 0;
  fail:
     return -1;
+}
+
+static int vpc_reopen_prepare(BDRVReopenState *state,
+                              BlockReopenQueue *queue, Error **errp)
+{
+    return 0;
 }
 
 /*
@@ -584,7 +593,11 @@ static int vpc_create(const char *filename, QEMUOptionParameter *options)
 
     memcpy(dyndisk_header->magic, "cxsparse", 8);
 
-    dyndisk_header->data_offset = be64_to_cpu(0xFFFFFFFF);
+    /*
+     * Note: The spec is actually wrong here for data_offset, it says
+     * 0xFFFFFFFF, but MS tools expect all 64 bits to be set.
+     */
+    dyndisk_header->data_offset = be64_to_cpu(0xFFFFFFFFFFFFFFFFULL);
     dyndisk_header->table_offset = be64_to_cpu(3 * 512);
     dyndisk_header->version = be32_to_cpu(0x00010000);
     dyndisk_header->block_size = be32_to_cpu(block_size);
@@ -629,6 +642,7 @@ static BlockDriver bdrv_vpc = {
     .bdrv_write     = vpc_co_write,
     .bdrv_co_flush  = vpc_co_flush,
     .bdrv_close     = vpc_close,
+    .bdrv_reopen_prepare = vpc_reopen_prepare,
     .bdrv_create    = vpc_create,
 
     .create_options = vpc_create_options,

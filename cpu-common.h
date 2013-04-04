@@ -81,6 +81,10 @@ struct CPUPhysMemoryClient {
     QLIST_ENTRY(CPUPhysMemoryClient) list;
 };
 
+#ifndef CONFIG_USER_ONLY
+bool cpu_physical_memory_is_io(target_phys_addr_t phys_addr);
+#endif
+
 void cpu_register_phys_memory_client(CPUPhysMemoryClient *);
 void cpu_unregister_phys_memory_client(CPUPhysMemoryClient *);
 

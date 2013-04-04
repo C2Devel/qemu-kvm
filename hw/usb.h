@@ -162,6 +162,7 @@ struct USBDevice {
     USBDeviceInfo *info;
     USBPort *port;
     char *port_path;
+    uint32_t create_unique_serial;
     void *opaque;
 
     /* Actual connected speed */
@@ -278,6 +279,7 @@ typedef void USBCallback(USBPacket * packet, void *opaque);
 struct USBPacket {
     /* Data fields for use by the driver.  */
     int pid;
+    uint64_t id;
     uint8_t devaddr;
     uint8_t devep;
     uint8_t *data;

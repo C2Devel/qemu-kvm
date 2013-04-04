@@ -270,6 +270,16 @@ static const VMStateDescription vmstate_vmmouse = {
     }
 };
 
+static void vmmouse_reset(void *opaque)
+{
+    VMMouseState *s = opaque;
+
+    s->status = 0xffff;
+    s->queue_size = VMMOUSE_QUEUE_SIZE;
+
+    vmmouse_disable(s);
+}
+
 void *vmmouse_init(void *m)
 {
     VMMouseState *s = NULL;
@@ -278,14 +288,14 @@ void *vmmouse_init(void *m)
 
     s = qemu_mallocz(sizeof(VMMouseState));
 
-    s->status = 0xffff;
     s->ps2_mouse = m;
-    s->queue_size = VMMOUSE_QUEUE_SIZE;
+    vmmouse_reset(s);
 
     vmport_register(VMMOUSE_STATUS, vmmouse_ioport_read, s);
     vmport_register(VMMOUSE_COMMAND, vmmouse_ioport_read, s);
     vmport_register(VMMOUSE_DATA, vmmouse_ioport_read, s);
     vmstate_register(NULL, 0, &vmstate_vmmouse, s);
+    qemu_register_reset(vmmouse_reset, s);
 
     return s;
 }

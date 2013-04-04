@@ -232,7 +232,7 @@ void qemu_net_queue_purge(NetQueue *queue, VLANClientState *from)
     }
 }
 
-void qemu_net_queue_flush(NetQueue *queue)
+bool qemu_net_queue_flush(NetQueue *queue)
 {
     while (!QTAILQ_EMPTY(&queue->packets)) {
         NetPacket *packet;
@@ -248,7 +248,7 @@ void qemu_net_queue_flush(NetQueue *queue)
                                      packet->size);
         if (ret == 0) {
             QTAILQ_INSERT_HEAD(&queue->packets, packet, entry);
-            break;
+            return 0;
         }
 
         if (packet->sent_cb) {
@@ -257,4 +257,5 @@ void qemu_net_queue_flush(NetQueue *queue)
 
         qemu_free(packet);
     }
+    return 1;
 }

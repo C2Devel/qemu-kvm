@@ -48,12 +48,11 @@ struct usb_msd_csw {
 typedef struct {
     USBDevice dev;
     enum USBMSDMode mode;
+    uint32_t scsi_off;
     uint32_t scsi_len;
-    uint8_t *scsi_buf;
     uint32_t usb_len;
     uint8_t *usb_buf;
     uint32_t data_len;
-    uint32_t residue;
     struct usb_msd_csw csw;
     SCSIRequest *req;
     SCSIBus bus;
@@ -163,8 +162,8 @@ static const USBDescDevice desc_device_high = {
 
 static const USBDesc desc = {
     .id = {
-        .idVendor          = 0,
-        .idProduct         = 0,
+        .idVendor          = 0x46f4, /* CRC16() of "QEMU" */
+        .idProduct         = 0x0001,
         .bcdDevice         = 0,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT,
@@ -182,14 +181,14 @@ static void usb_msd_copy_data(MSDState *s)
     if (len > s->scsi_len)
         len = s->scsi_len;
     if (s->mode == USB_MSDM_DATAIN) {
-        memcpy(s->usb_buf, s->scsi_buf, len);
+        memcpy(s->usb_buf, scsi_req_get_buf(s->req) + s->scsi_off, len);
     } else {
-        memcpy(s->scsi_buf, s->usb_buf, len);
+        memcpy(scsi_req_get_buf(s->req) + s->scsi_off, s->usb_buf, len);
     }
     s->usb_len -= len;
     s->scsi_len -= len;
     s->usb_buf += len;
-    s->scsi_buf += len;
+    s->scsi_off += len;
     s->data_len -= len;
     if (s->scsi_len == 0 || s->data_len == 0) {
         scsi_req_continue(s->req);
@@ -200,13 +199,25 @@ static void usb_msd_send_status(MSDState *s, USBPacket *p)
 {
     int len;
 
-    DPRINTF("Command status %d tag 0x%x, len %zd\n",
-            s->csw.status, s->csw.tag, p->len);
+    DPRINTF("Command status %d tag 0x%x, len %d\n",
+            s->csw.status, le32_to_cpu(s->csw.tag), p->len);
 
-    assert(s->csw.sig == 0x53425355);
+    assert(s->csw.sig == cpu_to_le32(0x53425355));
     len = MIN(sizeof(s->csw), p->len);
     memcpy(p->data, &s->csw, len);
     memset(&s->csw, 0, sizeof(s->csw));
+}
+
+static void usb_msd_packet_complete(MSDState *s)
+{
+    USBPacket *p = s->packet;
+
+    /* Set s->packet to NULL before calling usb_packet_complete
+       because another request may be issued before
+       usb_packet_complete returns.  */
+    DPRINTF("Packet complete %p\n", p);
+    s->packet = NULL;
+    usb_packet_complete(&s->dev, p);
 }
 
 static void usb_msd_transfer_data(SCSIRequest *req, uint32_t len)
@@ -216,16 +227,11 @@ static void usb_msd_transfer_data(SCSIRequest *req, uint32_t len)
 
     assert((s->mode == USB_MSDM_DATAOUT) == (req->cmd.mode == SCSI_XFER_TO_DEV));
     s->scsi_len = len;
-    s->scsi_buf = scsi_req_get_buf(req);
+    s->scsi_off = 0;
     if (p) {
         usb_msd_copy_data(s);
         if (s->packet && s->usb_len == 0) {
-            /* Set s->packet to NULL before calling usb_packet_complete
-               because another request may be issued before
-               usb_packet_complete returns.  */
-            DPRINTF("Packet complete %p\n", p);
-            s->packet = NULL;
-            usb_packet_complete(&s->dev, p);
+            usb_msd_packet_complete(s);
         }
     }
 }
@@ -236,17 +242,19 @@ static void usb_msd_command_complete(SCSIRequest *req, uint32_t status, int32_t 
     USBPacket *p = s->packet;
 
     DPRINTF("Command complete %d tag 0x%x\n", status, req->tag);
-    s->residue = s->data_len;
 
     s->csw.sig = cpu_to_le32(0x53425355);
     s->csw.tag = cpu_to_le32(req->tag);
-    s->csw.residue = s->residue;
+    s->csw.residue = cpu_to_le32(s->data_len);
     s->csw.status = status != 0;
 
     if (s->packet) {
         if (s->data_len == 0 && s->mode == USB_MSDM_DATAOUT) {
             /* A deferred packet with no write data remaining must be
                the status read packet.  */
+            usb_msd_send_status(s, p);
+            s->mode = USB_MSDM_CBW;
+        } else if (s->mode == USB_MSDM_CSW) {
             usb_msd_send_status(s, p);
             s->mode = USB_MSDM_CBW;
         } else {
@@ -261,8 +269,7 @@ static void usb_msd_command_complete(SCSIRequest *req, uint32_t status, int32_t 
                 s->mode = USB_MSDM_CSW;
             }
         }
-        s->packet = NULL;
-        usb_packet_complete(&s->dev, p);
+        usb_msd_packet_complete(s);
     } else if (s->data_len == 0) {
         s->mode = USB_MSDM_CSW;
     }
@@ -292,10 +299,8 @@ static void usb_msd_handle_reset(USBDevice *dev)
     assert(s->req == NULL);
 
     if (s->packet) {
-        USBPacket *p = s->packet;
-        s->packet = NULL;
-        p->len = USB_RET_STALL;
-        usb_packet_complete(dev, p);
+        s->packet->len = USB_RET_STALL;
+        usb_msd_packet_complete(s);
     }
 
     s->mode = USB_MSDM_CBW;
@@ -399,7 +404,7 @@ static int usb_msd_handle_data(USBDevice *dev, USBPacket *p)
             }
             DPRINTF("Command tag 0x%x flags %08x len %d data %d\n",
                     tag, cbw.flags, cbw.cmd_len, s->data_len);
-            s->residue = 0;
+            assert(le32_to_cpu(s->csw.residue) == 0);
             s->scsi_len = 0;
             s->req = scsi_req_new(s->scsi_dev, tag, 0, cbw.cmd, NULL);
             scsi_req_enqueue(s->req);
@@ -419,7 +424,7 @@ static int usb_msd_handle_data(USBDevice *dev, USBPacket *p)
             if (s->scsi_len) {
                 usb_msd_copy_data(s);
             }
-            if (s->residue && s->usb_len) {
+            if (le32_to_cpu(s->csw.residue) && s->usb_len) {
                 s->data_len -= s->usb_len;
                 if (s->data_len == 0)
                     s->mode = USB_MSDM_CSW;
@@ -477,7 +482,7 @@ static int usb_msd_handle_data(USBDevice *dev, USBPacket *p)
             if (s->scsi_len) {
                 usb_msd_copy_data(s);
             }
-            if (s->residue && s->usb_len) {
+            if (le32_to_cpu(s->csw.residue) && s->usb_len) {
                 s->data_len -= s->usb_len;
                 memset(s->usb_buf, 0, s->usb_len);
                 if (s->data_len == 0)
@@ -520,6 +525,17 @@ static void usb_msd_password_cb(void *opaque, int err)
         qdev_unplug(&s->dev.qdev);
 }
 
+static void *usb_msd_load_request(QEMUFile *f, SCSIRequest *req)
+{
+    MSDState *s = DO_UPCAST(MSDState, dev.qdev, req->bus->qbus.parent);
+
+    /* nothing to load, just store req in our state struct */
+    assert(s->req == NULL);
+    scsi_req_ref(req);
+    s->req = req;
+    return NULL;
+}
+
 static const struct SCSIBusInfo usb_msd_scsi_info = {
     .tcq = false,
     .max_target = 0,
@@ -527,7 +543,8 @@ static const struct SCSIBusInfo usb_msd_scsi_info = {
 
     .transfer_data = usb_msd_transfer_data,
     .complete = usb_msd_command_complete,
-    .cancel = usb_msd_request_cancelled
+    .cancel = usb_msd_request_cancelled,
+    .load_request = usb_msd_load_request,
 };
 
 static int usb_msd_initfn(USBDevice *dev)
@@ -562,6 +579,8 @@ static int usb_msd_initfn(USBDevice *dev)
     }
     if (s->serial) {
         usb_desc_set_string(dev, STR_SERIALNUMBER, s->serial);
+    } else {
+        usb_desc_create_serial(dev);
     }
 
     usb_desc_init(dev);
@@ -645,11 +664,18 @@ static USBDevice *usb_msd_init(const char *filename)
 
 static const VMStateDescription vmstate_usb_msd = {
     .name = "usb-storage",
-    .unmigratable = 1, /* FIXME: handle transactions which are in flight */
     .version_id = 1,
     .minimum_version_id = 1,
     .fields = (VMStateField []) {
         VMSTATE_USB_DEVICE(dev, MSDState),
+        VMSTATE_UINT32(mode, MSDState),
+        VMSTATE_UINT32(scsi_len, MSDState),
+        VMSTATE_UINT32(scsi_off, MSDState),
+        VMSTATE_UINT32(data_len, MSDState),
+        VMSTATE_UINT32(csw.sig, MSDState),
+        VMSTATE_UINT32(csw.tag, MSDState),
+        VMSTATE_UINT32(csw.residue, MSDState),
+        VMSTATE_UINT8(csw.status, MSDState),
         VMSTATE_END_OF_LIST()
     }
 };

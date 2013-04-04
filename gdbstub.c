@@ -1672,21 +1672,12 @@ static void gdb_set_cpu_pc(GDBState *s, target_ulong pc)
 #endif
 }
 
-static inline int gdb_id(CPUState *env)
-{
-#if defined(CONFIG_USER_ONLY) && defined(CONFIG_USE_NPTL)
-    return env->host_tid;
-#else
-    return env->cpu_index + 1;
-#endif
-}
-
 static CPUState *find_cpu(uint32_t thread_id)
 {
     CPUState *env;
 
     for (env = first_cpu; env != NULL; env = env->next_cpu) {
-        if (gdb_id(env) == thread_id) {
+        if (cpu_index(env) == thread_id) {
             return env;
         }
     }
@@ -1714,7 +1705,7 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
     case '?':
         /* TODO: Make this return the correct value for user-mode.  */
         snprintf(buf, sizeof(buf), "T%02xthread:%02x;", GDB_SIGNAL_TRAP,
-                 gdb_id(s->c_cpu));
+                 cpu_index(s->c_cpu));
         put_packet(s, buf);
         /* Remove all the breakpoints when this query is issued,
          * because gdb is doing and initial connect and the state
@@ -2001,7 +1992,7 @@ static int gdb_handle_packet(GDBState *s, const char *line_buf)
         } else if (strcmp(p,"sThreadInfo") == 0) {
         report_cpuinfo:
             if (s->query_cpu) {
-                snprintf(buf, sizeof(buf), "m%x", gdb_id(s->query_cpu));
+                snprintf(buf, sizeof(buf), "m%x", cpu_index(s->query_cpu));
                 put_packet(s, buf);
                 s->query_cpu = s->query_cpu->next_cpu;
             } else
@@ -2147,7 +2138,7 @@ static void gdb_vm_state_change(void *opaque, int running, RunState state)
             }
             snprintf(buf, sizeof(buf),
                      "T%02xthread:%02x;%swatch:" TARGET_FMT_lx ";",
-                     GDB_SIGNAL_TRAP, gdb_id(env), type,
+                     GDB_SIGNAL_TRAP, cpu_index(env), type,
                      env->watchpoint_hit->vaddr);
             put_packet(s, buf);
             env->watchpoint_hit = NULL;
@@ -2158,7 +2149,7 @@ static void gdb_vm_state_change(void *opaque, int running, RunState state)
     } else {
         ret = GDB_SIGNAL_INT;
     }
-    snprintf(buf, sizeof(buf), "T%02xthread:%02x;", ret, gdb_id(env));
+    snprintf(buf, sizeof(buf), "T%02xthread:%02x;", ret, cpu_index(env));
     put_packet(s, buf);
 }
 #endif
