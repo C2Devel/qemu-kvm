@@ -2702,6 +2702,24 @@ static ram_addr_t last_ram_offset(void)
     return last;
 }
 
+static void qemu_ram_setup_dump(void *addr, ram_addr_t size)
+{
+    int ret;
+    QemuOpts *machine_opts;
+
+    /* Use MADV_DONTDUMP, if user doesn't want the guest memory in the core */
+    machine_opts = qemu_opts_find(qemu_find_opts("machine"), 0);
+    if (machine_opts &&
+        !qemu_opt_get_bool(machine_opts, "dump-guest-core", true)) {
+        ret = madvise(addr, size, MADV_DONTDUMP);
+        if (ret) {
+            perror("qemu_madvise");
+            fprintf(stderr, "madvise doesn't support MADV_DONTDUMP, "
+                            "but dump_guest_core=off specified\n");
+        }
+    }
+}
+
 ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
                                    ram_addr_t size, void *host)
 {
@@ -2791,6 +2809,8 @@ ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
            0xff, size >> TARGET_PAGE_BITS);
 
     ram_list.dirty_pages += size >> TARGET_PAGE_BITS;
+
+    qemu_ram_setup_dump(new_block->host, size);
 
     if (kvm_enabled())
         kvm_setup_guest_memory(new_block->host, size);
@@ -2899,6 +2919,7 @@ void qemu_ram_remap(ram_addr_t addr, ram_addr_t length)
                 if (!disable_KSM)
                     madvise(vaddr, length, MADV_MERGEABLE);
 #endif
+                qemu_ram_setup_dump(vaddr, length);
             }
             return;
         }
@@ -4231,5 +4252,16 @@ void dump_exec_info(FILE *f,
 #include "softmmu_template.h"
 
 #undef env
+
+bool cpu_physical_memory_is_io(target_phys_addr_t phys_addr)
+{
+    PhysPageDesc *p;
+    unsigned long pd;
+
+    p = phys_page_find(phys_addr >> TARGET_PAGE_BITS);
+    pd = !p ? IO_MEM_UNASSIGNED : p->phys_offset;
+
+    return (pd & ~TARGET_PAGE_MASK) > IO_MEM_ROM && !(pd & IO_MEM_ROMD);
+}
 
 #endif

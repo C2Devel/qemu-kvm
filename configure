@@ -33,7 +33,7 @@ prefix=""
 interp_prefix="/usr/gnemul/qemu-%M"
 static="no"
 sysconfdir=""
-cpuconfdir=""
+local_statedir=""
 sparc_cpu=""
 cross_prefix=""
 cc="gcc"
@@ -288,6 +288,7 @@ smartcard_nss=""
 live_snapshots="yes"
 block_stream="yes"
 usb_redir=""
+virtio_blk_data_plane=""
 
 # OS specific
 if check_define __linux__ ; then
@@ -441,7 +442,7 @@ if test "$mingw32" = "yes" ; then
   EXESUF=".exe"
   QEMU_CFLAGS="-DWIN32_LEAN_AND_MEAN -DWINVER=0x501 $QEMU_CFLAGS"
   LIBS="-lwinmm -lws2_32 -liphlpapi $LIBS"
-  libs_qga="-lws2_32 -lwinmm $lib_qga"
+  libs_qga="-lws2_32 -lwinmm -lpowrprof $libs_qga"
 fi
 
 # find source path
@@ -495,7 +496,7 @@ for opt do
   ;;
   --sysconfdir=*) sysconfdir="$optarg"
   ;;
-  --cpuconfdir=*) cpuconfdir="$optarg"
+  --localstatedir=*) local_statedir="$optarg"
   ;;
   --disable-sdl) sdl="no"
   ;;
@@ -703,6 +704,10 @@ for opt do
        live_snapshots="yes";
        block_stream="yes";
   ;;
+  --disable-virtio-blk-data-plane) virtio_blk_data_plane="no"
+  ;;
+  --enable-virtio-blk-data-plane) virtio_blk_data_plane="yes"
+  ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
   esac
@@ -788,7 +793,7 @@ echo "  --make=MAKE              use specified make [$make]"
 echo "  --install=INSTALL        use specified install [$install]"
 echo "  --static                 enable static build [$static]"
 echo "  --sysconfdir=PATH        install config in PATH"
-echo "  --cpuconfdir=PATH        install cpu model config in PATH"
+echo "  --localstatedir=PATH     install local state in PATH"
 echo "  --enable-debug-tcg       enable TCG debugging"
 echo "  --disable-debug-tcg      disable TCG debugging (default)"
 echo "  --enable-debug           enable common debug build options"
@@ -1726,6 +1731,17 @@ EOF
 fi
 
 ##########################################
+# adjust virtio-blk-data-plane based on linux-aio
+
+if test "$virtio_blk_data_plane" = "yes" -a \
+	"$linux_aio" != "yes" ; then
+  echo "Error: virtio-blk-data-plane requires Linux AIO, please try --enable-linux-aio"
+  exit 1
+elif test -z "$virtio_blk_data_plane" ; then
+  virtio_blk_data_plane=$linux_aio
+fi
+
+##########################################
 # iovec probe
 cat > $TMPC <<EOF
 #include <sys/types.h>
@@ -2037,11 +2053,16 @@ int main(void) { spice_server_new(); return 0; }
 EOF
   spice_cflags=$(pkg-config --cflags spice-protocol spice-server 2>/dev/null)
   spice_libs=$(pkg-config --libs spice-protocol spice-server 2>/dev/null)
-  if pkg-config --atleast-version=0.8.2 spice-server >/dev/null 2>&1 && \
-     compile_prog "$spice_cflags" "$spice_libs" ; then
+  if pkg-config --atleast-version=0.12.0 spice-server >/dev/null 2>&1 && \
+     pkg-config --atleast-version=0.12.2 spice-protocol >/dev/null 2>&1; then
     spice="yes"
     libs_softmmu="$libs_softmmu $spice_libs"
     QEMU_CFLAGS="$QEMU_CFLAGS $spice_cflags"
+    spice_protocol_version=$($pkg_config --modversion spice-protocol)
+    spice_server_version=$($pkg_config --modversion spice-server)
+    if $pkg_config --atleast-version=0.12.0 spice-protocol >/dev/null 2>&1; then
+        spice_qxl_io_monitors_config_async="yes"
+    fi
   else
     if test "$spice" = "yes" ; then
       feature_not_found "spice"
@@ -2077,7 +2098,7 @@ fi
 
 # check for usbredirparser for usb network redirection support
 if test "$usb_redir" != "no" ; then
-    if pkg-config --atleast-version=0.3.4 libusbredirparser >/dev/null 2>&1 ; then
+    if pkg-config --atleast-version=0.5 libusbredirparser >/dev/null 2>&1 ; then
         usb_redir="yes"
         usb_redir_cflags=$(pkg-config --cflags libusbredirparser 2>/dev/null)
         usb_redir_libs=$(pkg-config --libs libusbredirparser 2>/dev/null)
@@ -2134,6 +2155,21 @@ if test "$trace_backend" = "dtrace"; then
   fi
 fi
 
+########################################
+# check if environ is declared
+
+has_environ=no
+cat > $TMPC << EOF
+#include <unistd.h>
+int main(void) {
+    environ = environ;
+    return 0;
+}
+EOF
+if compile_prog "" "" ; then
+    has_environ=yes
+fi
+
 ##########################################
 # End of CC checks
 # After here, no more $cc or $ld runs
@@ -2187,6 +2223,9 @@ if test "$mingw32" = "yes" ; then
   if test -z "$sysconfdir" ; then
       sysconfdir="${prefix}"
   fi
+  if test -z "$local_statedir" ; then
+      local_statedir="${prefix}"
+  fi
 else
   if test -z "$prefix" ; then
       prefix="/usr/local"
@@ -2198,8 +2237,8 @@ else
   if test -z "$sysconfdir" ; then
       sysconfdir="${prefix}/etc"
   fi
-  if test -z "$cpuconfdir" ; then
-      cpuconfdir="$sysconfdir/qemu"
+  if test -z "$local_statedir" ; then
+      local_statedir="${prefix}/var"
   fi
 fi
 
@@ -2285,12 +2324,13 @@ echo "uuid support      $uuid"
 echo "vhost-net support $vhost_net"
 echo "-fake-machine     $fake_machine"
 echo "Trace backend     $trace_backend"
-echo "spice support     $spice"
+echo "spice support     $spice ($spice_protocol_version/$spice_server_version)"
 echo "nss used          $smartcard_nss"
 echo "Live snapshots    $live_snapshots"
 echo "Block streaming   $block_stream"
 echo "xfsctl support    $xfs"
 echo "usb net redir     $usb_redir"
+echo "virtio-blk-data-plane $virtio_blk_data_plane"
 
 if test $sdl_too_old = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -2309,7 +2349,6 @@ if test "$mingw32" = "yes" ; then
   echo "CONFIG_QEMU_CONFDIR=\"$sysconfdir\"" >> $config_host_mak
 else
   echo "CONFIG_QEMU_CONFDIR=\"${sysconfdir}/qemu\"" >> $config_host_mak
-  echo "CONFIG_QEMU_CPUCONFDIR=\"${cpuconfdir}\"" >> $config_host_mak
 fi
 
 case "$cpu" in
@@ -2532,6 +2571,10 @@ if test "$spice" = "yes" ; then
   echo "CONFIG_SPICE=y" >> $config_host_mak
 fi
 
+if test "$spice_qxl_io_monitors_config_async" = "yes" ; then
+  echo "CONFIG_QXL_IO_MONITORS_CONFIG_ASYNC=y" >> $config_host_mak
+fi
+
 if test "$smartcard" = "yes" ; then
   echo "CONFIG_SMARTCARD=y" >> $config_host_mak
 fi
@@ -2552,6 +2595,10 @@ if test "$usb_redir" = "yes" ; then
   echo "CONFIG_USB_REDIR=y" >> $config_host_mak
 fi
 
+if test "$virtio_blk_data_plane" = "yes" ; then
+  echo "CONFIG_VIRTIO_BLK_DATA_PLANE=y" >> $config_host_mak
+fi
+
 # XXX: suppress that
 if [ "$bsd" = "yes" ] ; then
   echo "CONFIG_BSD=y" >> $config_host_mak
@@ -2561,6 +2608,10 @@ echo "CONFIG_UNAME_RELEASE=\"$uname_release\"" >> $config_host_mak
 
 if test "$zero_malloc" = "yes" ; then
   echo "CONFIG_ZERO_MALLOC=y" >> $config_host_mak
+fi
+
+if test "$has_environ" = "yes" ; then
+  echo "CONFIG_HAS_ENVIRON=y" >> $config_host_mak
 fi
 
 # USB host support
@@ -2611,7 +2662,7 @@ echo "bindir=\${prefix}$binsuffix" >> $config_host_mak
 echo "mandir=\${prefix}$mansuffix" >> $config_host_mak
 echo "datadir=\${prefix}$datasuffix" >> $config_host_mak
 echo "sysconfdir=$sysconfdir" >> $config_host_mak
-echo "cpuconfdir=$cpuconfdir" >> $config_host_mak
+echo "qemu_localstatedir=$local_statedir" >> $config_host_mak
 echo "docdir=\${prefix}$docsuffix" >> $config_host_mak
 echo "MAKE=$make" >> $config_host_mak
 echo "INSTALL=$install" >> $config_host_mak
@@ -2705,6 +2756,7 @@ mkdir -p $target_dir
 mkdir -p $target_dir/fpu
 mkdir -p $target_dir/tcg
 mkdir -p $target_dir/ide
+mkdir -p $target_dir/dataplane
 if test "$target" = "arm-linux-user" -o "$target" = "armeb-linux-user" -o "$target" = "arm-bsd-user" -o "$target" = "armeb-bsd-user" ; then
   mkdir -p $target_dir/nwfpe
 fi
@@ -2882,6 +2934,10 @@ case "$target_arch2" in
     fi
 esac
 echo "TARGET_PHYS_ADDR_BITS=$target_phys_bits" >> $config_target_mak
+case "$target_arch2" in
+  i386|x86_64)
+    echo "CONFIG_HAVE_GET_MEMORY_MAPPING=y" >> $config_target_mak
+esac
 if test "$target_bigendian" = "yes" ; then
   echo "TARGET_WORDS_BIGENDIAN=y" >> $config_target_mak
 fi
@@ -2890,6 +2946,10 @@ if test "$target_softmmu" = "yes" ; then
   echo "LIBS+=$libs_softmmu" >> $config_target_mak
   echo "HWDIR=../libhw$target_phys_bits" >> $config_target_mak
   echo "subdir-$target: subdir-libhw$target_phys_bits" >> $config_host_mak
+  case "$target_arch2" in
+    i386|x86_64)
+      echo "CONFIG_HAVE_CORE_DUMP=y" >> $config_target_mak
+  esac
 fi
 if test "$target_user_only" = "yes" ; then
   echo "CONFIG_USER_ONLY=y" >> $config_target_mak

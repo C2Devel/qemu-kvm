@@ -130,6 +130,7 @@ int qemu_strnlen(const char *s, int max_len);
 time_t mktimegm(struct tm *tm);
 int qemu_fls(int i);
 int qemu_fdatasync(int fd);
+int fcntl_setfl(int fd, int flag);
 
 #define STRTOSZ_DEFSUFFIX_TB	'T'
 #define STRTOSZ_DEFSUFFIX_GB	'G'
@@ -275,6 +276,9 @@ void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
 void qemu_iovec_copy(QEMUIOVector *dst, QEMUIOVector *src, uint64_t skip,
     size_t size);
 void qemu_iovec_concat(QEMUIOVector *dst, QEMUIOVector *src, size_t size);
+void qemu_iovec_concat_iov(QEMUIOVector *dst,
+                           struct iovec *src_iov, unsigned int src_cnt,
+                           size_t soffset, size_t sbytes);
 void qemu_iovec_destroy(QEMUIOVector *qiov);
 void qemu_iovec_reset(QEMUIOVector *qiov);
 void qemu_iovec_to_buffer(QEMUIOVector *qiov, void *buf);

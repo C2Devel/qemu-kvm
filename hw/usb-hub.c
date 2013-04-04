@@ -127,8 +127,8 @@ static const USBDescDevice desc_device_hub = {
 
 static const USBDesc desc_hub = {
     .id = {
-        .idVendor          = 0,
-        .idProduct         = 0,
+        .idVendor          = 0x0409,
+        .idProduct         = 0x55aa,
         .bcdDevice         = 0x0101,
         .iManufacturer     = STR_MANUFACTURER,
         .iProduct          = STR_PRODUCT,
@@ -503,6 +503,7 @@ static int usb_hub_initfn(USBDevice *dev)
     USBHubPort *port;
     int i;
 
+    usb_desc_create_serial(dev);
     usb_desc_init(dev);
     for (i = 0; i < NUM_PORTS; i++) {
         port = &s->ports[i];

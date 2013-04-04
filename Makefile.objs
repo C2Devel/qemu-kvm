@@ -26,7 +26,7 @@ block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow
 block-nested-y += qed.o qed-gencb.o qed-l2-cache.o qed-table.o qed-cluster.o
 block-nested-y += qed-check.o
 block-nested-y += parallels.o nbd.o blkdebug.o
-block-nested-y += stream.o mirror.o
+block-nested-y += stream.o mirror.o commit.o
 block-nested-$(CONFIG_WIN32) += raw-win32.o
 block-nested-$(CONFIG_POSIX) += raw-posix.o
 block-nested-$(CONFIG_CURL) += curl.o
@@ -212,12 +212,11 @@ common-obj-y += hmp.o
 
 qga-nested-y = commands.o guest-agent-command-state.o
 qga-nested-$(CONFIG_POSIX) += commands-posix.o channel-posix.o
-qga-nested-qapi-$(CONFIG_POSIX) = $(addprefix $(qapi-dir)/, qga-suspend-qapi-visit.o qga-suspend-qapi-types.o qga-suspend-qmp-marshal.o)
 qga-nested-$(CONFIG_WIN32) += commands-win32.o channel-win32.o service-win32.o
 qga-obj-y = $(addprefix qga/, $(qga-nested-y))
 qga-obj-y += qemu-ga.o qemu-tool.o qemu-error.o module.o cutils.o osdep.o
 qga-obj-$(CONFIG_WIN32) += qemu-malloc.o
-qga-obj-$(CONFIG_POSIX) += qemu-malloc.o qemu-sockets.o qemu-option.o $(qga-nested-qapi-y)
+qga-obj-$(CONFIG_POSIX) += qemu-malloc.o qemu-sockets.o qemu-option.o
 
 
 vl.o: QEMU_CFLAGS+=$(GPROF_CFLAGS)

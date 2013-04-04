@@ -30,6 +30,8 @@ int inet_aton(const char *cp, struct in_addr *ia);
 #endif /* !_WIN32 */
 
 #include "qemu-option.h"
+#include "error.h"
+#include "qerror.h"
 
 /* misc helpers */
 int qemu_socket(int domain, int type, int protocol);
@@ -37,12 +39,21 @@ int qemu_accept(int s, struct sockaddr *addr, socklen_t *addrlen);
 void socket_set_nonblock(int fd);
 int send_all(CharDriverState *chr, int fd, const void *buf, int len1);
 
-/* New, ipv6-ready socket helper functions, see qemu-sockets.c */
-int inet_listen_opts(QemuOpts *opts, int port_offset);
+/* callback function for nonblocking connect
+ * valid fd on success, negative error code on failure
+ */
+typedef void NonBlockingConnectHandler(int fd, void *opaque);
+
+int inet_listen_opts(QemuOpts *opts, int port_offset, Error **errp);
 int inet_listen(const char *str, char *ostr, int olen,
-                int socktype, int port_offset);
-int inet_connect_opts(QemuOpts *opts);
-int inet_connect(const char *str, int socktype);
+                int socktype, int port_offset, Error **errp);
+int inet_connect_opts(QemuOpts *opts, Error **errp,
+                      NonBlockingConnectHandler *callback, void *opaque);
+int inet_connect(const char *str, Error **errp);
+int inet_nonblocking_connect(const char *str,
+                             NonBlockingConnectHandler *callback,
+                             void *opaque, Error **errp);
+
 int inet_dgram_opts(QemuOpts *opts);
 const char *inet_strfamily(int family);
 

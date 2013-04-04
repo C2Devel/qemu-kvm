@@ -17,6 +17,7 @@
 #include "qdict.h"
 #include "qemu-common.h"
 #include "notify.h"
+#include "qerror.h"
 
 #define MIG_STATE_ERROR		-1
 #define MIG_STATE_COMPLETED	0
@@ -53,7 +54,7 @@ struct FdMigrationState
 
 void process_incoming_migration(QEMUFile *f);
 
-int qemu_start_incoming_migration(const char *uri);
+int qemu_start_incoming_migration(const char *uri, Error **errp);
 
 int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data);
 
@@ -79,14 +80,15 @@ MigrationState *exec_start_outgoing_migration(Monitor *mon,
 					      int blk,
 					      int inc);
 
-int tcp_start_incoming_migration(const char *host_port);
+int tcp_start_incoming_migration(const char *host_port, Error **errp);
 
 MigrationState *tcp_start_outgoing_migration(Monitor *mon,
                                              const char *host_port,
 					     int64_t bandwidth_limit,
 					     int detach,
 					     int blk,
-					     int inc);
+                                             int inc,
+                                             Error **errp);
 
 int unix_start_incoming_migration(const char *path);
 

@@ -464,8 +464,10 @@ static const char *monitor_event_names[] = {
     [QEVENT_BLOCK_JOB_CANCELLED] = "BLOCK_JOB_CANCELLED",
     [QEVENT_DEVICE_TRAY_MOVED] = "DEVICE_TRAY_MOVED",
     [QEVENT_SUSPEND] = "SUSPEND",
+    [QEVENT_SUSPEND_DISK] = "SUSPEND_DISK",
     [QEVENT_WAKEUP] = "WAKEUP",
     [QEVENT_BALLOON_CHANGE] = "BALLOON_CHANGE",
+    [QEVENT_SPICE_MIGRATE_COMPLETED] = "SPICE_MIGRATE_COMPLETED",
 };
 QEMU_BUILD_BUG_ON(ARRAY_SIZE(monitor_event_names) != QEVENT_MAX)
 
@@ -1865,7 +1867,7 @@ static int do_memory_save(Monitor *mon, const QDict *qdict, QObject **ret_data)
 
     f = fopen(filename, "wb");
     if (!f) {
-        qerror_report(QERR_OPEN_FILE_FAILED, filename);
+        qerror_report(QERR_OPEN_FILE_FAILED, filename, strerror(errno));
         return -1;
     }
     while (size != 0) {
@@ -1901,7 +1903,7 @@ static int do_physical_memory_save(Monitor *mon, const QDict *qdict,
 
     f = fopen(filename, "wb");
     if (!f) {
-        qerror_report(QERR_OPEN_FILE_FAILED, filename);
+        qerror_report(QERR_OPEN_FILE_FAILED, filename, strerror(errno));
         return -1;
     }
     while (size != 0) {
@@ -4532,8 +4534,9 @@ static void monitor_find_completion(const char *cmdline)
        next arg */
     len = strlen(cmdline);
     if (len > 0 && qemu_isspace(cmdline[len - 1])) {
-        if (nb_args >= MAX_ARGS)
-            return;
+        if (nb_args >= MAX_ARGS) {
+            goto cleanup;
+        }
         args[nb_args++] = qemu_strdup("");
     }
     if (nb_args <= 1) {
@@ -4550,12 +4553,15 @@ static void monitor_find_completion(const char *cmdline)
         }
     } else {
         /* find the command */
-        for(cmd = mon_cmds; cmd->name != NULL; cmd++) {
-            if (compare_cmd(args[0], cmd->name))
-                goto found;
+        for (cmd = mon_cmds; cmd->name != NULL; cmd++) {
+            if (compare_cmd(args[0], cmd->name)) {
+                break;
+            }
         }
-        return;
-    found:
+        if (!cmd->name) {
+            goto cleanup;
+        }
+
         ptype = next_arg_type(cmd->args_type);
         for(i = 0; i < nb_args - 2; i++) {
             if (*ptype != '\0') {
@@ -4566,7 +4572,7 @@ static void monitor_find_completion(const char *cmdline)
         }
         str = args[nb_args - 1];
         if (*ptype == '-' && ptype[1] != '\0') {
-            ptype += 2;
+            ptype = next_arg_type(ptype);
         }
         switch(*ptype) {
         case 'F':
@@ -4607,8 +4613,11 @@ static void monitor_find_completion(const char *cmdline)
             break;
         }
     }
-    for(i = 0; i < nb_args; i++)
+
+cleanup:
+    for (i = 0; i < nb_args; i++) {
         qemu_free(args[i]);
+    }
 }
 
 static int monitor_can_read(void *opaque)
@@ -5147,6 +5156,7 @@ void monitor_init(CharDriverState *chr, int flags)
 
         /* Control mode requires special handlers */
         qemu_chr_add_handlers(chr, &monitor_control_handlers, mon);
+        qemu_chr_set_echo(chr, true);
     } else {
         qemu_chr_add_handlers(chr, &monitor_handlers, mon);
     }

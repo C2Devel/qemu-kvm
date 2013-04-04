@@ -74,6 +74,13 @@ typedef struct {
     PCIRegion *region;
 } AssignedDevRegion;
 
+typedef struct {
+    uint32_t addr_lo;
+    uint32_t addr_hi;
+    uint32_t data;
+    uint32_t ctrl;
+} MSIXTableEntry;
+
 typedef struct AssignedDevice {
     PCIDevice dev;
     PCIHostDevice host;
@@ -99,8 +106,9 @@ typedef struct AssignedDevice {
     } cap;
     int irq_entries_nr;
     struct kvm_irq_routing_entry *entry;
-    void *msix_table_page;
+    MSIXTableEntry *msix_table;
     target_phys_addr_t msix_table_addr;
+    uint16_t msix_max;
     int mmio_index;
     int need_emulate_cmd;
     char *configfd_name;

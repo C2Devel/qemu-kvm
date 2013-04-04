@@ -26,6 +26,9 @@ typedef struct PCIQXLDevice {
     uint32_t           debug;
     uint32_t           guestdebug;
     uint32_t           cmdlog;
+
+    uint32_t           guest_bug;
+
     enum qxl_mode      mode;
     uint32_t           cmdflags;
     int                generation;
@@ -62,6 +65,8 @@ typedef struct PCIQXLDevice {
         uint32_t       max;
     } guest_surfaces;
     QXLPHYSICAL        guest_cursor;
+
+    QXLPHYSICAL        guest_monitors_config;
 
     QemuMutex          track_lock;
 
@@ -111,11 +116,12 @@ typedef struct PCIQXLDevice {
         }                                                               \
     } while (0)
 
-#define QXL_DEFAULT_REVISION QXL_REVISION_STABLE_V10
+#define QXL_DEFAULT_REVISION QXL_REVISION_STABLE_V12
 
 /* qxl.c */
 void *qxl_phys2virt(PCIQXLDevice *qxl, QXLPHYSICAL phys, int group_id);
-void qxl_guest_bug(PCIQXLDevice *qxl, const char *msg, ...);
+void qxl_set_guest_bug(PCIQXLDevice *qxl, const char *msg, ...)
+    GCC_FMT_ATTR(2, 3);
 
 void qxl_spice_update_area(PCIQXLDevice *qxl, uint32_t surface_id,
                            struct QXLRect *area, struct QXLRect *dirty_rects,
@@ -130,13 +136,13 @@ void qxl_spice_reset_image_cache(PCIQXLDevice *qxl);
 void qxl_spice_reset_cursor(PCIQXLDevice *qxl);
 
 /* qxl-logger.c */
-void qxl_log_cmd_cursor(PCIQXLDevice *qxl, QXLCursorCmd *cmd, int group_id);
-void qxl_log_command(PCIQXLDevice *qxl, const char *ring, QXLCommandExt *ext);
+int qxl_log_cmd_cursor(PCIQXLDevice *qxl, QXLCursorCmd *cmd, int group_id);
+int qxl_log_command(PCIQXLDevice *qxl, const char *ring, QXLCommandExt *ext);
 
 /* qxl-render.c */
 void qxl_render_resize(PCIQXLDevice *qxl);
 void qxl_render_update(PCIQXLDevice *qxl);
-void qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext);
+int qxl_render_cursor(PCIQXLDevice *qxl, QXLCommandExt *ext);
 void qxl_render_update_area_done(PCIQXLDevice *qxl, QXLCookie *cookie);
 void qxl_render_update_area_bh(void *opaque);
 

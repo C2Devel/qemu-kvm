@@ -23,6 +23,7 @@
 
 #include "kvm.h"
 #include "hw/pc.h"
+#include "hyperv.h"
 
 #define MSR_IA32_TSC		0x10
 
@@ -30,8 +31,11 @@ static struct kvm_msr_list *kvm_msr_list;
 extern unsigned int kvm_shadow_memory;
 static int kvm_has_msr_star;
 static int kvm_has_vm_hsave_pa;
+static int has_msr_tsc_deadline;
 
 static int lm_capable_kernel;
+
+static bool has_msr_pv_eoi_en;
 
 int kvm_set_tss_addr(kvm_context_t kvm, unsigned long addr)
 {
@@ -735,27 +739,49 @@ uint32_t kvm_get_supported_cpuid(kvm_context_t kvm, uint32_t function,
 				break;
 			case R_EDX:
 				ret = cpuid->entries[i].edx;
-                                if (function == 1) {
-                                    /* kvm misreports the following features
-                                     */
-                                    ret |= 1 << 12; /* MTRR */
-                                    ret |= 1 << 16; /* PAT */
-                                    ret |= 1 << 7;  /* MCE */
-                                    ret |= 1 << 14; /* MCA */
-                                }
-
-				/* On Intel, kvm returns cpuid according to
-				 * the Intel spec, so add missing bits
-				 * according to the AMD spec:
-				 */
-				if (function == 0x80000001) {
-					cpuid_1_edx = kvm_get_supported_cpuid(kvm, 1, 0, R_EDX);
-					ret |= cpuid_1_edx & 0x183f7ff;
-				}
 				break;
 			}
 		}
 	}
+
+	/* Fixups for the data returned by KVM, below */
+
+	if (function == 1 && reg == R_EDX) {
+		/* kvm misreports the following features
+		 */
+		ret |= 1 << 12; /* MTRR */
+		ret |= 1 << 16; /* PAT */
+		ret |= 1 << 7;  /* MCE */
+		ret |= 1 << 14; /* MCA */
+	} else if (function == 0x80000001 && reg == R_EDX) {
+		/* On Intel, kvm returns cpuid according to
+		 * the Intel spec, so add missing bits
+		 * according to the AMD spec:
+		 */
+		cpuid_1_edx = kvm_get_supported_cpuid(kvm, 1, 0, R_EDX);
+		ret |= cpuid_1_edx & 0x183f7ff;
+	} else if (function == 1 && reg == R_ECX) {
+		/* We can set the hypervisor flag, even if KVM does not return it on
+		 * GET_SUPPORTED_CPUID
+		 */
+		ret |= CPUID_EXT_HYPERVISOR;
+		/* tsc-deadline flag is not returned by GET_SUPPORTED_CPUID, but it
+		 * can be enabled if the kernel has KVM_CAP_TSC_DEADLINE_TIMER,
+		 * and the irqchip is in the kernel.
+		 */
+		if (kvm_irqchip_in_kernel() &&
+				kvm_check_extension(kvm_state, KVM_CAP_TSC_DEADLINE_TIMER)) {
+			ret |= CPUID_EXT_TSC_DEADLINE_TIMER;
+		}
+
+		/* x2apic is reported by GET_SUPPORTED_CPUID, but it can't be enabled
+		 * without the in-kernel irqchip
+		 */
+		if (!kvm_irqchip_in_kernel()) {
+			ret &= ~CPUID_EXT_X2APIC;
+		}
+	}
+
 
 	free(cpuid);
 #endif
@@ -798,6 +824,8 @@ int kvm_arch_qemu_create_context(void)
 	    kvm_has_msr_star = 1;
         if (kvm_msr_list->indices[i] == MSR_VM_HSAVE_PA)
             kvm_has_vm_hsave_pa = 1;
+        if (kvm_msr_list->indices[i] == MSR_IA32_TSCDEADLINE)
+            has_msr_tsc_deadline = 1;
     }
 
     return 0;
@@ -846,11 +874,23 @@ static int get_msr_entry(struct kvm_msr_entry *entry, CPUState *env)
         case MSR_VM_HSAVE_PA:
             env->vm_hsave     = entry->data;
             break;
+        case MSR_IA32_TSCDEADLINE:
+            env->tsc_deadline = entry->data;
+            break;
         case MSR_KVM_SYSTEM_TIME:
             env->system_time_msr = entry->data;
             break;
         case MSR_KVM_WALL_CLOCK:
             env->wall_clock_msr = entry->data;
+            break;
+        case HV_X64_MSR_GUEST_OS_ID:
+            env->hyperv_guest_os_id = entry->data;
+            break;
+        case HV_X64_MSR_HYPERCALL:
+            env->hyperv_hypercall = entry->data;
+            break;
+        case MSR_KVM_PV_EOI_EN:
+            env->pv_eoi_en_msr = entry->data;
             break;
 #ifdef KVM_CAP_MCE
         case MSR_MCG_STATUS:
@@ -898,7 +938,7 @@ static void set_seg(struct kvm_segment *lhs, const SegmentCache *rhs)
     lhs->limit = rhs->limit;
     lhs->type = (flags >> DESC_TYPE_SHIFT) & 15;
     lhs->present = (flags & DESC_P_MASK) != 0;
-    lhs->dpl = rhs->selector & 3;
+    lhs->dpl = (flags >> DESC_DPL_SHIFT) & 3;
     lhs->db = (flags >> DESC_B_SHIFT) & 1;
     lhs->s = (flags & DESC_S_MASK) != 0;
     lhs->l = (flags >> DESC_L_SHIFT) & 1;
@@ -1026,13 +1066,6 @@ void kvm_arch_load_regs(CPUState *env)
 	    set_seg(&sregs.fs, &env->segs[R_FS]);
 	    set_seg(&sregs.gs, &env->segs[R_GS]);
 	    set_seg(&sregs.ss, &env->segs[R_SS]);
-
-	    if (env->cr[0] & CR0_PE_MASK) {
-		/* force ss cpl to cs cpl */
-		sregs.ss.selector = (sregs.ss.selector & ~3) |
-			(sregs.cs.selector & 3);
-		sregs.ss.dpl = sregs.ss.selector & 3;
-	    }
     }
 
     set_seg(&sregs.tr, &env->tr);
@@ -1065,6 +1098,8 @@ void kvm_arch_load_regs(CPUState *env)
 	set_msr_entry(&msrs[n++], MSR_STAR,              env->star);
     if (kvm_has_vm_hsave_pa)
         set_msr_entry(&msrs[n++], MSR_VM_HSAVE_PA, env->vm_hsave);
+    if (has_msr_tsc_deadline)
+        set_msr_entry(&msrs[n++], MSR_IA32_TSCDEADLINE, env->tsc_deadline);
 #ifdef TARGET_X86_64
     if (lm_capable_kernel) {
         set_msr_entry(&msrs[n++], MSR_CSTAR,             env->cstar);
@@ -1075,6 +1110,13 @@ void kvm_arch_load_regs(CPUState *env)
 #endif
     set_msr_entry(&msrs[n++], MSR_KVM_SYSTEM_TIME,  env->system_time_msr);
     set_msr_entry(&msrs[n++], MSR_KVM_WALL_CLOCK,  env->wall_clock_msr);
+    if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
+        set_msr_entry(&msrs[n++], HV_X64_MSR_GUEST_OS_ID, env->hyperv_guest_os_id);
+        set_msr_entry(&msrs[n++], HV_X64_MSR_HYPERCALL, env->hyperv_hypercall);
+    }
+    if (has_msr_pv_eoi_en) {
+        set_msr_entry(&msrs[n++], MSR_KVM_PV_EOI_EN, env->pv_eoi_en_msr);
+    }
 
 #ifdef KVM_CAP_MCE
     if (env->mcg_cap) {
@@ -1300,6 +1342,8 @@ void kvm_arch_save_regs(CPUState *env)
 
     if (kvm_has_vm_hsave_pa)
         msrs[n++].index = MSR_VM_HSAVE_PA;
+    if (has_msr_tsc_deadline)
+        msrs[n++].index = MSR_IA32_TSCDEADLINE;
 #ifdef TARGET_X86_64
     if (lm_capable_kernel) {
         msrs[n++].index = MSR_CSTAR;
@@ -1310,6 +1354,13 @@ void kvm_arch_save_regs(CPUState *env)
 #endif
     msrs[n++].index = MSR_KVM_SYSTEM_TIME;
     msrs[n++].index = MSR_KVM_WALL_CLOCK;
+    if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
+        msrs[n++].index = HV_X64_MSR_GUEST_OS_ID;
+        msrs[n++].index = HV_X64_MSR_HYPERCALL;
+    }
+    if (has_msr_pv_eoi_en) {
+        msrs[n++].index = MSR_KVM_PV_EOI_EN;
+    }
 
 #ifdef KVM_CAP_MCE
     if (env->mcg_cap) {
@@ -1371,6 +1422,11 @@ static void cpu_update_state(void *opaque, int running, RunState state)
     }
 }
 
+unsigned long kvm_arch_vcpu_id(CPUArchState *env)
+{
+    return env->cpuid_apic_id;
+}
+
 int kvm_arch_init_vcpu(CPUState *cenv)
 {
     struct kvm_cpuid_entry2 cpuid_ent[100];
@@ -1393,6 +1449,9 @@ int kvm_arch_init_vcpu(CPUState *cenv)
     memset(pv_ent, 0, sizeof(*pv_ent));
     pv_ent->function = KVM_CPUID_SIGNATURE;
     pv_ent->eax = 0;
+    if (hyperv_relaxed_timing_enabled()) {
+        pv_ent->eax = HYPERV_CPUID_ENLIGHTMENT_INFO;
+    }
     pv_ent->ebx = signature[0];
     pv_ent->ecx = signature[1];
     pv_ent->edx = signature[2];
@@ -1402,23 +1461,33 @@ int kvm_arch_init_vcpu(CPUState *cenv)
     pv_ent->function = KVM_CPUID_FEATURES;
     pv_ent->eax = cenv->cpuid_kvm_features & kvm_arch_get_supported_cpuid(cenv->kvm_state,
 						KVM_CPUID_FEATURES, 0, R_EAX);
+
+    if (hyperv_relaxed_timing_enabled()) {
+        memcpy(signature, "Hv#1\0\0\0\0\0\0\0\0", 12);
+        pv_ent->eax = signature[0];
+
+        pv_ent = &cpuid_ent[cpuid_nent++];
+        memset(pv_ent, 0, sizeof(*pv_ent));
+        pv_ent->function = HYPERV_CPUID_ENLIGHTMENT_INFO;
+        pv_ent->eax |= HV_X64_RELAXED_TIMING_RECOMMENDED;
+    }
+
 #endif
 
     kvm_trim_features(&cenv->cpuid_features,
                       kvm_arch_get_supported_cpuid(cenv->kvm_state, 1, 0, R_EDX));
 
     /* prevent the hypervisor bit from being cleared by the kernel */
-    i = cenv->cpuid_ext_features & CPUID_EXT_HYPERVISOR;
     kvm_trim_features(&cenv->cpuid_ext_features,
                       kvm_arch_get_supported_cpuid(cenv->kvm_state, 1, 0, R_ECX));
-    cenv->cpuid_ext_features |= i;
-
     kvm_trim_features(&cenv->cpuid_ext2_features,
                       kvm_arch_get_supported_cpuid(cenv->kvm_state, 0x80000001, 0, R_EDX));
     kvm_trim_features(&cenv->cpuid_ext3_features,
                       kvm_arch_get_supported_cpuid(cenv->kvm_state, 0x80000001, 0, R_ECX));
 
     copy = *cenv;
+
+    has_msr_pv_eoi_en = pv_ent->eax & (1 << KVM_FEATURE_PV_EOI);
 
     copy.regs[R_EAX] = 0;
     qemu_kvm_cpuid_on_env(&copy);

@@ -53,6 +53,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Base '%(base)' not found",
     },
     {
+        .error_fmt = QERR_BASE_NOT_REACHABLE,
+        .desc      = "Base '%(base)' not reachable from top '%(top)'",
+    },
+    {
         .error_fmt = QERR_BUS_NOT_FOUND,
         .desc      = "Bus '%(bus)' not found",
     },
@@ -149,6 +153,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Invalid parameter type, expected: %(expected)",
     },
     {
+        .error_fmt = QERR_INVALID_PARAMETER_COMBINATION,
+        .desc      = "Invalid parameter combination",
+    },
+    {
         .error_fmt = QERR_INVALID_PARAMETER_VALUE,
         .desc      = "Parameter '%(name)' expects %(expected)",
     },
@@ -191,7 +199,7 @@ static const QErrorStringTable qerror_table[] = {
     },
     {
         .error_fmt = QERR_OPEN_FILE_FAILED,
-        .desc      = "Could not open '%(filename)'",
+        .desc      = "Could not open '%(filename)': %(__com.redhat_error_message)",
     },
     {
         .error_fmt = QERR_PROPERTY_NOT_FOUND,
@@ -234,6 +242,18 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Too many open files",
     },
     {
+        .error_fmt = QERR_TOP_AND_BASE_IDENTICAL,
+        .desc      = "Invalid files for merge: top and base are the same",
+    },
+    {
+        .error_fmt = QERR_TOP_IS_ACTIVE,
+        .desc      = "Top image as the active layer is currently unsupported",
+    },
+    {
+        .error_fmt = QERR_TOP_NOT_FOUND,
+        .desc      = "Top '%(top)' not found",
+    },
+    {
         .error_fmt = QERR_UNDEFINED_ERROR,
         .desc      = "An undefined error has ocurred",
     },
@@ -257,6 +277,22 @@ static const QErrorStringTable qerror_table[] = {
     {
         .error_fmt = QERR_QGA_COMMAND_FAILED,
         .desc      = "Guest agent command failed, error was '%(message)'",
+    },
+    {
+        .error_fmt = QERR_SOCKET_CONNECT_FAILED,
+        .desc      = "Failed to connect to socket",
+    },
+    {
+        .error_fmt = QERR_SOCKET_LISTEN_FAILED,
+        .desc      = "Failed to set socket to listening mode",
+    },
+    {
+        .error_fmt = QERR_SOCKET_BIND_FAILED,
+        .desc      = "Failed to bind socket",
+    },
+    {
+        .error_fmt = QERR_SOCKET_CREATE_FAILED,
+        .desc      = "Failed to create socket",
     },
     {}
 };

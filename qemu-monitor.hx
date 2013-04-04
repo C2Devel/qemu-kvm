@@ -1194,6 +1194,68 @@ EQMP
         .flags      = MONITOR_CMD_ASYNC,
     },
 
+    {
+        .name       = "dump-guest-memory",
+        .args_type  = "paging:b,protocol:s,begin:i?,end:i?",
+        .params     = "-p protocol [begin] [length]",
+        .help       = "dump guest memory to file",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_dump_guest_memory,
+        .flags = MONITOR_CMD_QMP_ONLY
+    },
+
+SQMP
+dump
+
+Dump guest memory to file. The file can be processed with crash or gdb.
+
+Arguments:
+
+- "paging": do paging to get guest's memory mapping (json-bool)
+- "protocol": destination file(started with "file:") or destination file
+              descriptor (started with "fd:") (json-string)
+- "begin": the starting physical address. It's optional, and should be specified
+           with length together (json-int)
+- "length": the memory size, in bytes. It's optional, and should be specified
+            with begin together (json-int)
+
+Example:
+
+-> { "execute": "dump-guest-memory", "arguments": { "protocol": "fd:dump" } }
+<- { "return": {} }
+
+Notes:
+
+(1) All boolean arguments default to false
+
+EQMP
+
+#if defined(CONFIG_HAVE_CORE_DUMP)
+    {
+        .name       = "dump-guest-memory",
+        .args_type  = "paging:-p,filename:F,begin:i?,length:i?",
+        .params     = "[-p] filename [begin] [length]",
+        .help       = "dump guest memory to file"
+                      "\n\t\t\t begin(optional): the starting physical address"
+                      "\n\t\t\t length(optional): the memory size, in bytes",
+        .mhandler.cmd = hmp_dump_guest_memory,
+        .flags = MONITOR_CMD_USER_ONLY
+    },
+
+STEXI
+@item dump-guest-memory [-p] @var{protocol} @var{begin} @var{length}
+@findex dump-guest-memory
+Dump guest memory to @var{protocol}. The file can be processed with crash or
+gdb.
+  filename: dump file name
+    paging: do paging to get guest's memory mapping
+     begin: the starting physical address. It's optional, and should be
+            specified with length together.
+    length: the memory size, in bytes. It's optional, and should be specified
+            with begin together.
+ETEXI
+#endif
+
 SQMP
 migrate_set_speed
 -----------------
@@ -2200,6 +2262,15 @@ If base does not exist, BaseNotFound
 
 EQMP
 
+#ifdef CONFIG_LIVE_SNAPSHOTS
+    {
+        .name       = "__com.redhat_block-commit",
+        .args_type  = "device:B,base:s?,top:s,speed:o?",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input___com_redhat_block_commit,
+    },
+#endif
+
     {
         .name       = "block-job-set-speed",
         .args_type  = "device:B,speed:o",
@@ -2940,6 +3011,8 @@ as a json-array of json-objects.
 The main json-object contains the following:
 
 - "enabled": true or false (json-bool)
+- "migrated": true if migration occured and has completed, and spice has completed
+              its migration as well (json-bool)
 - "host": server's IP address (json-string)
 - "port": server's port number (json-int, optional)
 - "tls-port": server's port number (json-int, optional)
@@ -2968,6 +3041,7 @@ Example:
 <- {
       "return": {
          "enabled": true,
+         "migrated": false,
          "auth": "spice",
          "port": 5920,
          "tls-port": 5921,

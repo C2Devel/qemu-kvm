@@ -128,6 +128,7 @@ typedef struct USBHostDevice {
     int       closing;
     uint32_t  iso_urb_count;
     Notifier  exit;
+    QEMUBH    *bh;
 
     struct endp_data ep_in[MAX_ENDPOINTS];
     struct endp_data ep_out[MAX_ENDPOINTS];
@@ -1382,6 +1383,43 @@ static void usb_host_exit_notifier(struct Notifier *n, void *data)
     }
 }
 
+/*
+ * This is *NOT* about restoring state.  We have absolutely no idea
+ * what state the host device is in at the moment and whenever it is
+ * still present in the first place.  Attemping to contine where we
+ * left off is impossible.
+ *
+ * What we are going to to to here is emulate a surprise removal of
+ * the usb device passed through, then kick host scan so the device
+ * will get re-attached (and re-initialized by the guest) in case it
+ * is still present.
+ *
+ * As the device removal will change the state of other devices (usb
+ * host controller, most likely interrupt controller too) we have to
+ * wait with it until *all* vmstate is loaded.  Thus post_load just
+ * kicks a bottom half which then does the actual work.
+ */
+static void usb_host_post_load_bh(void *opaque)
+{
+    USBHostDevice *dev = opaque;
+
+    if (dev->fd != -1) {
+        usb_host_close(dev);
+    }
+    if (dev->dev.attached) {
+        usb_device_detach(&dev->dev);
+    }
+    usb_host_auto_check(NULL);
+}
+
+static int usb_host_post_load(void *opaque, int version_id)
+{
+    USBHostDevice *dev = opaque;
+
+    qemu_bh_schedule(dev->bh);
+    return 0;
+}
+
 static int usb_host_initfn(USBDevice *dev)
 {
     USBHostDevice *s = DO_UPCAST(USBHostDevice, dev, dev);
@@ -1393,6 +1431,7 @@ static int usb_host_initfn(USBDevice *dev)
     QTAILQ_INSERT_TAIL(&hostdevs, s, next);
     s->exit.notify = usb_host_exit_notifier;
     qemu_add_exit_notifier(&s->exit);
+    s->bh = qemu_bh_new(usb_host_post_load_bh, s);
     usb_host_auto_check(NULL);
 
     if (s->match.bus_num != 0 && s->match.port != NULL) {
@@ -1403,7 +1442,13 @@ static int usb_host_initfn(USBDevice *dev)
 
 static const VMStateDescription vmstate_usb_host = {
     .name = "usb-host",
-    .unmigratable = 1,
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .post_load = usb_host_post_load,
+    .fields = (VMStateField[]) {
+        VMSTATE_USB_DEVICE(dev, USBHostDevice),
+        VMSTATE_END_OF_LIST()
+    }
 };
 
 static struct USBDeviceInfo usb_host_dev_info = {
@@ -1812,6 +1857,7 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
 }
 
 static QEMUTimer *usb_auto_timer;
+static VMChangeStateEntry *usb_vmstate;
 
 static int usb_host_auto_scan(void *opaque, int bus_num, int addr, char *port,
                               int class_id, int vendor_id, int product_id,
@@ -1862,30 +1908,43 @@ static int usb_host_auto_scan(void *opaque, int bus_num, int addr, char *port,
     return 0;
 }
 
+static void usb_host_vm_state(void *unused, int running, RunState state)
+{
+    if (running) {
+        usb_host_auto_check(unused);
+    }
+}
+
 static void usb_host_auto_check(void *unused)
 {
     struct USBHostDevice *s;
     int unconnected = 0;
 
-    usb_host_scan(NULL, usb_host_auto_scan);
+    if (runstate_is_running()) {
+        usb_host_scan(NULL, usb_host_auto_scan);
 
-    QTAILQ_FOREACH(s, &hostdevs, next) {
-        if (s->fd == -1) {
-            unconnected++;
+        QTAILQ_FOREACH(s, &hostdevs, next) {
+            if (s->fd == -1) {
+                unconnected++;
+            }
+            if (s->seen == 0) {
+                s->errcount = 0;
+            }
+            s->seen = 0;
         }
-        if (s->seen == 0) {
-            s->errcount = 0;
+
+        if (unconnected == 0) {
+            /* nothing to watch */
+            if (usb_auto_timer) {
+                qemu_del_timer(usb_auto_timer);
+            }
+            return;
         }
-        s->seen = 0;
     }
 
-    if (unconnected == 0) {
-        /* nothing to watch */
-        if (usb_auto_timer)
-            qemu_del_timer(usb_auto_timer);
-        return;
+    if (!usb_vmstate) {
+        usb_vmstate = qemu_add_vm_change_state_handler(usb_host_vm_state, NULL);
     }
-
     if (!usb_auto_timer) {
         usb_auto_timer = qemu_new_timer(rt_clock, usb_host_auto_check, NULL);
         if (!usb_auto_timer)

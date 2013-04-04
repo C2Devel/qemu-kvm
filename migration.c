@@ -46,13 +46,13 @@ static MigrationState *current_migration;
 static NotifierList migration_state_notifiers =
     NOTIFIER_LIST_INITIALIZER(migration_state_notifiers);
 
-int qemu_start_incoming_migration(const char *uri)
+int qemu_start_incoming_migration(const char *uri, Error **errp)
 {
     const char *p;
     int ret;
 
     if (strstart(uri, "tcp:", &p))
-        ret = tcp_start_incoming_migration(p);
+        ret = tcp_start_incoming_migration(p, errp);
 #if !defined(WIN32)
     else if (strstart(uri, "exec:", &p))
         ret =  exec_start_incoming_migration(p);
@@ -93,6 +93,7 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     MigrationState *s = NULL;
     const char *p;
+    Error *errp = NULL;
     int detach = qdict_get_try_bool_or_int(qdict, "detach", 0);
     int blk = qdict_get_try_bool_or_int(qdict, "blk", 0);
     int inc = qdict_get_try_bool_or_int(qdict, "inc", 0);
@@ -111,7 +112,7 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
     START_MIGRATION_CLOCK();
     if (strstart(uri, "tcp:", &p)) {
         s = tcp_start_outgoing_migration(mon, p, max_throttle, detach,
-                                         blk, inc);
+                                         blk, inc, &errp);
 #if !defined(WIN32)
     } else if (strstart(uri, "exec:", &p)) {
         s = exec_start_outgoing_migration(mon, p, max_throttle, detach,
@@ -125,6 +126,12 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
 #endif
     } else {
         monitor_printf(mon, "unknown migration protocol: %s\n", uri);
+        return -1;
+    }
+
+    if (error_is_set(&errp)) {
+        qerror_report_err(errp);
+        error_free(errp);
         return -1;
     }
 
@@ -299,7 +306,9 @@ int migrate_fd_cleanup(FdMigrationState *s)
 {
     int ret = 0;
 
-    qemu_set_fd_handler2(s->fd, NULL, NULL, NULL, NULL);
+    if (s->fd != -1) {
+        qemu_set_fd_handler2(s->fd, NULL, NULL, NULL, NULL);
+    }
 
     if (s->file) {
         DPRINTF("closing file\n");

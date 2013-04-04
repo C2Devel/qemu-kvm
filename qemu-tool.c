@@ -15,6 +15,7 @@
 #include "monitor.h"
 #include "qemu-timer.h"
 #include "qemu-log.h"
+#include "sysemu.h"
 
 #include <sys/time.h>
 
@@ -105,4 +106,9 @@ int64_t get_clock(void)
 
 void qemu_notify_event(void)
 {
+}
+
+bool runstate_check(RunState state)
+{
+    return state == RUN_STATE_RUNNING;
 }

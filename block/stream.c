@@ -33,19 +33,19 @@ typedef struct {
 
 static int64_t ratelimit_calculate_delay(RateLimit *limit, uint64_t n)
 {
-    int64_t delay_ns = 0;
     int64_t now = qemu_get_clock(rt_clock);
 
     if (limit->next_slice_time < now) {
         limit->next_slice_time = now + SLICE_TIME;
         limit->dispatched = 0;
     }
-    if (limit->dispatched + n > limit->slice_quota) {
-        delay_ns = limit->next_slice_time - now;
-    } else {
+    if (limit->dispatched == 0 || limit->dispatched + n <= limit->slice_quota) {
         limit->dispatched += n;
+        return 0;
+    } else {
+        limit->dispatched = n;
+        return limit->next_slice_time - now;
     }
-    return delay_ns;
 }
 
 static void ratelimit_set_speed(RateLimit *limit, uint64_t speed)
@@ -96,82 +96,6 @@ static void close_unused_images(BlockDriverState *top, BlockDriverState *base,
         bdrv_delete(unused);
     }
     top->backing_hd = base;
-
-    pstrcpy(top->backing_file, sizeof(top->backing_file), "");
-    pstrcpy(top->backing_format, sizeof(top->backing_format), "");
-    if (base_id) {
-        pstrcpy(top->backing_file, sizeof(top->backing_file), base_id);
-        if (base->drv) {
-            pstrcpy(top->backing_format, sizeof(top->backing_format),
-                    base->drv->format_name);
-        }
-    }
-
-}
-
-/*
- * Given an image chain: [BASE] -> [INTER1] -> [INTER2] -> [TOP]
- *
- * Return true if the given sector is allocated in top.
- * Return false if the given sector is allocated in intermediate images.
- * Return true otherwise.
- *
- * 'pnum' is set to the number of sectors (including and immediately following
- *  the specified sector) that are known to be in the same
- *  allocated/unallocated state.
- *
- */
-static int coroutine_fn is_allocated_base(BlockDriverState *top,
-                                          BlockDriverState *base,
-                                          int64_t sector_num,
-                                          int nb_sectors, int *pnum)
-{
-    BlockDriverState *intermediate;
-    int ret, n;
-
-    ret = bdrv_co_is_allocated(top, sector_num, nb_sectors, &n);
-    if (ret) {
-        *pnum = n;
-        return ret;
-    }
-
-    /*
-     * Is the unallocated chunk [sector_num, n] also
-     * unallocated between base and top?
-     */
-    intermediate = top->backing_hd;
-
-    while (intermediate) {
-        int pnum_inter;
-
-        /* reached base */
-        if (intermediate == base) {
-            *pnum = n;
-            return 1;
-        }
-        ret = bdrv_co_is_allocated(intermediate, sector_num, nb_sectors,
-                                   &pnum_inter);
-        if (ret < 0) {
-            return ret;
-        } else if (ret) {
-            *pnum = pnum_inter;
-            return 0;
-        }
-
-        /*
-         * [sector_num, nb_sectors] is unallocated on top but intermediate
-         * might have
-         *
-         * [sector_num+x, nr_sectors] allocated.
-         */
-        if (n > pnum_inter) {
-            n = pnum_inter;
-        }
-
-        intermediate = intermediate->backing_hd;
-    }
-
-    return 1;
 }
 
 static void coroutine_fn stream_run(void *opaque)
@@ -181,7 +105,7 @@ static void coroutine_fn stream_run(void *opaque)
     BlockDriverState *base = s->base;
     int64_t sector_num, end;
     int ret = 0;
-    int n;
+    int n = 0;
     void *buf;
 
     s->common.len = bdrv_getlength(bs);
@@ -204,6 +128,7 @@ static void coroutine_fn stream_run(void *opaque)
 
     for (sector_num = 0; sector_num < end; sector_num += n) {
         uint64_t delay_ms = 0;
+        bool copy;
 
 wait:
         /* Note that even when no rate limit is applied we need to yield
@@ -214,16 +139,20 @@ wait:
             break;
         }
 
-        if (base) {
-            ret = is_allocated_base(bs, base, sector_num,
-                                    STREAM_BUFFER_SIZE / BDRV_SECTOR_SIZE, &n);
+        ret = bdrv_co_is_allocated(bs, sector_num,
+                                   STREAM_BUFFER_SIZE / BDRV_SECTOR_SIZE, &n);
+        if (ret == 1) {
+            /* Allocated in the top, no need to copy.  */
+            copy = false;
         } else {
-            ret = bdrv_co_is_allocated(bs, sector_num,
-                                       STREAM_BUFFER_SIZE / BDRV_SECTOR_SIZE,
-                                       &n);
+            /* Copy if allocated in the intermediate images.  Limit to the
+             * known-unallocated area [sector_num, sector_num+n).  */
+            ret = bdrv_co_is_allocated_above(bs->backing_hd, base,
+                                             sector_num, n, &n);
+            copy = (ret == 1);
         }
         trace_stream_one_iteration(s, sector_num, n, ret);
-        if (ret == 0) {
+        if (ret >= 0 && copy) {
             if (s->common.speed) {
                 delay_ms = ratelimit_calculate_delay(&s->limit, n);
                 if (delay_ms > 0) {

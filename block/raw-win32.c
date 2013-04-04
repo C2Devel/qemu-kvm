@@ -73,6 +73,26 @@ static int set_sparse(int fd)
 				 NULL, 0, NULL, 0, &returned, NULL);
 }
 
+static void raw_parse_flags(int flags, int *access_flags, DWORD *overlapped)
+{
+    assert(access_flags != NULL);
+    assert(overlapped != NULL);
+
+    if (flags & BDRV_O_RDWR) {
+        *access_flags = GENERIC_READ | GENERIC_WRITE;
+    } else {
+        *access_flags = GENERIC_READ;
+    }
+
+    *overlapped = FILE_ATTRIBUTE_NORMAL;
+    if (flags & BDRV_O_NOCACHE) {
+        *overlapped |= FILE_FLAG_NO_BUFFERING;
+    }
+    if (!(flags & BDRV_O_CACHE_WB)) {
+        *overlapped |= FILE_FLAG_WRITE_THROUGH;
+    }
+}
+
 static int raw_open(BlockDriverState *bs, const char *filename, int flags)
 {
     BDRVRawState *s = bs->opaque;
@@ -81,21 +101,8 @@ static int raw_open(BlockDriverState *bs, const char *filename, int flags)
 
     s->type = FTYPE_FILE;
 
-    if (flags & BDRV_O_RDWR) {
-        access_flags = GENERIC_READ | GENERIC_WRITE;
-    } else {
-        access_flags = GENERIC_READ;
-    }
-    if (flags & BDRV_O_CREAT) {
-        create_flags = CREATE_ALWAYS;
-    } else {
-        create_flags = OPEN_EXISTING;
-    }
-    overlapped = FILE_ATTRIBUTE_NORMAL;
-    if ((flags & BDRV_O_NOCACHE))
-        overlapped |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
-    else if (!(flags & BDRV_O_CACHE_WB))
-        overlapped |= FILE_FLAG_WRITE_THROUGH;
+    raw_parse_flags(flags, &access_flags, &overlapped);
+
     s->hfile = CreateFile(filename, access_flags,
                           FILE_SHARE_READ, NULL,
                           create_flags, overlapped, NULL);
@@ -345,18 +352,10 @@ static int hdev_open(BlockDriverState *bs, const char *filename, int flags)
     }
     s->type = find_device_type(bs, filename);
 
-    if (flags & BDRV_O_RDWR) {
-        access_flags = GENERIC_READ | GENERIC_WRITE;
-    } else {
-        access_flags = GENERIC_READ;
-    }
+    raw_parse_flags(flags, &access_flags, &overlapped);
+
     create_flags = OPEN_EXISTING;
 
-    overlapped = FILE_ATTRIBUTE_NORMAL;
-    if ((flags & BDRV_O_NOCACHE))
-        overlapped |= FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH;
-    else if (!(flags & BDRV_O_CACHE_WB))
-        overlapped |= FILE_FLAG_WRITE_THROUGH;
     s->hfile = CreateFile(filename, access_flags,
                           FILE_SHARE_READ, NULL,
                           create_flags, overlapped, NULL);

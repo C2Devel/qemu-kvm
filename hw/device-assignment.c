@@ -834,8 +834,11 @@ static void free_dev_irq_entries(AssignedDevice *dev)
 {
     int i;
 
-    for (i = 0; i < dev->irq_entries_nr; i++)
-        kvm_del_routing_entry(kvm_context, &dev->entry[i]);
+    for (i = 0; i < dev->irq_entries_nr; i++) {
+        if (dev->entry[i].type) {
+            kvm_del_routing_entry(kvm_context, &dev->entry[i]);
+        }
+    }
     free(dev->entry);
     dev->entry = NULL;
     dev->irq_entries_nr = 0;
@@ -1131,36 +1134,48 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev, unsigned int ctrl_pos)
 #endif
 
 #ifdef KVM_CAP_DEVICE_MSIX
+static bool msix_masked(MSIXTableEntry *entry)
+{
+    return (entry->ctrl & cpu_to_le32(0x1)) != 0;
+}
+
+/*
+ * When MSI-X is first enabled the vector table typically has all the
+ * vectors masked, so we can't use that as the obvious test to figure out
+ * how many vectors to initially enable.  Instead we look at the data field
+ * because this is what worked for pci-assign for a long time.  This makes
+ * sure the physical MSI-X state tracks the guest's view, which is important
+ * for some VF/PF and PF/fw communication channels.
+ */
+static bool msix_skipped(MSIXTableEntry *entry)
+{
+    return !entry->data;
+}
+
 static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
 {
     AssignedDevice *adev = container_of(pci_dev, AssignedDevice, dev);
-    uint16_t entries_nr = 0, entries_max_nr;
-    int pos = 0, i, r = 0;
-    uint32_t msg_addr, msg_upper_addr, msg_data, msg_ctrl;
+    uint16_t entries_nr = 0;
+    int i, r = 0;
     struct kvm_assigned_msix_nr msix_nr;
     struct kvm_assigned_msix_entry msix_entry;
-    void *va = adev->msix_table_page;
-
-    pos = pci_find_capability(pci_dev, PCI_CAP_ID_MSIX);
-
-    entries_max_nr = *(uint16_t *)(pci_dev->config + pos + 2);
-    entries_max_nr &= PCI_MSIX_TABSIZE;
-    entries_max_nr += 1;
+    MSIXTableEntry *entry = adev->msix_table;
 
     /* Get the usable entry number for allocating */
-    for (i = 0; i < entries_max_nr; i++) {
-        memcpy(&msg_ctrl, va + i * 16 + 12, 4);
-        memcpy(&msg_data, va + i * 16 + 8, 4);
-        /* Ignore unused entry even it's unmasked */
-        if (msg_data == 0)
+    for (i = 0; i < adev->msix_max; i++, entry++) {
+        if (msix_skipped(entry)) {
             continue;
-        entries_nr ++;
+        }
+        entries_nr++;
     }
 
-    if (entries_nr == 0) {
-        fprintf(stderr, "MSI-X entry number is zero!\n");
-        return -EINVAL;
+    DEBUG("MSI-X entries: %d\n", entries_nr);
+
+    /* It's valid to enable MSI-X with all entries masked */
+    if (!entries_nr) {
+        return 0;
     }
+
     msix_nr.assigned_dev_id = calc_assigned_dev_id(adev->h_busnr,
                                           (uint8_t)adev->h_devfn);
     msix_nr.entry_nr = entries_nr;
@@ -1172,49 +1187,44 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
     }
 
     free_dev_irq_entries(adev);
-    adev->irq_entries_nr = entries_nr;
-    adev->entry = calloc(entries_nr, sizeof(struct kvm_irq_routing_entry));
+
+    adev->irq_entries_nr = adev->msix_max;
+    adev->entry = qemu_mallocz(adev->msix_max * sizeof(*(adev->entry)));
     if (!adev->entry) {
         perror("assigned_dev_update_msix_mmio: ");
         return -errno;
     }
 
     msix_entry.assigned_dev_id = msix_nr.assigned_dev_id;
-    entries_nr = 0;
-    for (i = 0; i < entries_max_nr; i++) {
-        if (entries_nr >= msix_nr.entry_nr)
-            break;
-        memcpy(&msg_ctrl, va + i * 16 + 12, 4);
-        memcpy(&msg_data, va + i * 16 + 8, 4);
-        if (msg_data == 0)
+    entry = adev->msix_table;
+    for (i = 0; i < adev->msix_max; i++, entry++) {
+        if (msix_skipped(entry)) {
             continue;
-
-        memcpy(&msg_addr, va + i * 16, 4);
-        memcpy(&msg_upper_addr, va + i * 16 + 4, 4);
+        }
 
         r = kvm_get_irq_route_gsi(kvm_context);
         if (r < 0)
             return r;
 
-        adev->entry[entries_nr].gsi = r;
-        adev->entry[entries_nr].type = KVM_IRQ_ROUTING_MSI;
-        adev->entry[entries_nr].flags = 0;
-        adev->entry[entries_nr].u.msi.address_lo = msg_addr;
-        adev->entry[entries_nr].u.msi.address_hi = msg_upper_addr;
-        adev->entry[entries_nr].u.msi.data = msg_data;
-        DEBUG("MSI-X data 0x%x, MSI-X addr_lo 0x%x\n!", msg_data, msg_addr);
-	kvm_add_routing_entry(kvm_context, &adev->entry[entries_nr]);
+        adev->entry[i].gsi = r;
+        adev->entry[i].type = KVM_IRQ_ROUTING_MSI;
+        adev->entry[i].flags = 0;
+        adev->entry[i].u.msi.address_lo = entry->addr_lo;
+        adev->entry[i].u.msi.address_hi = entry->addr_hi;
+        adev->entry[i].u.msi.data = entry->data;
 
-        msix_entry.gsi = adev->entry[entries_nr].gsi;
+        DEBUG("MSI-X vector %d, gsi %d, addr %08x_%08x, data %08x\n", i,
+              r, entry->addr_hi, entry->addr_lo, entry->data);
+
+        kvm_add_routing_entry(kvm_context, &adev->entry[i]);
+
+        msix_entry.gsi = adev->entry[i].gsi;
         msix_entry.entry = i;
         r = kvm_assign_set_msix_entry(kvm_context, &msix_entry);
         if (r) {
             fprintf(stderr, "fail to set MSI-X entry! %s\n", strerror(-r));
             break;
         }
-        DEBUG("MSI-X entry gsi 0x%x, entry %d\n!",
-                msix_entry.gsi, msix_entry.entry);
-        entries_nr ++;
     }
 
     if (r == 0 && kvm_commit_irq_routes(kvm_context) < 0) {
@@ -1261,9 +1271,12 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev, unsigned int ctrl_pos)
             perror("assigned_dev_update_msix_mmio");
             return;
         }
-        if (kvm_assign_irq(kvm_context, &assigned_irq_data) < 0) {
-            perror("assigned_dev_enable_msix: assign irq");
-            return;
+
+        if (assigned_dev->irq_entries_nr) {
+            if (kvm_assign_irq(kvm_context, &assigned_irq_data) < 0) {
+                perror("assigned_dev_enable_msix: assign irq");
+                return;
+            }
         }
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
     }
@@ -1431,6 +1444,9 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev)
         bar_nr = msix_table_entry & PCI_MSIX_BIR;
         msix_table_entry &= ~PCI_MSIX_BIR;
         dev->msix_table_addr = pci_region[bar_nr].base_addr + msix_table_entry;
+        dev->msix_max = pci_get_word(pci_dev->config + pos + PCI_MSIX_FLAGS);
+        dev->msix_max &= PCI_MSIX_TABSIZE;
+        dev->msix_max += 1;
     }
 #endif
 #endif
@@ -1621,10 +1637,9 @@ static uint32_t msix_mmio_readl(void *opaque, target_phys_addr_t addr)
 {
     AssignedDevice *adev = opaque;
     unsigned int offset = addr & 0xfff;
-    void *page = adev->msix_table_page;
     uint32_t val = 0;
 
-    memcpy(&val, (void *)((char *)page + offset), 4);
+    memcpy(&val, (void *)((uint8_t *)adev->msix_table + offset), 4);
 
     return val;
 }
@@ -1646,11 +1661,74 @@ static void msix_mmio_writel(void *opaque,
 {
     AssignedDevice *adev = opaque;
     unsigned int offset = addr & 0xfff;
-    void *page = adev->msix_table_page;
+    PCIDevice *pdev = &adev->dev;
+    uint16_t ctrl;
+    MSIXTableEntry orig;
+    int i = offset >> 4;
+    uint8_t msix_cap;
 
-    DEBUG("write to MSI-X entry table mmio offset 0x%lx, val 0x%x\n",
-		    addr, val);
-    memcpy((void *)((char *)page + offset), &val, 4);
+    if (i >= adev->msix_max) {
+        return; /* Drop write */
+    }
+
+    msix_cap = pci_find_capability(pdev, PCI_CAP_ID_MSIX);
+    ctrl = pci_get_word(pdev->config + msix_cap + PCI_MSIX_FLAGS);
+
+    DEBUG("write to MSI-X table offset 0x%lx, val 0x%lx\n", addr, val);
+
+    if (ctrl & PCI_MSIX_FLAGS_ENABLE) {
+        orig = adev->msix_table[i];
+    }
+
+    memcpy((void *)((uint8_t *)adev->msix_table + offset), &val, 4);
+
+    if (ctrl & PCI_MSIX_FLAGS_ENABLE) {
+        MSIXTableEntry *entry = &adev->msix_table[i];
+
+        if (!msix_masked(&orig) && msix_masked(entry)) {
+            /*
+             * Vector masked, disable it
+             *
+             * XXX It's not clear if we can or should actually attempt
+             * to mask or disable the interrupt.  KVM doesn't have
+             * support for pending bits and kvm_assign_set_msix_entry
+             * doesn't modify the device hardware mask.  Interrupts
+             * while masked are simply not injected to the guest, so
+             * are lost.  Can we get away with always injecting an
+             * interrupt on unmask?
+             */
+        } else if (msix_masked(&orig) && !msix_masked(entry)) {
+            /* Vector unmasked */
+            if (i >= adev->irq_entries_nr || !adev->entry[i].type) {
+                /* Previously unassigned vector, start from scratch */
+                assigned_dev_update_msix(pdev, msix_cap + PCI_MSIX_FLAGS);
+                return;
+            } else {
+                /* Update an existing, previously masked vector */
+                struct kvm_irq_routing_entry orig = adev->entry[i];
+                int ret;
+
+                adev->entry[i].u.msi.address_lo = entry->addr_lo;
+                adev->entry[i].u.msi.address_hi = entry->addr_hi;
+                adev->entry[i].u.msi.data = entry->data;
+
+                ret = kvm_update_routing_entry(kvm_context, &orig,
+                                               &adev->entry[i]);
+                if (ret) {
+                    fprintf(stderr,
+                            "Error updating irq routing entry (%d)\n", ret);
+                    return;
+                }
+
+                ret = kvm_commit_irq_routes(kvm_context);
+                if (ret) {
+                    fprintf(stderr,
+                            "Error committing irq routes (%d)\n", ret);
+                    return;
+                }
+            }
+        }
+    }
 }
 
 static void msix_mmio_writew(void *opaque,
@@ -1675,17 +1753,33 @@ static CPUReadMemoryFunc *msix_mmio_read[] = {
     msix_mmio_readb,	msix_mmio_readw,	msix_mmio_readl
 };
 
+static void msix_reset(AssignedDevice *dev)
+{
+    MSIXTableEntry *entry;
+    int i;
+
+    if (!dev->msix_table) {
+        return;
+    }
+
+    memset(dev->msix_table, 0, 0x1000);
+
+    for (i = 0, entry = dev->msix_table; i < dev->msix_max; i++, entry++) {
+        entry->ctrl = cpu_to_le32(0x1); /* Masked */
+    }
+}
+
 static int assigned_dev_register_msix_mmio(AssignedDevice *dev)
 {
-    dev->msix_table_page = mmap(NULL, 0x1000,
-                                PROT_READ|PROT_WRITE,
-                                MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
-    if (dev->msix_table_page == MAP_FAILED) {
-        fprintf(stderr, "fail allocate msix_table_page! %s\n",
-                strerror(errno));
+    dev->msix_table = mmap(NULL, 0x1000, PROT_READ|PROT_WRITE,
+                           MAP_ANONYMOUS|MAP_PRIVATE, 0, 0);
+    if (dev->msix_table == MAP_FAILED) {
+        fprintf(stderr, "fail allocate msix_table! %s\n", strerror(errno));
         return -EFAULT;
     }
-    memset(dev->msix_table_page, 0, 0x1000);
+
+    msix_reset(dev);
+
     dev->mmio_index = cpu_register_io_memory(
                         msix_mmio_read, msix_mmio_write, dev);
     return 0;
@@ -1693,17 +1787,18 @@ static int assigned_dev_register_msix_mmio(AssignedDevice *dev)
 
 static void assigned_dev_unregister_msix_mmio(AssignedDevice *dev)
 {
-    if (!dev->msix_table_page)
+    if (!dev->msix_table) {
         return;
+    }
 
     cpu_unregister_io_memory(dev->mmio_index);
     dev->mmio_index = 0;
 
-    if (munmap(dev->msix_table_page, 0x1000) == -1) {
-        fprintf(stderr, "error unmapping msix_table_page! %s\n",
+    if (munmap(dev->msix_table, 0x1000) == -1) {
+        fprintf(stderr, "error unmapping msix_table! %s\n",
                 strerror(errno));
     }
-    dev->msix_table_page = NULL;
+    dev->msix_table = NULL;
 }
 
 static const VMStateDescription vmstate_assigned_device = {

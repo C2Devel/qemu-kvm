@@ -71,6 +71,8 @@ disable mirror_restart_iter(void *s, int64_t cnt) "s %p dirty count %"PRId64
 # block/stream.c
 disable stream_one_iteration(void *s, int64_t sector_num, int nb_sectors, int is_allocated) "s %p sector_num %"PRId64" nb_sectors %d is_allocated %d"
 disable stream_start(void *bs, void *base, void *s, void *co, void *opaque) "bs %p base %p s %p co %p opaque %p"
+disable commit_one_iteration(void *s, int64_t sector_num, int nb_sectors, int is_allocated) "s %p sector_num %"PRId64" nb_sectors %d is_allocated %d"
+disable commit_start(void *bs, void *base, void *top, void *s, void *co, void *opaque) "bs %p base %p top %p s %p co %p opaque %p"
 
 # blockdev.c
 disable do_block_job_cancel(void *job) "job %p"
@@ -92,6 +94,15 @@ disable cpu_out(unsigned int addr, unsigned int val) "addr %#x value %u"
 # balloon.c
 # Since requests are raised via monitor, not many tracepoints are needed.
 disable balloon_event(void *opaque, unsigned long addr) "opaque %p addr %lu"
+
+# hw/dataplane/virtio-blk.c
+disable virtio_blk_data_plane_start(void *s) "dataplane %p"
+disable virtio_blk_data_plane_stop(void *s) "dataplane %p"
+disable virtio_blk_data_plane_process_request(void *s, unsigned int out_num, unsigned int in_num, unsigned int head) "dataplane %p out_num %u in_num %u head %u"
+disable virtio_blk_data_plane_complete_request(void *s, unsigned int head, int ret) "dataplane %p head %u ret %d"
+
+# hw/dataplane/vring.c
+disable vring_setup(uint64_t physical, void *desc, void *avail, void *used) "vring physical %#"PRIx64" desc %p avail %p used %p"
 
 # hw/apic.c
 disable apic_local_deliver(int vector, uint32_t lvt) "vector %d delivery mode %d"
@@ -160,6 +171,7 @@ disable scsi_req_parsed(int target, int lun, int tag, int cmd, int mode, int xfe
 disable scsi_req_parsed_lba(int target, int lun, int tag, int cmd, uint64_t lba) "target %d lun %d tag %d command %d lba %"PRIu64""
 disable scsi_req_parse_bad(int target, int lun, int tag, int cmd) "target %d lun %d tag %d command %d"
 disable scsi_req_build_sense(int target, int lun, int tag, int key, int asc, int ascq) "target %d lun %d tag %d key %#02x asc %#02x ascq %#02x"
+disable scsi_device_set_ua(int target, int lun, int key, int asc, int ascq) "target %d lun %d key %#02x asc %#02x ascq %#02x"
 disable scsi_report_luns(int target, int lun, int tag) "target %d lun %d tag %d"
 disable scsi_inquiry(int target, int lun, int tag, int cdb1, int cdb2) "target %d lun %d tag %d page %#02x/%#02x"
 disable scsi_test_unit_ready(int target, int lun, int tag) "target %d lun %d tag %d"
@@ -204,6 +216,73 @@ disable qemu_co_mutex_lock_entry(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_lock_return(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_unlock_entry(void *mutex, void *self) "mutex %p self %p"
 disable qemu_co_mutex_unlock_return(void *mutex, void *self) "mutex %p self %p"
+
+# hw/qxl.c
+disable qxl_interface_set_mm_time(int qid, uint32_t mm_time) "%d %d"
+disable qxl_io_write_vga(int qid, const char *mode, uint32_t addr, uint32_t val) "%d %s addr=%u val=%u"
+disable qxl_create_guest_primary(int qid, uint32_t width, uint32_t height, uint64_t mem, uint32_t format, uint32_t position) "%d %dx%d mem=%lx %d,%d"
+disable qxl_create_guest_primary_rest(int qid, int32_t stride, uint32_t type, uint32_t flags) "%d %d,%d,%d"
+disable qxl_destroy_primary(int qid) "%d"
+disable qxl_enter_vga_mode(int qid) "%d"
+disable qxl_exit_vga_mode(int qid) "%d"
+disable qxl_hard_reset(int qid, int64_t loadvm) "%d loadvm=%"PRId64""
+disable qxl_interface_async_complete_io(int qid, uint32_t current_async, void *cookie) "%d current=%d cookie=%p"
+disable qxl_interface_attach_worker(int qid) "%d"
+disable qxl_interface_get_init_info(int qid) "%d"
+disable qxl_interface_set_compression_level(int qid, int64_t level) "%d %"PRId64
+disable qxl_interface_update_area_complete(int qid, uint32_t surface_id, uint32_t dirty_left, uint32_t dirty_right, uint32_t dirty_top, uint32_t dirty_bottom) "%d surface=%d [%d,%d,%d,%d]"
+disable qxl_interface_update_area_complete_rest(int qid, uint32_t num_updated_rects) "%d #=%d"
+disable qxl_interface_update_area_complete_overflow(int qid, int max) "%d max=%d"
+disable qxl_interface_update_area_complete_schedule_bh(int qid, uint32_t num_dirty) "%d #dirty=%d"
+disable qxl_io_destroy_primary_ignored(int qid, const char *mode) "%d %s"
+disable qxl_io_read_unexpected(int qid) "%d"
+disable qxl_io_unexpected_vga_mode(int qid, uint32_t io_port, const char *desc) "%d 0x%x (%s)"
+disable qxl_io_write(int qid, const char *mode, uint64_t addr, uint64_t val, int async) "%d %s addr=%"PRIu64 " val=%"PRIu64" async=%d"
+disable qxl_memslot_add_guest(int qid, uint32_t slot_id, uint64_t guest_start, uint64_t guest_end) "%d %u: guest phys 0x%"PRIx64 " - 0x%" PRIx64
+disable qxl_post_load(int qid, const char *mode) "%d %s"
+disable qxl_pre_load(int qid) "%d"
+disable qxl_pre_save(int qid) "%d"
+disable qxl_reset_surfaces(int qid) "%d"
+disable qxl_ring_command_check(int qid, const char *mode) "%d %s"
+disable qxl_ring_command_get(int qid, const char *mode) "%d %s"
+disable qxl_ring_command_req_notification(int qid) "%d"
+disable qxl_ring_cursor_check(int qid, const char *mode) "%d %s"
+disable qxl_ring_cursor_get(int qid, const char *mode) "%d %s"
+disable qxl_ring_cursor_req_notification(int qid) "%d"
+disable qxl_ring_res_push(int qid, const char *mode, uint32_t surface_count, uint32_t free_res, void *last_release, const char *notify) "%d %s s#=%d res#=%d last=%p notify=%s"
+disable qxl_ring_res_push_rest(int qid, uint32_t ring_has, uint32_t ring_size, uint32_t prod, uint32_t cons) "%d ring %d/%d [%d,%d]"
+disable qxl_ring_res_put(int qid, uint32_t free_res) "%d #res=%d"
+disable qxl_set_mode(int qid, int modenr, uint32_t x_res, uint32_t y_res, uint32_t bits, uint64_t devmem) "%d mode=%d [ x=%d y=%d @ bpp=%d devmem=0x%" PRIx64 " ]"
+disable qxl_soft_reset(int qid) "%d"
+disable qemu_spice_add_memslot(int qid, uint32_t slot_id, unsigned long virt_start, unsigned long virt_end, int async) "%d %u: host virt 0x%lx - 0x%lx async=%d"
+disable qemu_spice_del_memslot(int qid, uint32_t gid, uint32_t slot_id) "%d gid=%u sid=%u"
+disable qemu_spice_create_primary_surface(int qid, uint32_t sid, void *surface, int async) "%d sid=%u surface=%p async=%d"
+disable qemu_spice_destroy_primary_surface(int qid, uint32_t sid, int async) "%d sid=%u async=%d"
+disable qemu_spice_wakeup(uint32_t qid) "%d"
+disable qemu_spice_start(uint32_t qid) "%d"
+disable qemu_spice_stop(uint32_t qid) "%d"
+disable qemu_spice_create_update(uint32_t left, uint32_t right, uint32_t top, uint32_t bottom) "lr %d -> %d,  tb -> %d -> %d"
+disable qxl_spice_destroy_surfaces_complete(int qid) "%d"
+disable qxl_spice_destroy_surfaces(int qid, int async) "%d async=%d"
+disable qxl_spice_destroy_surface_wait_complete(int qid, uint32_t id) "%d sid=%d"
+disable qxl_spice_destroy_surface_wait(int qid, uint32_t id, int async) "%d sid=%d async=%d"
+disable qxl_spice_flush_surfaces_async(int qid, uint32_t surface_count, uint32_t num_free_res) "%d s#=%d, res#=%d"
+disable qxl_spice_monitors_config(int id) "%d"
+disable qxl_spice_loadvm_commands(int qid, void *ext, uint32_t count) "%d ext=%p count=%d"
+disable qxl_spice_oom(int qid) "%d"
+disable qxl_spice_reset_cursor(int qid) "%d"
+disable qxl_spice_reset_image_cache(int qid) "%d"
+disable qxl_spice_reset_memslots(int qid) "%d"
+disable qxl_spice_update_area(int qid, uint32_t surface_id, uint32_t left, uint32_t right, uint32_t top, uint32_t bottom) "%d sid=%d [%d,%d,%d,%d]"
+disable qxl_spice_update_area_rest(int qid, uint32_t num_dirty_rects, uint32_t clear_dirty_region) "%d #d=%d clear=%d"
+disable qxl_surfaces_dirty(int qid, int surface, int addr, int offset, int size) "%d surface=%d addr=%d offset=%d size=%d"
+disable qxl_set_client_capabilities_unsupported_by_revision(int qid, int revision) "%d revision=%d"
+
+# hw/qxl-render.c
+disable qxl_render_blit_guest_primary_initialized(void) ""
+disable qxl_render_blit(int32_t stride, int32_t left, int32_t right, int32_t top, int32_t bottom) "stride=%d [%d, %d, %d, %d]"
+disable qxl_render_guest_primary_resized(int32_t width, int32_t height, int32_t stride, int32_t bytes_pp, int32_t bits_pp) "%dx%d, stride %d, bpp %d, depth %d"
+disable qxl_render_update_area_done(void *cookie) "%p"
 
 # monitor.c
 disable handle_qmp_command(void *mon, const char *cmd_name) "mon %p cmd_name \"%s\""

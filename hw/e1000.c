@@ -38,7 +38,7 @@ enum {
     DEBUG_GENERAL,	DEBUG_IO,	DEBUG_MMIO,	DEBUG_INTERRUPT,
     DEBUG_RX,		DEBUG_TX,	DEBUG_MDIC,	DEBUG_EEPROM,
     DEBUG_UNKNOWN,	DEBUG_TXSUM,	DEBUG_TXERR,	DEBUG_RXERR,
-    DEBUG_RXFILTER,	DEBUG_NOTYET,
+    DEBUG_RXFILTER,     DEBUG_PHY,      DEBUG_NOTYET,
 };
 #define DBGBIT(x)	(1<<DEBUG_##x)
 static int debugflags = DBGBIT(TXERR) | DBGBIT(GENERAL);
@@ -53,6 +53,12 @@ static int debugflags = DBGBIT(TXERR) | DBGBIT(GENERAL);
 
 #define IOPORT_SIZE       0x40
 #define PNPMMIO_SIZE      0x20000
+#define MIN_BUF_SIZE      60 /* Min. octets in an ethernet frame sans FCS */
+
+/* this is the size past which hardware will drop packets when setting LPE=0 */
+#define MAXIMUM_ETHERNET_VLAN_SIZE 1522
+/* this is the size past which hardware will drop packets when setting LPE=1 */
+#define MAXIMUM_ETHERNET_LPE_SIZE 16384
 
 /*
  * HW models:
@@ -119,6 +125,13 @@ typedef struct E1000State_st {
         uint16_t reading;
         uint32_t old_eecd;
     } eecd_state;
+
+    QEMUTimer *autoneg_timer;
+
+/* Enabled compatibility for migration to/from rhel6.3.0 and older */
+#define E1000_FLAG_RHEL630_BIT 0
+#define E1000_FLAG_RHEL630 (1 << E1000_FLAG_RHEL630_BIT)
+    uint32_t compat_flags;
 } E1000State;
 
 #define	defreg(x)	x = (E1000_##x>>2)
@@ -136,6 +149,48 @@ enum {
     defreg(VET),
 };
 
+static void
+e1000_link_down(E1000State *s)
+{
+    s->mac_reg[STATUS] &= ~E1000_STATUS_LU;
+    s->phy_reg[PHY_STATUS] &= ~MII_SR_LINK_STATUS;
+}
+
+static void
+e1000_link_up(E1000State *s)
+{
+    s->mac_reg[STATUS] |= E1000_STATUS_LU;
+    s->phy_reg[PHY_STATUS] |= MII_SR_LINK_STATUS;
+}
+
+static void
+set_phy_ctrl(E1000State *s, int index, uint16_t val)
+{
+    if ((val & MII_CR_AUTO_NEG_EN) && (val & MII_CR_RESTART_AUTO_NEG)) {
+        s->nic->nc.link_down = true;
+        e1000_link_down(s);
+        s->phy_reg[PHY_STATUS] &= ~MII_SR_AUTONEG_COMPLETE;
+        DBGOUT(PHY, "Start link auto negotiation\n");
+        qemu_mod_timer(s->autoneg_timer, qemu_get_clock(vm_clock) + 500000000);
+    }
+}
+
+static void
+e1000_autoneg_timer(void *opaque)
+{
+    E1000State *s = opaque;
+    s->nic->nc.link_down = false;
+    e1000_link_up(s);
+    s->phy_reg[PHY_STATUS] |= MII_SR_AUTONEG_COMPLETE;
+    DBGOUT(PHY, "Auto negotiation is completed\n");
+}
+
+static void (*phyreg_writeops[])(E1000State *, int, uint16_t) = {
+    [PHY_CTRL] = set_phy_ctrl,
+};
+
+enum { NPHYWRITEOPS = ARRAY_SIZE(phyreg_writeops) };
+
 enum { PHY_R = 1, PHY_W = 2, PHY_RW = PHY_R | PHY_W };
 static const char phy_regcap[0x20] = {
     [PHY_STATUS] = PHY_R,	[M88E1000_EXT_PHY_SPEC_CTRL] = PHY_RW,
@@ -144,6 +199,30 @@ static const char phy_regcap[0x20] = {
     [PHY_LP_ABILITY] = PHY_R,	[PHY_1000T_STATUS] = PHY_R,
     [PHY_AUTONEG_ADV] = PHY_RW,	[M88E1000_RX_ERR_CNTR] = PHY_R,
     [PHY_ID2] = PHY_R,		[M88E1000_PHY_SPEC_STATUS] = PHY_R
+};
+
+static const uint16_t phy_reg_init[] = {
+    [PHY_CTRL] = 0x1140,
+    [PHY_STATUS] = 0x794d, /* link initially up with not completed autoneg */
+    [PHY_ID1] = 0x141,				[PHY_ID2] = PHY_ID2_INIT,
+    [PHY_1000T_CTRL] = 0x0e00,			[M88E1000_PHY_SPEC_CTRL] = 0x360,
+    [M88E1000_EXT_PHY_SPEC_CTRL] = 0x0d60,	[PHY_AUTONEG_ADV] = 0xde1,
+    [PHY_LP_ABILITY] = 0x1e0,			[PHY_1000T_STATUS] = 0x3c00,
+    [M88E1000_PHY_SPEC_STATUS] = 0xac00,
+};
+
+static const uint32_t mac_reg_init[] = {
+    [PBA] =     0x00100030,
+    [LEDCTL] =  0x602,
+    [CTRL] =    E1000_CTRL_SWDPIN2 | E1000_CTRL_SWDPIN0 |
+                E1000_CTRL_SPD_1000 | E1000_CTRL_SLU,
+    [STATUS] =  0x80000000 | E1000_STATUS_GIO_MASTER_ENABLE |
+                E1000_STATUS_ASDV | E1000_STATUS_MTXCKOK |
+                E1000_STATUS_SPEED_1000 | E1000_STATUS_FD |
+                E1000_STATUS_LU,
+    [MANC] =    E1000_MANC_EN_MNG2HOST | E1000_MANC_RCV_TCO_EN |
+                E1000_MANC_ARP_EN | E1000_MANC_0298_EN |
+                E1000_MANC_RMCP_EN,
 };
 
 static void
@@ -195,6 +274,23 @@ rxbufsize(uint32_t v)
     return 2048;
 }
 
+static void e1000_reset(void *opaque)
+{
+    E1000State *d = opaque;
+
+    qemu_del_timer(d->autoneg_timer);
+    memset(d->phy_reg, 0, sizeof d->phy_reg);
+    memmove(d->phy_reg, phy_reg_init, sizeof phy_reg_init);
+    memset(d->mac_reg, 0, sizeof d->mac_reg);
+    memmove(d->mac_reg, mac_reg_init, sizeof mac_reg_init);
+    d->rxbuf_min_shift = 1;
+    memset(&d->tx, 0, sizeof d->tx);
+
+    if (d->nic->nc.link_down) {
+        e1000_link_down(d);
+    }
+}
+
 static void
 set_ctrl(E1000State *s, int index, uint32_t val)
 {
@@ -210,6 +306,7 @@ set_rx_control(E1000State *s, int index, uint32_t val)
     s->rxbuf_min_shift = ((val / E1000_RCTL_RDMTS_QUAT) & 3) + 1;
     DBGOUT(RX, "RCTL: %d, mac_reg[RCTL] = 0x%x\n", s->mac_reg[RDT],
            s->mac_reg[RCTL]);
+    qemu_flush_queued_packets(&s->nic->nc);
 }
 
 static void
@@ -232,11 +329,18 @@ set_mdic(E1000State *s, int index, uint32_t val)
         if (!(phy_regcap[addr] & PHY_W)) {
             DBGOUT(MDIC, "MDIC write reg %x unhandled\n", addr);
             val |= E1000_MDIC_ERROR;
-        } else
+        } else {
+            if (addr < NPHYWRITEOPS && phyreg_writeops[addr]) {
+                phyreg_writeops[addr](s, index, data);
+            }
             s->phy_reg[addr] = data;
+        }
     }
     s->mac_reg[MDIC] = val | E1000_MDIC_READY;
-    set_ics(s, 0, E1000_ICR_MDAC);
+
+    if (val & E1000_MDIC_INT_EN) {
+        set_ics(s, 0, E1000_ICR_MDAC);
+    }
 }
 
 static uint32_t
@@ -614,10 +718,11 @@ e1000_set_link_status(VLANClientState *nc)
     E1000State *s = DO_UPCAST(NICState, nc, nc)->opaque;
     uint32_t old_status = s->mac_reg[STATUS];
 
-    if (nc->link_down)
-        s->mac_reg[STATUS] &= ~E1000_STATUS_LU;
-    else
-        s->mac_reg[STATUS] |= E1000_STATUS_LU;
+    if (nc->link_down) {
+        e1000_link_down(s);
+    } else {
+        e1000_link_up(s);
+    }
 
     if (s->mac_reg[STATUS] != old_status)
         set_ics(s, 0, E1000_ICR_LSC);
@@ -661,9 +766,26 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
     uint8_t vlan_status = 0, vlan_offset = 0;
     size_t desc_offset;
     size_t desc_size;
+    uint8_t min_buf[MIN_BUF_SIZE];
 
     if (!(s->mac_reg[RCTL] & E1000_RCTL_EN))
         return -1;
+
+    /* Pad to minimum Ethernet frame length */
+    if (size < sizeof(min_buf)) {
+        memcpy(min_buf, buf, size);
+        memset(&min_buf[size], 0, sizeof(min_buf) - size);
+        buf = min_buf;
+        size = sizeof(min_buf);
+    }
+
+    /* Discard oversized packets if !LPE and !SBP. */
+    if ((size > MAXIMUM_ETHERNET_LPE_SIZE ||
+        (size > MAXIMUM_ETHERNET_VLAN_SIZE
+        && !(s->mac_reg[RCTL] & E1000_RCTL_LPE)))
+        && !(s->mac_reg[RCTL] & E1000_RCTL_SBP)) {
+        return size;
+    }
 
     if (!receive_filter(s, buf, size))
         return size;
@@ -786,6 +908,9 @@ set_rdt(E1000State *s, int index, uint32_t val)
 {
     s->check_rxov = 0;
     s->mac_reg[index] = val & 0xffff;
+    if (e1000_has_rxbufs(s, 1)) {
+        qemu_flush_queued_packets(&s->nic->nc);
+    }
 }
 
 static void
@@ -863,6 +988,7 @@ static void (*macreg_writeops[])(E1000State *, int, uint32_t) = {
     [MTA ... MTA+127] = &mac_writereg,
     [VFTA ... VFTA+127] = &mac_writereg,
 };
+
 enum { NWRITEOPS = ARRAY_SIZE(macreg_writeops) };
 
 static void
@@ -936,42 +1062,14 @@ static bool is_version_1(void *opaque, int version_id)
     return version_id == 1;
 }
 
-static void e1000_set_status(E1000State *d, bool cap_list)
-{
-    uint8_t *pci_conf = d->dev.config;
-    uint16_t status = pci_get_word(pci_conf + PCI_STATUS);
-    /*
-     * We have no capabilities, so capability list bit should normally be 0.
-     * It was set by mistake in RHEL6.3 and older, so we have to set it
-     * before save/load and clear afterwards, to avoid breaking migration.
-     */
-    if (cap_list) {
-        status |= PCI_STATUS_CAP_LIST;
-    } else {
-        status &= ~PCI_STATUS_CAP_LIST;
-    }
-    pci_set_word(pci_conf + PCI_STATUS, status);
-}
-
-static void e1000_pre_save(void *opaque)
-{
-    e1000_set_status(opaque, true);
-}
-
-static void e1000_post_save(void *opaque)
-{
-    e1000_set_status(opaque, false);
-}
-
-static int e1000_pre_load(void *opaque)
-{
-    e1000_set_status(opaque, true);
-    return 0;
-}
-
 static int e1000_post_load(void *opaque, int version_id)
 {
-    e1000_set_status(opaque, false);
+    E1000State *s = opaque;
+
+    /* nc.link_down can't be migrated, so infer link_down according
+     * to link status bit in mac_reg[STATUS] */
+    s->nic->nc.link_down = (s->mac_reg[STATUS] & E1000_STATUS_LU) == 0;
+
     return 0;
 }
 
@@ -980,10 +1078,7 @@ static const VMStateDescription vmstate_e1000 = {
     .version_id = 2,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .pre_load = e1000_pre_load,
     .post_load = e1000_post_load,
-    .pre_save = e1000_pre_save,
-    .post_save = e1000_post_save,
     .fields      = (VMStateField []) {
         VMSTATE_PCI_DEVICE(dev, E1000State),
         VMSTATE_UNUSED_TEST(is_version_1, 4), /* was instance id */
@@ -1068,29 +1163,6 @@ static const uint16_t e1000_eeprom_template[64] = {
     0xffff, 0xffff, 0xffff, 0xffff,      0xffff, 0xffff,      0xffff, 0x0000,
 };
 
-static const uint16_t phy_reg_init[] = {
-    [PHY_CTRL] = 0x1140,			[PHY_STATUS] = 0x796d, // link initially up
-    [PHY_ID1] = 0x141,				[PHY_ID2] = PHY_ID2_INIT,
-    [PHY_1000T_CTRL] = 0x0e00,			[M88E1000_PHY_SPEC_CTRL] = 0x360,
-    [M88E1000_EXT_PHY_SPEC_CTRL] = 0x0d60,	[PHY_AUTONEG_ADV] = 0xde1,
-    [PHY_LP_ABILITY] = 0x1e0,			[PHY_1000T_STATUS] = 0x3c00,
-    [M88E1000_PHY_SPEC_STATUS] = 0xac00,
-};
-
-static const uint32_t mac_reg_init[] = {
-    [PBA] =     0x00100030,
-    [LEDCTL] =  0x602,
-    [CTRL] =    E1000_CTRL_SWDPIN2 | E1000_CTRL_SWDPIN0 |
-                E1000_CTRL_SPD_1000 | E1000_CTRL_SLU,
-    [STATUS] =  0x80000000 | E1000_STATUS_GIO_MASTER_ENABLE |
-                E1000_STATUS_ASDV | E1000_STATUS_MTXCKOK |
-                E1000_STATUS_SPEED_1000 | E1000_STATUS_FD |
-                E1000_STATUS_LU,
-    [MANC] =    E1000_MANC_EN_MNG2HOST | E1000_MANC_RCV_TCO_EN |
-                E1000_MANC_ARP_EN | E1000_MANC_0298_EN |
-                E1000_MANC_RMCP_EN,
-};
-
 /* PCI interface */
 
 static CPUWriteMemoryFunc * const e1000_mmio_write[] = {
@@ -1139,20 +1211,10 @@ pci_e1000_uninit(PCIDevice *dev)
     E1000State *d = DO_UPCAST(E1000State, dev, dev);
 
     cpu_unregister_io_memory(d->mmio_index);
+    qemu_del_timer(d->autoneg_timer);
+    qemu_free_timer(d->autoneg_timer);
     qemu_del_vlan_client(&d->nic->nc);
     return 0;
-}
-
-static void e1000_reset(void *opaque)
-{
-    E1000State *d = opaque;
-
-    memset(d->phy_reg, 0, sizeof d->phy_reg);
-    memmove(d->phy_reg, phy_reg_init, sizeof phy_reg_init);
-    memset(d->mac_reg, 0, sizeof d->mac_reg);
-    memmove(d->mac_reg, mac_reg_init, sizeof mac_reg_init);
-    d->rxbuf_min_shift = 1;
-    memset(&d->tx, 0, sizeof d->tx);
 }
 
 static NetClientInfo net_e1000_info = {
@@ -1176,6 +1238,13 @@ static int pci_e1000_init(PCIDevice *pci_dev)
 
     pci_config_set_vendor_id(pci_conf, PCI_VENDOR_ID_INTEL);
     pci_config_set_device_id(pci_conf, E1000_DEVID);
+    if (d->compat_flags & E1000_FLAG_RHEL630) {
+        /*
+         * We have no capabilities, so capability list bit should normally be 0.
+         * Keep it on for compat machine types to avoid breaking migration.
+         */
+        pci_set_word(pci_conf + PCI_STATUS, PCI_STATUS_CAP_LIST);
+    }
     pci_conf[PCI_REVISION_ID] = 0x03;
     pci_config_set_class(pci_conf, PCI_CLASS_NETWORK_ETHERNET);
     /* TODO: RST# value should be 0, PCI spec 6.2.4 */
@@ -1210,6 +1279,8 @@ static int pci_e1000_init(PCIDevice *pci_dev)
 
     add_boot_device_path(d->conf.bootindex, &pci_dev->qdev, "/ethernet-phy@0");
 
+    d->autoneg_timer = qemu_new_timer(vm_clock, e1000_autoneg_timer, d);
+
     return 0;
 }
 
@@ -1230,6 +1301,8 @@ static PCIDeviceInfo e1000_info = {
     .romfile    = "pxe-e1000.bin",
     .qdev.props = (Property[]) {
         DEFINE_NIC_PROPERTIES(E1000State, conf),
+        DEFINE_PROP_BIT("x-__com_redhat_rhel630_compat", E1000State,
+                        compat_flags, E1000_FLAG_RHEL630_BIT, false),
         DEFINE_PROP_END_OF_LIST(),
     }
 };

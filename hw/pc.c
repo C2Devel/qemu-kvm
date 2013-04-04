@@ -48,6 +48,8 @@
 #include "qemu-kvm.h"
 #include "ui/qemu-spice.h"
 #include "kvmclock.h"
+#include "bitmap.h"
+#include "topology.h"
 
 /* output Bochs bios info messages */
 //#define DEBUG_BIOS
@@ -454,6 +456,47 @@ static void bochs_bios_write(void *opaque, uint32_t addr, uint32_t val)
     }
 }
 
+
+/* Enable compatibility (buggy) APIC ID generation, that keep APIC IDs
+ * contiguous
+ */
+static bool compat_contiguous_apic_ids;
+/* Warning message about incorrect APIC ID was shown */
+static bool apic_id_warned;
+
+/* Calculates initial APIC ID for a specific CPU index
+ *
+ * Currently we need to be able to calculate the APIC ID from the CPU index
+ * alone (without requiring a CPU object), as the QEMU<->Seabios interfaces have
+ * no concept of "CPU index", and the NUMA tables on fw_cfg need the APIC ID of
+ * all CPUs up to max_cpus.
+ */
+uint32_t apic_id_for_cpu(int cpu_index)
+{
+    uint32_t correct_id;
+
+    correct_id = topo_apicid_for_cpu(smp_cores, smp_threads, cpu_index);
+    if (compat_contiguous_apic_ids) {
+        if (cpu_index != correct_id && !apic_id_warned) {
+            error_report("APIC IDs set in compatibility mode, "
+                         "CPU topology won't match the configuration");
+            apic_id_warned = true;
+        }
+        return cpu_index;
+    } else {
+        return correct_id;
+    }
+}
+
+/* Returns the limit to APIC ID values
+ *
+ * This is used for FW_CFG_MAX_CPUS. See comments on bochs_bios_init().
+ */
+static unsigned int apic_id_limit(void)
+{
+    return apic_id_for_cpu(max_cpus - 1) + 1;
+}
+
 static void *bochs_bios_init(void)
 {
     void *fw_cfg;
@@ -461,6 +504,7 @@ static void *bochs_bios_init(void)
     size_t smbios_len;
     uint64_t *numa_fw_cfg;
     int i, j;
+    unsigned int max_apic_id = apic_id_limit();
 
     register_ioport_write(0x400, 1, 2, bochs_bios_write, NULL);
     register_ioport_write(0x401, 1, 2, bochs_bios_write, NULL);
@@ -474,7 +518,21 @@ static void *bochs_bios_init(void)
     register_ioport_write(0x503, 1, 1, bochs_bios_write, NULL);
 
     fw_cfg = fw_cfg_init(BIOS_CFG_IOPORT, BIOS_CFG_IOPORT + 1, 0, 0);
-
+    /* FW_CFG_MAX_CPUS is a bit confusing/problematic on x86:
+     *
+     * SeaBIOS needs FW_CFG_MAX_CPUS for CPU hotplug, but the CPU hotplug
+     * QEMU<->SeaBIOS interface is not based on the "CPU index", but on the APIC
+     * ID of hotplugged CPUs[1]. This means that FW_CFG_MAX_CPUS is not the
+     * "maximum number of CPUs", but the "limit to the APIC ID values SeaBIOS
+     * may see".
+     *
+     * So, this means we must not use max_cpus, here, but the maximum possible
+     * APIC ID value, plus one.
+     *
+     * [1] The only kind of "CPU identifier" used between SeaBIOS and QEMU is
+     *     the APIC ID, not the "CPU index"
+     */
+    fw_cfg_add_i16(fw_cfg, FW_CFG_MAX_CPUS, (uint16_t)max_apic_id);
     fw_cfg_add_i32(fw_cfg, FW_CFG_ID, 1);
     fw_cfg_add_i64(fw_cfg, FW_CFG_RAM_SIZE, (uint64_t)ram_size);
     fw_cfg_add_bytes(fw_cfg, FW_CFG_ACPI_TABLES, (uint8_t *)acpi_tables,
@@ -490,21 +548,24 @@ static void *bochs_bios_init(void)
      * of nodes, one word for each VCPU->node and one word for each node to
      * hold the amount of memory.
      */
-    numa_fw_cfg = qemu_mallocz((1 + smp_cpus + nb_numa_nodes) * 8);
+    numa_fw_cfg = g_malloc0((1 + max_apic_id + nb_numa_nodes) * 8);
     numa_fw_cfg[0] = cpu_to_le64(nb_numa_nodes);
-    for (i = 0; i < smp_cpus; i++) {
+    unsigned int cpu_idx;
+    for (cpu_idx = 0; cpu_idx < max_cpus; cpu_idx++) {
+        unsigned int apic_id = apic_id_for_cpu(cpu_idx);
+        assert(apic_id < max_apic_id);
         for (j = 0; j < nb_numa_nodes; j++) {
-            if (node_cpumask[j] & (1 << i)) {
-                numa_fw_cfg[i + 1] = cpu_to_le64(j);
+            if (test_bit(cpu_idx, node_cpumask[j])) {
+                numa_fw_cfg[apic_id + 1] = cpu_to_le64(j);
                 break;
             }
         }
     }
     for (i = 0; i < nb_numa_nodes; i++) {
-        numa_fw_cfg[smp_cpus + 1 + i] = cpu_to_le64(node_mem[i]);
+        numa_fw_cfg[max_apic_id + 1 + i] = cpu_to_le64(node_mem[i]);
     }
     fw_cfg_add_bytes(fw_cfg, FW_CFG_NUMA, (uint8_t *)numa_fw_cfg,
-                     (1 + smp_cpus + nb_numa_nodes) * 8);
+                     (1 + max_apic_id + nb_numa_nodes) * 8);
 
     return fw_cfg;
 }
@@ -1001,7 +1062,8 @@ CPUState *pc_new_cpu(const char *cpu_model)
     }
     env->kvm_cpu_state.regs_modified = 1;
     if ((env->cpuid_features & CPUID_APIC) || smp_cpus > 1) {
-        env->cpuid_apic_id = env->cpu_index;
+        env->cpuid_apic_id = apic_id_for_cpu(env->cpu_index);
+
         /* APIC reset callback resets cpu */
         apic_init(env);
     } else {
@@ -1343,7 +1405,7 @@ static void pc_init1(ram_addr_t ram_size,
 
         /* TODO: Populate SPD eeprom data.  */
         smbus = piix4_pm_init(pci_bus, piix3_devfn + 3, 0xb100,
-                              isa_get_irq(9));
+                              isa_get_irq(9), fw_cfg);
         for (i = 0; i < 8; i++) {
             DeviceState *eeprom;
             eeprom = qdev_create((BusState *)smbus, "smbus-eeprom");
@@ -1561,14 +1623,56 @@ static void rhel_common_init(const char *type1_version,
                      strlen(buf) + 1, buf);
 }
 
-#define PC_RHEL6_2_COMPAT \
+#define PC_RHEL6_3_COMPAT \
         {\
+            .driver   = "USB",\
+            .property = "create_unique_serial",\
+            .value    = "0",\
+        },{\
+            .driver   = "virtio-scsi-pci",\
+            .property = "hotplug",\
+            .value    = "off",\
+        },{\
+            .driver   = "virtio-scsi-pci",\
+            .property = "param_change",\
+            .value    = "off",\
+        },{\
+            .driver   = "qxl-vga",\
+            .property = "revision",\
+            .value    = stringify(3),\
+        },{\
+            .driver   = "qxl",\
+            .property = "revision",\
+            .value    = stringify(3),\
+        },{\
+            .driver   = "isa-fdc",\
+            .property = "migrate_dir",\
+            .value    = "0",\
+        },{\
+            .driver   = "e1000",\
+            .property = "x-__com_redhat_rhel630_compat",\
+            .value    = "on",\
+        }
+
+#define PC_RHEL6_2_COMPAT \
+        PC_RHEL6_3_COMPAT \
+        ,{\
             .driver   = "virtio-net-pci",\
             .property = "x-__com_redhat_rhel620_compat",\
             .value    = "on",\
         }
+
 #define PC_RHEL6_1_COMPAT \
-        {\
+        PC_RHEL6_2_COMPAT \
+        ,{\
+            .driver   = "PIIX4_PM",\
+            .property = "disable_s3",\
+            .value    = "0",\
+        },{\
+            .driver   = "PIIX4_PM",\
+            .property = "disable_s4",\
+            .value    = "0",\
+        },{\
             .driver   = "usb-tablet",\
             .property = "migrate",\
             .value    = stringify(0),\
@@ -1580,6 +1684,14 @@ static void rhel_common_init(const char *type1_version,
             .driver   = "usb-kbd",\
             .property = "migrate",\
             .value    = stringify(0),\
+        },{\
+            .driver   = "hda-output",\
+            .property = "mcompat",\
+            .value    = stringify(1),\
+        },{\
+            .driver   = "hda-duplex",\
+            .property = "mcompat",\
+            .value    = stringify(1),\
         },{\
             .driver   = "virtio-blk-pci",\
             .property = "event_idx",\
@@ -1604,14 +1716,53 @@ static void rhel_common_init(const char *type1_version,
             .driver   = "virtio-balloon",\
             .property = "event_idx",\
             .value    = "off",\
-        }, PC_RHEL6_2_COMPAT
+        }
 
 #define PC_RHEL6_0_COMPAT \
-        {\
+        PC_RHEL6_1_COMPAT \
+        ,{\
             .driver   = "virtio-serial-pci",\
             .property = "flow_control",\
             .value    = stringify(0),\
-        }, PC_RHEL6_1_COMPAT
+        }
+
+static void pc_rhel630_compat(void)
+{
+    set_cpu_model_level("Conroe", 2);
+    set_cpu_model_level("Penryn", 2);
+    set_cpu_model_level("Nehalem", 2);
+    disable_kvm_pv_eoi();
+    set_pmu_passthrough(true);
+    disable_tsc_deadline();
+    compat_contiguous_apic_ids = true;
+}
+
+static void pc_rhel620_compat(void)
+{
+    pc_rhel630_compat();
+    set_pmu_passthrough(false);
+}
+
+static void pc_init_rhel640(ram_addr_t ram_size,
+                            const char *boot_device,
+                            const char *kernel_filename,
+                            const char *kernel_cmdline,
+                            const char *initrd_filename,
+                            const char *cpu_model)
+{
+    rhel_common_init("RHEL 6.4.0 PC", 0);
+    pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+                initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel640 = {
+    .name = "rhel6.4.0",
+    .alias = "pc",
+    .desc = "RHEL 6.4.0 PC",
+    .init = pc_init_rhel640,
+    .max_cpus = 255,
+    .is_default = 1,
+};
 
 static void pc_init_rhel630(ram_addr_t ram_size,
                             const char *boot_device,
@@ -1621,17 +1772,20 @@ static void pc_init_rhel630(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.3.0 PC", 0);
+    pc_rhel630_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
 
 static QEMUMachine pc_machine_rhel630 = {
     .name = "rhel6.3.0",
-    .alias = "pc",
     .desc = "RHEL 6.3.0 PC",
     .init = pc_init_rhel630,
     .max_cpus = 255,
-    .is_default = 1,
+    .compat_props = (GlobalProperty[]) {
+        PC_RHEL6_3_COMPAT,
+        { /* end of list */ }
+    },
 };
 
 static void pc_init_rhel620(ram_addr_t ram_size,
@@ -1642,7 +1796,7 @@ static void pc_init_rhel620(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.2.0 PC", 0);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
@@ -1666,7 +1820,7 @@ static void pc_init_rhel610(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.1.0 PC", 0);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
@@ -1690,7 +1844,7 @@ static void pc_init_rhel600(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 6.0.0 PC", 0);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
@@ -1761,7 +1915,7 @@ static void pc_init_rhel550(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.5.0 PC", 1);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1782,7 +1936,7 @@ static void pc_init_rhel544(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.4.4 PC", 1);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1803,7 +1957,7 @@ static void pc_init_rhel540(ram_addr_t ram_size,
                             const char *cpu_model)
 {
     rhel_common_init("RHEL 5.4.0 PC", 1);
-    disable_cpuid_leaf10();
+    pc_rhel620_compat();
     pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
                 initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel5"));
 }
@@ -1818,6 +1972,7 @@ static QEMUMachine pc_machine_rhel540 = {
 
 static void rhel_machine_init(void)
 {
+    qemu_register_machine(&pc_machine_rhel640);
     qemu_register_machine(&pc_machine_rhel630);
     qemu_register_machine(&pc_machine_rhel620);
     qemu_register_machine(&pc_machine_rhel610);

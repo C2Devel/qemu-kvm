@@ -60,6 +60,9 @@ VMChangeStateEntry *qemu_add_vm_change_state_handler(VMChangeStateHandler *cb,
                                                      void *opaque);
 void qemu_del_vm_change_state_handler(VMChangeStateEntry *e);
 
+#define VMRESET_SILENT   false
+#define VMRESET_REPORT   true
+
 void vm_start(void);
 void vm_stop(RunState state);
 void vm_stop_force_state(RunState state);
@@ -92,10 +95,11 @@ int qemu_shutdown_requested(void);
 int qemu_reset_requested(void);
 int qemu_suspend_requested(void);
 int qemu_powerdown_requested(void);
+int qemu_wakeup_requested(void);
 void qemu_system_killed(int signal, pid_t pid);
 void qemu_kill_report(void);
 extern qemu_irq qemu_system_powerdown;
-void qemu_system_reset(void);
+void qemu_system_reset(bool report);
 void qemu_system_suspend(void);
 
 void qemu_add_machine_init_done_notifier(Notifier *notify);
@@ -159,6 +163,8 @@ extern int alt_grab;
 extern int ctrl_grab;
 extern int usb_enabled;
 extern int smp_cpus;
+extern int smp_cores;
+extern int smp_threads;
 extern int max_cpus;
 extern int cursor_hide;
 extern int graphic_rotate;
@@ -171,9 +177,10 @@ extern QEMUClock *rtc_clock;
 extern long hpagesize;
 
 #define MAX_NODES 64
+#define MAX_CPUMASK_BITS 255
 extern int nb_numa_nodes;
 extern uint64_t node_mem[MAX_NODES];
-extern uint64_t node_cpumask[MAX_NODES];
+extern unsigned long *node_cpumask[MAX_NODES];
 
 #define MAX_OPTION_ROMS 16
 typedef struct QEMUOptionRom {

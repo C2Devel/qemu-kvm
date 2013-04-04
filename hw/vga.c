@@ -2343,19 +2343,16 @@ void vga_init(VGACommonState *s)
     s->bank_offset = 0;
 
 #ifdef CONFIG_BOCHS_VBE
+    register_ioport_read(0x1ce, 1, 2, vbe_ioport_read_index, s);
+    register_ioport_write(0x1ce, 1, 2, vbe_ioport_write_index, s);
+
 #if defined (TARGET_I386)
-    register_ioport_read(0x1ce, 1, 2, vbe_ioport_read_index, s);
     register_ioport_read(0x1cf, 1, 2, vbe_ioport_read_data, s);
-
-    register_ioport_write(0x1ce, 1, 2, vbe_ioport_write_index, s);
     register_ioport_write(0x1cf, 1, 2, vbe_ioport_write_data, s);
-#else
-    register_ioport_read(0x1ce, 1, 2, vbe_ioport_read_index, s);
-    register_ioport_read(0x1d0, 1, 2, vbe_ioport_read_data, s);
-
-    register_ioport_write(0x1ce, 1, 2, vbe_ioport_write_index, s);
-    register_ioport_write(0x1d0, 1, 2, vbe_ioport_write_data, s);
 #endif
+
+    register_ioport_read(0x1d0, 1, 2, vbe_ioport_read_data, s);
+    register_ioport_write(0x1d0, 1, 2, vbe_ioport_write_data, s);
 #endif /* CONFIG_BOCHS_VBE */
 
     vga_io_memory = cpu_register_io_memory(vga_mem_read, vga_mem_write, s);

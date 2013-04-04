@@ -119,8 +119,12 @@ static void ide_identify(IDEState *s)
     put_le16(p + 82, (1 << 14) | 1);
     /* 13=flush_cache_ext,12=flush_cache,10=lba48 */
     put_le16(p + 83, (1 << 14) | (1 << 13) | (1 <<12) | (1 << 10));
-    /* 14=set to 1, 1=SMART self test, 0=SMART error logging */
-    put_le16(p + 84, (1 << 14) | 0);
+    /* 14=set to 1, 8=has WWN, 1=SMART self test, 0=SMART error logging */
+    if (s->wwn) {
+        put_le16(p + 84, (1 << 14) | (1 << 8) | 0);
+    } else {
+        put_le16(p + 84, (1 << 14) | 0);
+    }
     /* 14 = NOP supported, 5=WCACHE enabled, 0=SMART feature set enabled */
     if (bdrv_enable_write_cache(s->bs))
          put_le16(p + 85, (1 << 14) | (1 << 5) | 1);
@@ -128,8 +132,12 @@ static void ide_identify(IDEState *s)
          put_le16(p + 85, (1 << 14) | 1);
     /* 13=flush_cache_ext,12=flush_cache,10=lba48 */
     put_le16(p + 86, (1 << 14) | (1 << 13) | (1 <<12) | (1 << 10));
-    /* 14=set to 1, 1=smart self test, 0=smart error logging */
-    put_le16(p + 87, (1 << 14) | 0);
+    /* 14=set to 1, 8=has WWN, 1=SMART self test, 0=SMART error logging */
+    if (s->wwn) {
+        put_le16(p + 87, (1 << 14) | (1 << 8) | 0);
+    } else {
+        put_le16(p + 87, (1 << 14) | 0);
+    }
     put_le16(p + 88, 0x3f | (1 << 13)); /* udma5 set and supported */
     put_le16(p + 93, 1 | (1 << 14) | 0x2000);
     put_le16(p + 100, s->nb_sectors);
@@ -139,6 +147,13 @@ static void ide_identify(IDEState *s)
     dev = s->unit ? s->bus->slave : s->bus->master;
     if (dev && dev->conf.physical_block_size)
         put_le16(p + 106, 0x6000 | get_physical_block_exp(&dev->conf));
+    if (s->wwn) {
+        /* LE 16-bit words 111-108 contain 64-bit World Wide Name */
+        put_le16(p + 108, s->wwn >> 48);
+        put_le16(p + 109, s->wwn >> 32);
+        put_le16(p + 110, s->wwn >> 16);
+        put_le16(p + 111, s->wwn);
+    }
 
     memcpy(s->identify_data, p, sizeof(s->identify_data));
     s->identify_set = 1;
@@ -1853,7 +1868,8 @@ static const BlockDevOps ide_cd_block_ops = {
     .is_medium_locked = ide_cd_is_medium_locked,
 };
 
-int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version)
+int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version,
+                   uint64_t wwn)
 {
     int cylinders, heads, secs;
     uint64_t nb_sectors;
@@ -1877,6 +1893,7 @@ int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version)
     s->heads = heads;
     s->sectors = secs;
     s->nb_sectors = nb_sectors;
+    s->wwn = wwn;
     /* The SMART values should be preserved across power cycles
        but they aren't.  */
     s->smart_enabled = 1;
@@ -1952,7 +1969,7 @@ void ide_init2_with_non_qdev_drives(IDEBus *bus, DriveInfo *hd0,
         dinfo = i == 0 ? hd0 : hd1;
         ide_init1(bus, i);
         if (dinfo) {
-            if (ide_init_drive(&bus->ifs[i], dinfo->bdrv, NULL) < 0) {
+            if (ide_init_drive(&bus->ifs[i], dinfo->bdrv, NULL, 0) < 0) {
                 error_report("Can't set up IDE drive %s", dinfo->id);
                 exit(1);
             }

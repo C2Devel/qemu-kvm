@@ -84,24 +84,24 @@ static int vhost_client_sync_dirty_bitmap(CPUPhysMemoryClient *client,
 }
 
 /* Assign/unassign. Keep an unsorted array of non-overlapping
- * memory regions in dev->mem. */
-static void vhost_dev_unassign_memory(struct vhost_dev *dev,
-                                      uint64_t start_addr,
-                                      uint64_t size)
+ * memory regions. */
+void vhost_mem_unassign_memory(struct vhost_memory *mem,
+                               uint64_t start_addr,
+                               uint64_t size)
 {
-    int from, to, n = dev->mem->nregions;
+    int from, to, n = mem->nregions;
     /* Track overlapping/split regions for sanity checking. */
     int overlap_start = 0, overlap_end = 0, overlap_middle = 0, split = 0;
 
     for (from = 0, to = 0; from < n; ++from, ++to) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
+        struct vhost_memory_region *reg = mem->regions + to;
         uint64_t reglast;
         uint64_t memlast;
         uint64_t change;
 
         /* clone old region */
         if (to != from) {
-            memcpy(reg, dev->mem->regions + from, sizeof *reg);
+            memcpy(reg, mem->regions + from, sizeof *reg);
         }
 
         /* No overlap is simple */
@@ -120,7 +120,7 @@ static void vhost_dev_unassign_memory(struct vhost_dev *dev,
 
         /* Remove whole region */
         if (start_addr <= reg->guest_phys_addr && memlast >= reglast) {
-            --dev->mem->nregions;
+            --mem->nregions;
             --to;
             ++overlap_middle;
             continue;
@@ -154,39 +154,39 @@ static void vhost_dev_unassign_memory(struct vhost_dev *dev,
         assert(!overlap_end);
         assert(!overlap_middle);
         /* Split region: shrink first part, shift second part. */
-        memcpy(dev->mem->regions + n, reg, sizeof *reg);
+        memcpy(mem->regions + n, reg, sizeof *reg);
         reg->memory_size = start_addr - reg->guest_phys_addr;
         assert(reg->memory_size);
         change = memlast + 1 - reg->guest_phys_addr;
-        reg = dev->mem->regions + n;
+        reg = mem->regions + n;
         reg->memory_size -= change;
         assert(reg->memory_size);
         reg->guest_phys_addr += change;
         reg->userspace_addr += change;
         /* Never add more than 1 region */
-        assert(dev->mem->nregions == n);
-        ++dev->mem->nregions;
+        assert(mem->nregions == n);
+        ++mem->nregions;
         ++split;
     }
 }
 
 /* Called after unassign, so no regions overlap the given range. */
-static void vhost_dev_assign_memory(struct vhost_dev *dev,
-                                    uint64_t start_addr,
-                                    uint64_t size,
-                                    uint64_t uaddr)
+void vhost_mem_assign_memory(struct vhost_memory *mem,
+                             uint64_t start_addr,
+                             uint64_t size,
+                             uint64_t uaddr)
 {
     int from, to;
     struct vhost_memory_region *merged = NULL;
-    for (from = 0, to = 0; from < dev->mem->nregions; ++from, ++to) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
+    for (from = 0, to = 0; from < mem->nregions; ++from, ++to) {
+        struct vhost_memory_region *reg = mem->regions + to;
         uint64_t prlast, urlast;
         uint64_t pmlast, umlast;
         uint64_t s, e, u;
 
         /* clone old region */
         if (to != from) {
-            memcpy(reg, dev->mem->regions + from, sizeof *reg);
+            memcpy(reg, mem->regions + from, sizeof *reg);
         }
         prlast = range_get_last(reg->guest_phys_addr, reg->memory_size);
         pmlast = range_get_last(start_addr, size);
@@ -218,7 +218,7 @@ static void vhost_dev_assign_memory(struct vhost_dev *dev,
     }
 
     if (!merged) {
-        struct vhost_memory_region *reg = dev->mem->regions + to;
+        struct vhost_memory_region *reg = mem->regions + to;
         memset(reg, 0, sizeof *reg);
         reg->memory_size = size;
         assert(reg->memory_size);
@@ -226,8 +226,8 @@ static void vhost_dev_assign_memory(struct vhost_dev *dev,
         reg->userspace_addr = uaddr;
         ++to;
     }
-    assert(to <= dev->mem->nregions + 1);
-    dev->mem->nregions = to;
+    assert(to <= mem->nregions + 1);
+    mem->nregions = to;
 }
 
 static uint64_t vhost_get_log_size(struct vhost_dev *dev)
@@ -324,14 +324,14 @@ static void vhost_client_set_memory(CPUPhysMemoryClient *client,
 
     assert(size);
 
-    vhost_dev_unassign_memory(dev, start_addr, size);
+    vhost_mem_unassign_memory(dev->mem, start_addr, size);
     if (flags == IO_MEM_RAM) {
         /* Add given mapping, merging adjacent regions if any */
-        vhost_dev_assign_memory(dev, start_addr, size,
+        vhost_mem_assign_memory(dev->mem, start_addr, size,
                                 (uintptr_t)qemu_get_ram_ptr(phys_offset));
     } else {
         /* Remove old mapping for this memory, if any. */
-        vhost_dev_unassign_memory(dev, start_addr, size);
+        vhost_mem_unassign_memory(dev->mem, start_addr, size);
     }
 
     if (!dev->started) {

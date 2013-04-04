@@ -15,6 +15,9 @@
 #include "qemu-error.h"
 #include "trace.h"
 #include "virtio-blk.h"
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+#include "hw/dataplane/virtio-blk.h"
+#endif
 #include "scsi-defs.h"
 #ifdef __linux__
 # include <scsi/sg.h>
@@ -28,9 +31,12 @@ typedef struct VirtIOBlock
     void *rq;
     QEMUBH *bh;
     BlockConf *conf;
+    VirtIOBlkConf *blk;
     unsigned short sector_mask;
-    char sn[BLOCK_SERIAL_STRLEN];
     DeviceState *qdev;
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    VirtIOBlockDataPlane *dataplane;
+#endif
 } VirtIOBlock;
 
 static VirtIOBlock *to_virtio_blk(VirtIODevice *vdev)
@@ -392,8 +398,13 @@ static void virtio_blk_handle_request(VirtIOBlockReq *req,
     } else if (req->out->type & VIRTIO_BLK_T_GET_ID) {
         VirtIOBlock *s = req->dev;
 
-        memcpy(req->elem.in_sg[0].iov_base, s->sn,
-               MIN(req->elem.in_sg[0].iov_len, sizeof(s->sn)));
+        /*
+         * NB: per existing s/n string convention the string is
+         * terminated by '\0' only when shorter than buffer.
+         */
+        strncpy(req->elem.in_sg[0].iov_base,
+                s->blk->serial ? s->blk->serial : "",
+                MIN(req->elem.in_sg[0].iov_len, VIRTIO_BLK_ID_BYTES));
         virtio_blk_req_complete(req, VIRTIO_BLK_S_OK);
         qemu_free(req);
     } else if (req->out->type & VIRTIO_BLK_T_OUT) {
@@ -416,6 +427,16 @@ static void virtio_blk_handle_output(VirtIODevice *vdev, VirtQueue *vq)
         .num_writes = 0,
         .old_bs = NULL,
     };
+
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    /* Some guests kick before setting VIRTIO_CONFIG_S_DRIVER_OK so start
+     * dataplane here instead of waiting for .set_status().
+     */
+    if (s->dataplane) {
+        virtio_blk_data_plane_start(s->dataplane);
+        return;
+    }
+#endif
 
     while ((req = virtio_blk_get_request(s))) {
         virtio_blk_handle_request(req, &mrb);
@@ -471,6 +492,14 @@ static void virtio_blk_dma_restart_cb(void *opaque, int running, RunState state)
 
 static void virtio_blk_reset(VirtIODevice *vdev)
 {
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    VirtIOBlock *s = to_virtio_blk(vdev);
+
+    if (s->dataplane) {
+        virtio_blk_data_plane_stop(s->dataplane);
+    }
+#endif
+
     /*
      * This should cancel pending requests, but can't do nicely until there
      * are per-device request lists.
@@ -521,6 +550,18 @@ static uint32_t virtio_blk_get_features(VirtIODevice *vdev, uint32_t features)
 
     return features;
 }
+
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+static void virtio_blk_set_status(VirtIODevice *vdev, uint8_t status)
+{
+    VirtIOBlock *s = to_virtio_blk(vdev);
+
+    if (s->dataplane && !(status & (VIRTIO_CONFIG_S_DRIVER |
+                                    VIRTIO_CONFIG_S_DRIVER_OK))) {
+        virtio_blk_data_plane_stop(s->dataplane);
+    }
+}
+#endif
 
 static void virtio_blk_save(QEMUFile *f, void *opaque)
 {
@@ -586,20 +627,28 @@ static const BlockDevOps virtio_block_ops = {
     .resize_cb = virtio_blk_resize,
 };
 
-VirtIODevice *virtio_blk_init(DeviceState *dev, BlockConf *conf)
+VirtIODevice *virtio_blk_init(DeviceState *dev, VirtIOBlkConf *blk)
 {
     VirtIOBlock *s;
     int cylinders, heads, secs;
     static int virtio_blk_id;
     DriveInfo *dinfo;
 
-    if (!conf->bs) {
+    if (!blk->conf.bs) {
         error_report("drive property not set");
         return NULL;
     }
-    if (!bdrv_is_inserted(conf->bs)) {
+    if (!bdrv_is_inserted(blk->conf.bs)) {
         error_report("Device needs media, but drive is empty");
         return NULL;
+    }
+
+    if (!blk->serial) {
+        /* try to fall back to value set with legacy -drive serial=... */
+        dinfo = drive_get_by_blockdev(blk->conf.bs);
+        if (*dinfo->serial) {
+            blk->serial = strdup(dinfo->serial);
+        }
     }
 
     s = (VirtIOBlock *)virtio_common_init("virtio-blk", VIRTIO_ID_BLOCK,
@@ -608,31 +657,40 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, BlockConf *conf)
 
     s->vdev.get_config = virtio_blk_update_config;
     s->vdev.get_features = virtio_blk_get_features;
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    s->vdev.set_status = virtio_blk_set_status;
+#endif
     s->vdev.reset = virtio_blk_reset;
-    s->bs = conf->bs;
-    s->conf = conf;
+    s->bs = blk->conf.bs;
+    s->conf = &blk->conf;
+    s->blk = blk;
     s->rq = NULL;
     s->sector_mask = (s->conf->logical_block_size / 512) - 1;
     bdrv_guess_geometry(s->bs, &cylinders, &heads, &secs);
     bdrv_set_geometry_hint(s->bs, cylinders, heads, secs);
 
-    /* NB: per existing s/n string convention the string is terminated
-     * by '\0' only when less than sizeof (s->sn)
-     */
-    dinfo = drive_get_by_blockdev(s->bs);
-    strncpy(s->sn, dinfo->serial, sizeof (s->sn));
-
     s->vq = virtio_add_queue(&s->vdev, 128, virtio_blk_handle_output);
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    if (!virtio_blk_data_plane_create(&s->vdev, blk, &s->dataplane)) {
+        virtio_cleanup(&s->vdev);
+        return NULL;
+    }
+#endif
 
     qemu_add_vm_change_state_handler(virtio_blk_dma_restart_cb, s);
     s->qdev = dev;
     register_savevm(dev, "virtio-blk", virtio_blk_id++, 2,
                     virtio_blk_save, virtio_blk_load, s);
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    if (s->dataplane) {
+        register_device_unmigratable(dev, "virtio-blk", s);
+    }
+#endif
     bdrv_set_dev_ops(s->bs, &virtio_block_ops, s);
-    s->bs->buffer_alignment = conf->logical_block_size;
+    s->bs->buffer_alignment = s->conf->logical_block_size;
 
     bdrv_iostatus_enable(s->bs);
-    add_boot_device_path(conf->bootindex, dev, "/disk@0,0");
+    add_boot_device_path(s->conf->bootindex, dev, "/disk@0,0");
 
     return &s->vdev;
 }
@@ -640,6 +698,11 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, BlockConf *conf)
 void virtio_blk_exit(VirtIODevice *vdev)
 {
     VirtIOBlock *s = to_virtio_blk(vdev);
+
+#ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
+    virtio_blk_data_plane_destroy(s->dataplane);
+    s->dataplane = NULL;
+#endif
     unregister_savevm(s->qdev, "virtio-blk", s);
     virtio_cleanup(vdev);
 }

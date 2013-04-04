@@ -57,6 +57,10 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_BASE_NOT_FOUND \
     "{ 'class': 'BaseNotFound', 'data': { 'base': %s } }"
+
+#define QERR_BASE_NOT_REACHABLE \
+    "{ 'class': 'GenericError', 'data': { 'base': %s, 'top': %s } }"
+
 #define QERR_BUS_NOT_FOUND \
     "{ 'class': 'BusNotFound', 'data': { 'bus': %s } }"
 
@@ -127,6 +131,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_INVALID_PARAMETER \
     "{ 'class': 'InvalidParameter', 'data': { 'name': %s } }"
 
+#define QERR_INVALID_PARAMETER_COMBINATION \
+    "{ 'class': 'InvalidParameterCombination', 'data': {} }"
+
 #define QERR_INVALID_PARAMETER_TYPE \
     "{ 'class': 'InvalidParameterType', 'data': { 'name': %s,'expected': %s } }"
 
@@ -164,7 +171,7 @@ QError *qobject_to_qerror(const QObject *obj);
     "{ 'class': 'NotSupported', 'data': {} }"
 
 #define QERR_OPEN_FILE_FAILED \
-    "{ 'class': 'OpenFileFailed', 'data': { 'filename': %s } }"
+    "{ 'class': 'OpenFileFailed', 'data': { 'filename': %s, '__com.redhat_error_message': %s } }"
 
 #define QERR_PROPERTY_NOT_FOUND \
     "{ 'class': 'PropertyNotFound', 'data': { 'device': %s, 'property': %s } }"
@@ -196,6 +203,17 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_TOO_MANY_FILES \
     "{ 'class': 'TooManyFiles', 'data': {} }"
 
+#define QERR_TOP_AND_BASE_IDENTICAL \
+    "{ 'class': 'GenericError', 'data': {} }"
+
+/* Note: the extra space after the '}' and before the '"' is intentional
+ *       so that it is different from QERR_TOP_AND_BASE_IDENTICAL */
+#define QERR_TOP_IS_ACTIVE \
+    "{ 'class': 'GenericError', 'data': {} } "
+
+#define QERR_TOP_NOT_FOUND \
+    "{ 'class': 'GenericError', 'data': { 'top': %s } }"
+
 #define QERR_UNDEFINED_ERROR \
     "{ 'class': 'UndefinedError', 'data': {} }"
 
@@ -213,5 +231,17 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_QGA_COMMAND_FAILED \
     "{ 'class': 'QgaCommandFailed', 'data': { 'message': %s } }"
+
+#define QERR_SOCKET_CONNECT_FAILED \
+    "{ 'class': 'SockConnectFailed', 'data': {} }"
+
+#define QERR_SOCKET_LISTEN_FAILED \
+    "{ 'class': 'SockListenFailed', 'data': {} }"
+
+#define QERR_SOCKET_BIND_FAILED \
+    "{ 'class': 'SockBindFailed', 'data': {} }"
+
+#define QERR_SOCKET_CREATE_FAILED \
+    "{ 'class': 'SockCreateFailed', 'data': {} }"
 
 #endif /* QERROR_H */

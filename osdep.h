@@ -90,6 +90,10 @@
 # define QEMU_GNUC_PREREQ(maj, min) 0
 #endif
 
+#if defined(__x86_64__)
+#define MADV_DONTDUMP 16
+#endif
+
 void *qemu_memalign(size_t alignment, size_t size);
 void *qemu_vmalloc(size_t size);
 void qemu_vfree(void *ptr);

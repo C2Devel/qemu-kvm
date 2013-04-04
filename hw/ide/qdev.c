@@ -113,7 +113,7 @@ static int ide_drive_initfn(IDEDevice *dev)
 {
     IDEBus *bus = DO_UPCAST(IDEBus, qbus, dev->qdev.parent_bus);
 
-    if (ide_init_drive(bus->ifs + dev->unit, dev->conf.bs, dev->version) < 0) {
+    if (ide_init_drive(bus->ifs + dev->unit, dev->conf.bs, dev->version, dev->wwn) < 0) {
         return -1;
     }
 
@@ -132,6 +132,7 @@ static IDEDeviceInfo ide_drive_info = {
         DEFINE_PROP_UINT32("unit", IDEDrive, dev.unit, -1),
         DEFINE_BLOCK_PROPERTIES(IDEDrive, dev.conf),
         DEFINE_PROP_STRING("ver",  IDEDrive, dev.version),
+        DEFINE_PROP_HEX64("wwn",  IDEDrive, dev.wwn, 0),
         DEFINE_PROP_END_OF_LIST(),
     }
 };

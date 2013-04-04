@@ -1969,13 +1969,13 @@ static void setup_kernel_sigmask(CPUState *env)
     kvm_set_signal_mask(env, &set);
 }
 
-static void qemu_kvm_system_reset(void)
+static void qemu_kvm_system_reset(bool report)
 {
     CPUState *penv = first_cpu;
 
     kvm_pause_all_threads();
 
-    qemu_system_reset();
+    qemu_system_reset(report);
 
     while (penv) {
         kvm_arch_cpu_reset(penv);
@@ -2023,7 +2023,7 @@ static void *ap_main_loop(void *_env)
     env->thread_id = kvm_get_thread_id();
     sigfillset(&signals);
     sigprocmask(SIG_BLOCK, &signals, NULL);
-    kvm_create_vcpu(env, env->cpu_index);
+    kvm_create_vcpu(env, kvm_arch_vcpu_id(env));
 
 #ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
     /* do ioperm for io ports of assigned devices */
@@ -2255,11 +2255,14 @@ int kvm_main_loop(void)
             monitor_protocol_event(QEVENT_POWERDOWN, NULL);
             qemu_irq_raise(qemu_system_powerdown);
         } else if (qemu_reset_requested()) {
-            qemu_kvm_system_reset();
+            qemu_kvm_system_reset(VMRESET_REPORT);
             if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
                 runstate_check(RUN_STATE_SHUTDOWN)) {
                 runstate_set(RUN_STATE_PAUSED);
             }
+        } else if (qemu_wakeup_requested()) {
+            qemu_kvm_system_reset(VMRESET_SILENT);
+            monitor_protocol_event(QEVENT_WAKEUP, NULL);
         } else if (kvm_debug_cpu_requested) {
             gdb_set_stop_cpu(kvm_debug_cpu_requested);
             vm_stop(RUN_STATE_DEBUG);

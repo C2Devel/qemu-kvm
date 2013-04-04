@@ -418,7 +418,7 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
 
     if ((buf = qemu_opt_get(opts, "cache")) != NULL) {
         if (!strcmp(buf, "off") || !strcmp(buf, "none")) {
-            bdrv_flags |= BDRV_O_NOCACHE;
+            bdrv_flags |= BDRV_O_NOCACHE | BDRV_O_CACHE_WB;
         } else if (!strcmp(buf, "writeback")) {
             bdrv_flags |= BDRV_O_CACHE_WB;
         } else if (!strcmp(buf, "unsafe")) {
@@ -769,11 +769,14 @@ void qmp___com_redhat_drive_reopen(const char *device, const char *new_image_fil
      * are in serious trouble.
      */
     if (ret != 0) {
-        ret = bdrv_open(bs, old_filename, flags, old_drv);
-        if (ret != 0) {
-            error_set(errp, QERR_OPEN_FILE_FAILED, old_filename);
+        int ret2;
+        ret2 = bdrv_open(bs, old_filename, flags, old_drv);
+        if (ret2 != 0) {
+            error_set(errp, QERR_OPEN_FILE_FAILED, old_filename,
+                      strerror(-ret2));
         } else {
-            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file);
+            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file,
+                      strerror(-ret));
         }
     }
 }
@@ -992,7 +995,8 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
         }
 
         if (ret) {
-            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file);
+            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file,
+                      strerror(-ret));
             goto delete_and_fail;
         }
 
@@ -1022,7 +1026,8 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
         }
 
         if (ret != 0) {
-            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file);
+            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file,
+                      strerror(-ret));
             goto delete_and_fail;
         }
     }
@@ -1035,6 +1040,11 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
         case BLOCKDEV_ACTION_KIND_BLOCKDEV_SNAPSHOT_SYNC:
             /* This removes our old bs from the bdrv_states, and adds the new bs */
             bdrv_append(states->new_bs, states->old_bs);
+            /* We don't need (or want) to use the transactional
+             * bdrv_reopen_multiple() across all the entries at once, because we
+             * don't want to abort all of them if one of them fails the reopen */
+            bdrv_reopen(states->new_bs, states->new_bs->open_flags & ~BDRV_O_RDWR,
+                        NULL);
             break;
 
         case BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR:
@@ -1147,6 +1157,7 @@ int do_change_block(Monitor *mon, const char *device,
     BlockDriverState *bs;
     BlockDriver *drv = NULL;
     int bdrv_flags;
+    int ret;
 
     bs = bdrv_find(device);
     if (!bs) {
@@ -1165,8 +1176,9 @@ int do_change_block(Monitor *mon, const char *device,
     }
     bdrv_flags = bdrv_get_type_hint(bs) == BDRV_TYPE_CDROM ? 0 : BDRV_O_RDWR;
     bdrv_flags |= bdrv_is_snapshot(bs) ? BDRV_O_SNAPSHOT : 0;
-    if (bdrv_open(bs, filename, bdrv_flags, drv)) {
-        qerror_report(QERR_OPEN_FILE_FAILED, filename);
+    ret = bdrv_open(bs, filename, bdrv_flags, drv);
+    if (ret < 0) {
+        qerror_report(QERR_OPEN_FILE_FAILED, filename, strerror(-ret));
         return -1;
     }
     return monitor_read_bdrv_key_start(mon, bs, NULL, NULL);
@@ -1327,6 +1339,67 @@ int do_block_stream(Monitor *mon, const QDict *params, QObject **ret_data)
     trace_do_block_stream(bs, bs->job);
     return 0;
 }
+
+#ifdef CONFIG_LIVE_SNAPSHOTS
+void qmp___com_redhat_block_commit(const char *device,
+                      bool has_base, const char *base, const char *top,
+                      bool has_speed, int64_t speed,
+                      Error **errp)
+{
+    BlockDriverState *bs;
+    BlockDriverState *base_bs, *top_bs;
+    Error *local_err = NULL;
+    /* This will be part of the QMP command, if/when the
+     * BlockdevOnError change for blkmirror makes it in
+     */
+    BlockErrorAction on_error = BLOCK_ERR_REPORT;
+
+    /* drain all i/o before commits */
+    bdrv_drain_all();
+
+    bs = bdrv_find(device);
+    if (!bs) {
+        error_set(errp, QERR_DEVICE_NOT_FOUND, device);
+        return;
+    }
+
+    /* default top_bs is the active layer */
+    top_bs = bs;
+
+    if (top) {
+        if (strcmp(bs->filename, top) != 0) {
+            top_bs = bdrv_find_backing_image(bs, top);
+        }
+    }
+
+    if (top_bs == NULL) {
+        error_set(errp, QERR_TOP_NOT_FOUND, top ? top : "NULL");
+        return;
+    }
+
+    if (has_base && base) {
+        base_bs = bdrv_find_backing_image(top_bs, base);
+    } else {
+        base_bs = bdrv_find_base(top_bs);
+    }
+
+    if (base_bs == NULL) {
+        error_set(errp, QERR_BASE_NOT_FOUND, base ? base : "NULL");
+        return;
+    }
+
+    commit_start(bs, base_bs, top_bs, speed, on_error, block_job_cb, bs,
+                &local_err);
+    if (local_err != NULL) {
+        error_propagate(errp, local_err);
+        return;
+    }
+    /* Grab a reference so hotplug does not delete the BlockDriverState from
+     * underneath us.
+     */
+    drive_get_ref(drive_get_by_blockdev(bs));
+}
+#endif
 
 static BlockJob *find_block_job(const char *device)
 {

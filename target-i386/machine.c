@@ -419,6 +419,61 @@ static const VMStateDescription vmstate_xsave ={
     }
 };
 
+static bool pv_eoi_msr_needed(void *opaque)
+{
+    CPUState *cpu = opaque;
+
+    return cpu->pv_eoi_en_msr != 0;
+}
+
+static const VMStateDescription vmstate_pv_eoi_msr = {
+    .name = "cpu/async_pv_eoi_msr",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(pv_eoi_en_msr, CPUX86State),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool tscdeadline_needed(void *opaque)
+{
+    CPUState *env = opaque;
+
+    return env->tsc_deadline != 0;
+}
+
+static const VMStateDescription vmstate_msr_tscdeadline = {
+    .name = "cpu/msr_tscdeadline",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(tsc_deadline, CPUState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static bool hyperv_hypercall_needed(void *opaque)
+{
+    CPUState *env = opaque;
+
+    return env->hyperv_guest_os_id != 0;
+}
+
+static const VMStateDescription vmstate_msr_hyperv_hypercall = {
+    .name = "cpu/msr_hyperv_hypercall",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(hyperv_guest_os_id, CPUState),
+        VMSTATE_UINT64(hyperv_hypercall, CPUState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_cpu = {
     .name = "cpu",
     .version_id = CPU_SAVE_VERSION,
@@ -520,7 +575,7 @@ static const VMStateDescription vmstate_cpu = {
         /* The above list is not sorted /wrt version numbers, watch out! */
     },
     /*
-       Put the XSAVE state in a sub-section to allow compatibility with
+       Put the XSAVE/PV_EOI state in sub-sections to allow compatibility with
 	older save files.
      */
     .subsections = (VMStateSubsection []) {
@@ -528,6 +583,15 @@ static const VMStateDescription vmstate_cpu = {
 	    .vmsd = &vmstate_xsave,
 	    .needed = vmstate_xsave_needed,
 	}, {
+            .vmsd = &vmstate_pv_eoi_msr,
+            .needed = pv_eoi_msr_needed,
+        }, {
+            .vmsd = &vmstate_msr_tscdeadline,
+            .needed = tscdeadline_needed,
+        }, {
+            .vmsd = &vmstate_msr_hyperv_hypercall,
+            .needed = hyperv_hypercall_needed,
+        }, {
 	    /* empty */
 	}
     }
