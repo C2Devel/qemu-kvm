@@ -136,7 +136,7 @@ Version: %{rpmversion}
 Release: %{full_release}
 # Before this release it was %(date +%s) for CROC packages - stop epoch
 # incrementing.
-Epoch: 1361370041
+Epoch: 1366118257
 License: GPLv2+ and LGPLv2+ and BSD
 Group: Development/Tools
 URL: http://www.linux-kvm.org
