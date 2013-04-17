@@ -47,6 +47,7 @@ typedef enum MonitorEvent {
     QEVENT_SUSPEND,
     QEVENT_WAKEUP,
     QEVENT_BALLOON_CHANGE,
+    QEVENT_INCOMING_FINISHED,
 
     /* Add to 'monitor_event_names' array in monitor.c when
      * defining new events here */
