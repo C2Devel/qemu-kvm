@@ -89,7 +89,7 @@
 # by setting the define to ".local" or ".bz123456"
 
 %define zrelease 2
-%define buildid .CROC1
+%define buildid .CROC2
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.355
@@ -9794,6 +9794,9 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Thu Apr 18 2013 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.355.el6.2.CROC2
+- Updated CROC.patch
+
 * Thu Apr 04 2013 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.355.el6.2.CROC1
 - Added CROC.patch
 
