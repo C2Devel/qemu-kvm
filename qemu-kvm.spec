@@ -62,7 +62,7 @@
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.295
-%define zrelease 10.CROC1
+%define zrelease 10.CROC2
 
 %define rpmversion %{sublevel}
 %define full_release %{pkgrelease}%{?dist}%{?buildid}.%{?zrelease}
@@ -8284,6 +8284,9 @@ fi
 %{_mandir}/man1/qemu-img.1*
 
 %changelog
+* Thu Apr 18 2013 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.295.el6.10.CROC2
+- Updated CROC.patch
+
 * Wed Feb 20 2013 Dmitry Konishchev <konishchev@gmail.com> - qemu-kvm-0.12.1.2-2.295.el6.10.CROC1
 - Added CROC.patch
 
