@@ -258,6 +258,10 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "An undefined error has ocurred",
     },
     {
+        .error_fmt = QERR_GENERIC_ERROR,
+        .desc      = "%(message)",
+    },
+    {
         .error_fmt = QERR_UNSUPPORTED,
         .desc      = "this feature or command is not currently supported",
     },
