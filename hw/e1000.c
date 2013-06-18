@@ -166,8 +166,14 @@ e1000_link_up(E1000State *s)
 static void
 set_phy_ctrl(E1000State *s, int index, uint16_t val)
 {
+    /* RHEL 6.3 does not support link auto-negotiation emulation, so if we
+     * migrate during auto negotiation, after migration the link will be
+     * down. */
+    if (s->compat_flags & E1000_FLAG_RHEL630) {
+        return;
+    }
+
     if ((val & MII_CR_AUTO_NEG_EN) && (val & MII_CR_RESTART_AUTO_NEG)) {
-        s->nic->nc.link_down = true;
         e1000_link_down(s);
         s->phy_reg[PHY_STATUS] &= ~MII_SR_AUTONEG_COMPLETE;
         DBGOUT(PHY, "Start link auto negotiation\n");
@@ -179,8 +185,9 @@ static void
 e1000_autoneg_timer(void *opaque)
 {
     E1000State *s = opaque;
-    s->nic->nc.link_down = false;
-    e1000_link_up(s);
+    if (!s->nic->nc.link_down) {
+        e1000_link_up(s);
+    }
     s->phy_reg[PHY_STATUS] |= MII_SR_AUTONEG_COMPLETE;
     DBGOUT(PHY, "Auto negotiation is completed\n");
 }
@@ -751,7 +758,8 @@ e1000_can_receive(VLANClientState *nc)
 {
     E1000State *s = DO_UPCAST(NICState, nc, nc)->opaque;
 
-    return (s->mac_reg[RCTL] & E1000_RCTL_EN) && e1000_has_rxbufs(s, 1);
+    return (s->mac_reg[STATUS] & E1000_STATUS_LU) &&
+        (s->mac_reg[RCTL] & E1000_RCTL_EN) && e1000_has_rxbufs(s, 1);
 }
 
 static ssize_t
@@ -768,8 +776,13 @@ e1000_receive(VLANClientState *nc, const uint8_t *buf, size_t size)
     size_t desc_size;
     uint8_t min_buf[MIN_BUF_SIZE];
 
-    if (!(s->mac_reg[RCTL] & E1000_RCTL_EN))
+    if (!(s->mac_reg[STATUS] & E1000_STATUS_LU)) {
         return -1;
+    }
+
+    if (!(s->mac_reg[RCTL] & E1000_RCTL_EN)) {
+        return -1;
+    }
 
     /* Pad to minimum Ethernet frame length */
     if (size < sizeof(min_buf)) {
@@ -1062,13 +1075,45 @@ static bool is_version_1(void *opaque, int version_id)
     return version_id == 1;
 }
 
+static void e1000_pre_save(void *opaque)
+{
+    E1000State *s = opaque;
+
+    if (s->compat_flags & E1000_FLAG_RHEL630) {
+        return;
+    }
+
+    /*
+     * If link is down and auto-negotiation is ongoing, complete
+     * auto-negotiation immediately.  This allows is to look at
+     * MII_SR_AUTONEG_COMPLETE to infer link status on load.
+     */
+    if (s->nic->nc.link_down &&
+        s->phy_reg[PHY_CTRL] & MII_CR_AUTO_NEG_EN &&
+        s->phy_reg[PHY_CTRL] & MII_CR_RESTART_AUTO_NEG) {
+         s->phy_reg[PHY_STATUS] |= MII_SR_AUTONEG_COMPLETE;
+    }
+}
+
 static int e1000_post_load(void *opaque, int version_id)
 {
     E1000State *s = opaque;
 
     /* nc.link_down can't be migrated, so infer link_down according
-     * to link status bit in mac_reg[STATUS] */
+     * to link status bit in mac_reg[STATUS].
+     * Alternatively, restart link negotiation if it was in progress. */
     s->nic->nc.link_down = (s->mac_reg[STATUS] & E1000_STATUS_LU) == 0;
+
+    if (s->compat_flags & E1000_FLAG_RHEL630) {
+        return 0;
+    }
+
+    if (s->phy_reg[PHY_CTRL] & MII_CR_AUTO_NEG_EN &&
+        s->phy_reg[PHY_CTRL] & MII_CR_RESTART_AUTO_NEG &&
+        !(s->phy_reg[PHY_STATUS] & MII_SR_AUTONEG_COMPLETE)) {
+        s->nic->nc.link_down = false;
+        qemu_mod_timer(s->autoneg_timer, qemu_get_clock(vm_clock) + 500000000);
+    }
 
     return 0;
 }
@@ -1078,6 +1123,7 @@ static const VMStateDescription vmstate_e1000 = {
     .version_id = 2,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
+    .pre_save = e1000_pre_save,
     .post_load = e1000_post_load,
     .fields      = (VMStateField []) {
         VMSTATE_PCI_DEVICE(dev, E1000State),

@@ -88,7 +88,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define zrelease 2
+%define zrelease 5
 %define buildid %{nil}
 
 %define sublevel 0.12.1.2
@@ -6407,6 +6407,24 @@ Patch3873: kvm-Revert-e1000-no-need-auto-negotiation-if-link-was-do.patch
 Patch3874: kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch
 # For bz#910842 - CVE-2012-6075  qemu (e1000 device driver): Buffer overflow when processing large packets when SBP and LPE flags are disabled [rhel-6.5]
 Patch3875: kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch
+# For bz#929105 - [RHEL6.4] [regression] qemu-kvm does not enable ioeventfd
+Patch3876: kvm-Fix-regression-introduced-by-machine-accel.patch
+# For bz#958750 - QMP event shows incorrect balloon value when balloon size is grater than or equal to 4G
+Patch3877: kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch
+# For bz#907716 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
+# For bz#927591 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
+Patch3878: kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch
+# For bz#907716 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
+# For bz#927591 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
+Patch3879: kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch
+# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
+Patch3880: kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch
+# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
+Patch3881: kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch
+# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
+Patch3882: kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch
+# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
+Patch3883: kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -9427,6 +9445,14 @@ ApplyOptionalPatch()
 %patch3873 -p1
 %patch3874 -p1
 %patch3875 -p1
+%patch3876 -p1
+%patch3877 -p1
+%patch3878 -p1
+%patch3879 -p1
+%patch3880 -p1
+%patch3881 -p1
+%patch3882 -p1
+%patch3883 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -9785,6 +9811,28 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Thu May 23 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.5
+- kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch [bz#907716]
+- kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch [bz#907716]
+- kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch [bz#957056]
+- kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch [bz#957056]
+- kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch [bz#957056]
+- kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch [bz#957056]
+- Resolves: bz#907716
+  (use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest)
+- Resolves: bz#957056
+  (CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z])
+
+* Fri May 03 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.4
+- kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch [bz#958750]
+- Resolves: bz#958750
+  (QMP event shows incorrect balloon value when balloon size is grater than or equal to 4G)
+
+* Wed Apr 10 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.3
+- kvm-Fix-regression-introduced-by-machine-accel.patch [bz#929105]
+- Resolves: bz#929105
+  ([RHEL6.4] [regression] qemu-kvm does not enable ioeventfd)
+
 * Thu Feb 28 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.2
 - kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch [bz#910841]
 - kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch [bz#910841]

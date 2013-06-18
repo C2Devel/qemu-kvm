@@ -217,6 +217,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_UNDEFINED_ERROR \
     "{ 'class': 'UndefinedError', 'data': {} }"
 
+#define QERR_GENERIC_ERROR \
+    "{ 'class': 'GenericError', 'data': { 'message': %s } }"
+
 #define QERR_UNSUPPORTED \
     "{ 'class': 'Unsupported', 'data': {} }"
 

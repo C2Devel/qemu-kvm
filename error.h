@@ -21,11 +21,20 @@
 typedef struct Error Error;
 
 /**
- * Set an indirect pointer to an error given a printf-style format parameter.
- * Currently, qerror.h defines these error formats.  This function is not
- * meant to be used outside of QEMU.
+ * Set an indirect pointer to an error given a printf-style JSON format
+ * parameter. Currently, qerror.h defines these error formats.  This function
+ * is not meant to be used outside of QEMU.
  */
 void error_set(Error **err, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+
+/**
+ * Wrapper functions for error_set(): the format string is raw printf-style,
+ * and the output is always flattened into a QERR_GENERIC_ERROR.
+ */
+void error_setg_errno(Error **errp, int os_errno, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+void error_setg(Error **errp, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
 /**

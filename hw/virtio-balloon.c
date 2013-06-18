@@ -199,7 +199,7 @@ static void virtio_balloon_set_config(VirtIODevice *vdev,
     dev->actual = config.actual;
     if (dev->actual != oldactual) {
         qemu_balloon_changed(ram_size -
-                             (dev->actual << VIRTIO_BALLOON_PFN_SHIFT));
+                       ((ram_addr_t) dev->actual << VIRTIO_BALLOON_PFN_SHIFT));
     }
 }
 

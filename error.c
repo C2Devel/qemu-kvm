@@ -14,6 +14,7 @@
 #include "qemu-objects.h"
 #include "qerror.h"
 #include <assert.h>
+#include <string.h>
 
 struct Error
 {
@@ -39,6 +40,48 @@ void error_set(Error **errp, const char *fmt, ...)
     err->fmt = fmt;
 
     *errp = err;
+}
+
+/* RHEL-6 note:
+ *
+ * The following function, error_vsetg_errno(), and the implementation of
+ * error_setg_errno() and error_setg() below, are RHEL-6 only compatibility
+ * code. The RHEL-6 Error object is incompatible with that of upstream, but the
+ * structure is not externally visible.
+ */
+static void error_vsetg_errno(Error **errp, int os_errno, const char *fmt,
+                              va_list ap)
+{
+    char *msg;
+
+    msg = g_strdup_vprintf(fmt, ap);
+    if (os_errno != 0) {
+        char *msg2;
+
+        msg2 = g_strdup_printf("%s: %s", msg, strerror(os_errno));
+        free(msg);
+        msg = msg2;
+    }
+    error_set(errp, QERR_GENERIC_ERROR, msg);
+    free(msg);
+}
+
+void error_setg_errno(Error **errp, int os_errno, const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    error_vsetg_errno(errp, os_errno, fmt, ap);
+    va_end(ap);
+}
+
+void error_setg(Error **errp, const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    error_vsetg_errno(errp, 0, fmt, ap);
+    va_end(ap);
 }
 
 bool error_is_set(Error **errp)
