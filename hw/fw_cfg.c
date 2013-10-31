@@ -387,3 +387,17 @@ FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
 
     return s;
 }
+
+static FWCfgState *global_fw_config;
+
+void fw_set_global(FWCfgState *f)
+{
+    g_assert(f != NULL);
+    g_assert(global_fw_config == NULL);
+    global_fw_config = f;
+}
+
+FWCfgState *fw_get_global(void)
+{
+    return global_fw_config;
+}

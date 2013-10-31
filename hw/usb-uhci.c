@@ -169,6 +169,8 @@ typedef struct UHCI_QH {
     uint32_t el_link;
 } UHCI_QH;
 
+static void uhci_resume (void *opaque);
+
 static UHCIAsync *uhci_async_alloc(UHCIState *s)
 {
     UHCIAsync *async = qemu_malloc(sizeof(UHCIAsync));
@@ -458,6 +460,12 @@ static void uhci_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
             return;
         }
         s->cmd = val;
+        if (val & UHCI_CMD_EGSM) {
+            if ((s->ports[0].ctrl & UHCI_PORT_RD) ||
+                (s->ports[1].ctrl & UHCI_PORT_RD)) {
+                uhci_resume(s);
+            }
+        }
         break;
     case 0x02:
         s->status &= ~val;
@@ -494,6 +502,10 @@ static void uhci_ioport_writew(void *opaque, uint32_t addr, uint32_t val)
                 }
             }
             port->ctrl &= UHCI_PORT_READ_ONLY;
+            /* enabled may only be set if a device is connected */
+            if (!(port->ctrl & UHCI_PORT_CCS)) {
+                val &= ~UHCI_PORT_EN;
+            }
             port->ctrl |= (val & ~UHCI_PORT_READ_ONLY);
             /* some bits are reset when a '1' is written to them */
             port->ctrl &= ~(val & UHCI_PORT_WRITE_CLEAR);
@@ -1249,30 +1261,35 @@ static PCIDeviceInfo uhci_info[] = {
         .qdev.name    = "piix3-usb-uhci",
         .qdev.size    = sizeof(UHCIState),
         .qdev.vmsd    = &vmstate_uhci,
+        .no_hotplug   = 1,
         .init         = usb_uhci_piix3_initfn,
         .qdev.props   = uhci_properties,
     },{
         .qdev.name    = "piix4-usb-uhci",
         .qdev.size    = sizeof(UHCIState),
         .qdev.vmsd    = &vmstate_uhci,
+        .no_hotplug   = 1,
         .init         = usb_uhci_piix4_initfn,
         .qdev.props   = uhci_properties,
     },{
         .qdev.name    = "ich9-usb-uhci1",
         .qdev.size    = sizeof(UHCIState),
         .qdev.vmsd    = &vmstate_uhci,
+        .no_hotplug   = 1,
         .init         = usb_uhci_ich9_1_initfn,
         .qdev.props   = uhci_properties,
     },{
         .qdev.name    = "ich9-usb-uhci2",
         .qdev.size    = sizeof(UHCIState),
         .qdev.vmsd    = &vmstate_uhci,
+        .no_hotplug   = 1,
         .init         = usb_uhci_ich9_2_initfn,
         .qdev.props   = uhci_properties,
     },{
         .qdev.name    = "ich9-usb-uhci3",
         .qdev.size    = sizeof(UHCIState),
         .qdev.vmsd    = &vmstate_uhci,
+        .no_hotplug   = 1,
         .init         = usb_uhci_ich9_3_initfn,
         .qdev.props   = uhci_properties,
     },{

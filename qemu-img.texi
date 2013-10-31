@@ -70,9 +70,15 @@ lists all snapshots in the given image
 Command description:
 
 @table @option
-@item check [-f @var{fmt}] @var{filename}
+@item check [-f @var{fmt}] [--output=@var{ofmt}] [-r [leaks | all]] @var{filename}
 
-Perform a consistency check on the disk image @var{filename}.
+Perform a consistency check on the disk image @var{filename}. The command can
+output in the format @var{ofmt} which is either @code{human} or @code{json}.
+
+If @code{-r} is specified, qemu-img tries to repair any inconsistencies found
+during the check. @code{-r leaks} repairs only cluster leaks, whereas
+@code{-r all} fixes all kinds of errors, with a higher risk of choosing the
+wrong fix or hiding corruption that has already occured.
 
 Only the formats @code{qcow2}, @code{qed} and @code{vdi} support
 consistency checks.
@@ -132,7 +138,9 @@ Changes the backing file of an image. Only the formats @code{qcow2} and
 
 The backing file is changed to @var{backing_file} and (if the image format of
 @var{filename} supports this) the backing file format is changed to
-@var{backing_fmt}.
+@var{backing_fmt}. If @var{backing_file} is specified as ``'' (the empty
+string), then the image is rebased onto no backing file (i.e. it will exist
+independently of any backing file).
 
 There are two different modes in which @code{rebase} can operate:
 @table @option
@@ -183,12 +191,6 @@ file system supports @emph{holes} (for example in ext2 or ext3 on
 Linux or NTFS on Windows), then only the written sectors will reserve
 space. Use @code{qemu-img info} to know the real size used by the
 image or @code{ls -ls} on Unix/Linux.
-
-@item host_device
-
-Host device format. This format should be used instead of raw when
-converting to block devices or other devices where "holes" are not
-supported.
 
 @item qcow2
 QEMU image format, the most versatile format. Use it to have smaller

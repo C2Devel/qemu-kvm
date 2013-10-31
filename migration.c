@@ -20,6 +20,7 @@
 #include "qemu_socket.h"
 #include "block-migration.h"
 #include "qemu-objects.h"
+#include "trace.h"
 
 //#define DEBUG_MIGRATION
 
@@ -89,6 +90,18 @@ void process_incoming_migration(QEMUFile *f)
     }
 }
 
+static GSList *migration_blockers;
+
+void migrate_add_blocker(Error *reason)
+{
+    migration_blockers = g_slist_prepend(migration_blockers, reason);
+}
+
+void migrate_del_blocker(Error *reason)
+{
+    migration_blockers = g_slist_remove(migration_blockers, reason);
+}
+
 int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     MigrationState *s = NULL;
@@ -98,6 +111,7 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
     int blk = qdict_get_try_bool_or_int(qdict, "blk", 0);
     int inc = qdict_get_try_bool_or_int(qdict, "inc", 0);
     const char *uri = qdict_get_str(qdict, "uri");
+    int64_t start_time ;
 
     if (current_migration &&
         current_migration->get_status(current_migration) == MIG_STATE_ACTIVE) {
@@ -109,7 +123,15 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
         return -1;
     }
 
+    if (migration_blockers) {
+        Error *err = migration_blockers->data;
+        qerror_report_err(err);
+        return -1;
+    }
+
     START_MIGRATION_CLOCK();
+    start_time = qemu_get_clock(rt_clock);
+
     if (strstart(uri, "tcp:", &p)) {
         s = tcp_start_outgoing_migration(mon, p, max_throttle, detach,
                                          blk, inc, &errp);
@@ -144,6 +166,7 @@ int do_migrate(Monitor *mon, const QDict *qdict, QObject **ret_data)
         current_migration->release(current_migration);
     }
 
+    s->total_time = start_time;
     current_migration = s;
     notifier_list_notify(&migration_state_notifiers, NULL);
     return 0;
@@ -226,6 +249,16 @@ void do_info_migrate_print(Monitor *mon, const QObject *data)
     monitor_printf(mon, "Migration status: %s\n",
                    qdict_get_str(qdict, "status"));
 
+    if (qdict_haskey(qdict, "total-time")) {
+        monitor_printf(mon, "total time: %" PRIu64 " milliseconds\n",
+                       qdict_get_int(qdict, "total-time"));
+    }
+
+    if (qdict_haskey(qdict, "downtime")) {
+        monitor_printf(mon, "downtime: %" PRIu64 " milliseconds\n",
+                       qdict_get_int(qdict, "downtime"));
+    }
+
     if (qdict_haskey(qdict, "ram")) {
         migrate_print_status(mon, "ram", qdict);
     }
@@ -257,6 +290,10 @@ void do_info_migrate(Monitor *mon, QObject **ret_data)
             qdict = qdict_new();
             qdict_put(qdict, "status", qstring_from_str("active"));
 
+            qdict_put(qdict, "total-time",
+                      qint_from_int(qemu_get_clock(rt_clock) -
+                                    s->total_time));
+
             migrate_put_status(qdict, "ram", ram_bytes_transferred(),
                                ram_bytes_remaining(), ram_bytes_total());
 
@@ -269,7 +306,20 @@ void do_info_migrate(Monitor *mon, QObject **ret_data)
             *ret_data = QOBJECT(qdict);
             break;
         case MIG_STATE_COMPLETED:
-            *ret_data = qobject_from_jsonf("{ 'status': 'completed' }");
+            qdict = qdict_new();
+            qdict_put(qdict, "status", qstring_from_str("completed"));
+
+            qdict_put(qdict, "total-time",
+                      qint_from_int(s->total_time));
+
+            qdict_put(qdict, "downtime",
+                      qint_from_int(s->downtime));
+
+            migrate_put_status(qdict, "ram", ram_bytes_transferred(),
+                               ram_bytes_remaining(),
+                               ram_bytes_total());
+
+            *ret_data = QOBJECT(qdict);
             break;
         case MIG_STATE_ERROR:
             *ret_data = qobject_from_jsonf("{ 'status': 'failed' }");
@@ -298,6 +348,7 @@ void migrate_fd_error(FdMigrationState *s)
 {
     DPRINTF("setting error state\n");
     s->state = MIG_STATE_ERROR;
+    trace_migrate_set_state(MIG_STATE_ERROR);
     migrate_fd_cleanup(s);
     notifier_list_notify(&migration_state_notifiers, NULL);
 }
@@ -315,6 +366,7 @@ int migrate_fd_cleanup(FdMigrationState *s)
         if (qemu_fclose(s->file) != 0) {
             ret = -1;
             s->state = MIG_STATE_ERROR;
+            trace_migrate_set_state(MIG_STATE_ERROR);
         }
         s->file = NULL;
     } else {
@@ -404,6 +456,7 @@ void migrate_fd_put_ready(void *opaque)
         migrate_fd_error(s);
     } else if (ret == 1) {
         int old_vm_running = runstate_is_running();
+        int64_t start_time = qemu_get_clock(rt_clock);
 
         DPRINTF("done iterating\n");
         qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
@@ -416,6 +469,7 @@ void migrate_fd_put_ready(void *opaque)
                 vm_start();
             }
             s->state = MIG_STATE_ERROR;
+            trace_migrate_set_state(MIG_STATE_ERROR);
         }
 	STOP_MIGRATION_CLOCK();
 	DPRINTF("ended after %lu milliseconds\n", stop);
@@ -425,10 +479,16 @@ void migrate_fd_put_ready(void *opaque)
                 vm_start();
             }
             s->state = MIG_STATE_ERROR;
+            trace_migrate_set_state(MIG_STATE_ERROR);
         }
         if (s->state == MIG_STATE_ACTIVE) {
+            int64_t end_time = qemu_get_clock(rt_clock);
+
             s->state = MIG_STATE_COMPLETED;
+            trace_migrate_set_state(MIG_STATE_COMPLETED);
             runstate_set(RUN_STATE_POSTMIGRATE);
+            s->mig_state.total_time = end_time - s->mig_state.total_time;
+            s->mig_state.downtime = end_time - start_time;
         }
         notifier_list_notify(&migration_state_notifiers, NULL);
     }
@@ -450,6 +510,7 @@ void migrate_fd_cancel(MigrationState *mig_state)
     DPRINTF("cancelling migration\n");
 
     s->state = MIG_STATE_CANCELLED;
+    trace_migrate_set_state(MIG_STATE_CANCELLED);
     qemu_savevm_state_cancel(s->mon, s->file);
     migrate_fd_cleanup(s);
     notifier_list_notify(&migration_state_notifiers, NULL);
@@ -463,6 +524,7 @@ void migrate_fd_release(MigrationState *mig_state)
    
     if (s->state == MIG_STATE_ACTIVE) {
         s->state = MIG_STATE_CANCELLED;
+        trace_migrate_set_state(MIG_STATE_CANCELLED);
         migrate_fd_cleanup(s);
         notifier_list_notify(&migration_state_notifiers, NULL);
     }

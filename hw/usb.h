@@ -266,6 +266,7 @@ typedef struct USBPortOps {
 struct USBPort {
     USBDevice *dev;
     int speedmask;
+    int hubcount;
     char path[16];
     USBPortOps *ops;
     void *opaque;

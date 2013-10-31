@@ -34,6 +34,7 @@ typedef struct VirtIOBlock
     VirtIOBlkConf *blk;
     unsigned short sector_mask;
     DeviceState *qdev;
+    VMChangeStateEntry *change;
 #ifdef CONFIG_VIRTIO_BLK_DATA_PLANE
     VirtIOBlockDataPlane *dataplane;
 #endif
@@ -677,7 +678,7 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, VirtIOBlkConf *blk)
     }
 #endif
 
-    qemu_add_vm_change_state_handler(virtio_blk_dma_restart_cb, s);
+    s->change = qemu_add_vm_change_state_handler(virtio_blk_dma_restart_cb, s);
     s->qdev = dev;
     register_savevm(dev, "virtio-blk", virtio_blk_id++, 2,
                     virtio_blk_save, virtio_blk_load, s);
@@ -703,6 +704,7 @@ void virtio_blk_exit(VirtIODevice *vdev)
     virtio_blk_data_plane_destroy(s->dataplane);
     s->dataplane = NULL;
 #endif
+    qemu_del_vm_change_state_handler(s->change);
     unregister_savevm(s->qdev, "virtio-blk", s);
     virtio_cleanup(vdev);
 }

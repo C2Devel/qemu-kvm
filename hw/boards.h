@@ -25,7 +25,8 @@ typedef struct QEMUMachine {
         no_vga:1,
         no_floppy:1,
         no_cdrom:1,
-        no_sdcard:1;
+        no_sdcard:1,
+        no_mixemu:1;
     int is_default;
     GlobalProperty *compat_props;
     struct QEMUMachine *next;

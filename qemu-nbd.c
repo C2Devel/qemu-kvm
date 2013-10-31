@@ -329,8 +329,6 @@ int main(int argc, char **argv)
     bdrv_init();
 
     bs = bdrv_new("hda");
-    if (bs == NULL)
-        return 1;
 
     if (bdrv_open(bs, argv[optind], flags, NULL) < 0)
         return 1;

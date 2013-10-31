@@ -16,6 +16,8 @@
 #include "qemu-timer.h"
 #include "trace.h"
 #include "qed.h"
+#include "qerror.h"
+#include "migration.h"
 
 static void qed_aio_cancel(BlockDriverAIOCB *blockacb)
 {
@@ -473,7 +475,7 @@ static int bdrv_qed_open(BlockDriverState *bs, int flags)
     }
 
     /* If image was not closed cleanly, check consistency */
-    if (s->header.features & QED_F_NEED_CHECK) {
+    if (!(flags & BDRV_O_CHECK) && (s->header.features & QED_F_NEED_CHECK)) {
         /* Read-only images cannot be fixed.  There is no risk of corruption
          * since write operations are not possible.  Therefore, allow
          * potentially inconsistent images to be opened read-only.  This can
@@ -1533,11 +1535,12 @@ static int bdrv_qed_change_backing_file(BlockDriverState *bs,
     return ret;
 }
 
-static int bdrv_qed_check(BlockDriverState *bs, BdrvCheckResult *result)
+static int bdrv_qed_check(BlockDriverState *bs, BdrvCheckResult *result,
+                          BdrvCheckMode fix)
 {
     BDRVQEDState *s = bs->opaque;
 
-    return qed_check(s, result, false);
+    return qed_check(s, result, !!fix);
 }
 
 static QEMUOptionParameter qed_create_options[] = {

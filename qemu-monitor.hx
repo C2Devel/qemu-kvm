@@ -177,6 +177,8 @@ Remove host block device.  The result is that guest generated IO is no longer
 submitted against the host device underlying the disk.  Once a drive has
 been deleted, the QEMU Block layer returns -EIO which results in IO
 errors in the guest for applications that are reading/writing to the device.
+These errors are always reported to the guest, regardless of the drive's error
+actions (drive options rerror, werror).
 ETEXI
 SQMP
 __com.redhat_drive_del
@@ -187,6 +189,8 @@ Remove host block device.  The result is that guest generated IO is no longer
 submitted against the host device underlying the disk.  Once a drive has
 been deleted, the QEMU Block layer returns -EIO which results in IO
 errors in the guest for applications that are reading/writing to the device.
+These errors are always reported to the guest, regardless of the drive's error
+actions (drive options rerror, werror).
 
 Arguments:
 
@@ -1549,7 +1553,7 @@ ETEXI
 #ifdef CONFIG_LIVE_SNAPSHOTS
     {
         .name       = "transaction",
-        .args_type  = "actions:O",
+        .args_type  = "actions:q",
         .user_print = monitor_user_noop,
         .mhandler.cmd_new = qmp_marshal_input_transaction,
     },
@@ -1997,6 +2001,22 @@ Example:
 
 EQMP
 
+STEXI
+@item block_set_io_throttle @var{device} @var{bps} @var{bps_rd} @var{bps_wr} @var{iops} @var{iops_rd} @var{iops_wr}
+@findex block_set_io_throttle
+Change I/O throttle limits for a block drive to @var{bps} @var{bps_rd} @var{bps_wr} @var{iops} @var{iops_rd} @var{iops_wr}
+ETEXI
+
+#ifdef CONFIG_BLOCK_IO_THROTTLING
+    {
+        .name       = "block_set_io_throttle",
+        .args_type  = "device:B,bps:l,bps_rd:l,bps_wr:l,iops:l,iops_rd:l,iops_wr:l",
+        .params     = "device bps bps_rd bps_wr iops iops_rd iops_wr",
+        .help       = "change I/O throttle limits for a block drive",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = do_block_set_io_throttle,
+    },
+#endif
     {
         .name       = "cpu_set",
         .args_type  = "cpu:i,state:s",
@@ -2359,6 +2379,67 @@ If streaming is not active on this device, DeviceNotActive
 If cancellation already in progress, DeviceInUse
 EQMP
 
+    {
+        .name       = "chardev-add",
+        .args_type  = "id:s,backend:q",
+        .params     = "id backend",
+        .help       = "add chardev backend",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_chardev_add,
+    },
+
+SQMP
+chardev-add
+-----------
+
+Add a chardev.
+
+Arguments:
+
+- "id": the chardev's ID, must be unique (json-string)
+- "backend": chardev backend type + parameters
+
+Example:
+
+-> { "execute" : "chardev-add",
+     "arguments" : { "id" : "foo",
+                     "backend" : { "type" : "null", "data" : {} } } }
+<- { "return": {} }
+
+-> { "execute" : "chardev-add",
+     "arguments" : { "id" : "baz",
+                     "backend" : { "type" : "pty", "data" : {} } } }
+<- { "return": { "pty" : "/dev/pty/42" } }
+
+EQMP
+
+    {
+        .name       = "chardev-remove",
+        .args_type  = "id:s",
+        .params     = "id",
+        .help       = "remove chardev backend",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_chardev_remove,
+    },
+
+
+SQMP
+chardev-remove
+--------------
+
+Remove a chardev.
+
+Arguments:
+
+- "id": the chardev's ID, must exist and not be in use (json-string)
+
+Example:
+
+-> { "execute": "chardev-remove", "arguments": { "id" : "foo" } }
+<- { "return": {} }
+
+EQMP
+
 HXCOMM Keep the 'info' command at the end!
 HXCOMM This is required for the QMP documentation layout.
 
@@ -2565,6 +2646,13 @@ Each json-object contain the following:
                                 "tftp", "vdi", "vmdk", "vpc", "vvfat"
          - "backing_file": backing file name (json-string, optional)
          - "encrypted": true if encrypted, false otherwise (json-bool)
+         - "bps": limit total bytes per second (json-int)
+         - "bps_rd": limit read bytes per second (json-int)
+         - "bps_wr": limit write bytes per second (json-int)
+         - "iops": limit total I/O operations per second (json-int)
+         - "iops_rd": limit read operations per second (json-int)
+         - "iops_wr": limit write operations per second (json-int)
+
 - "io-status": I/O operation status, only present if the device supports it
                and the VM is configured to stop on errors. It's always reset
                to "ok" when the "cont" command is issued (json_string, optional)
@@ -2584,7 +2672,13 @@ Example:
                "ro":false,
                "drv":"qcow2",
                "encrypted":false,
-               "file":"disks/test.img"
+               "file":"disks/test.img",
+               "bps":1000000,
+               "bps_rd":0,
+               "bps_wr":0,
+               "iops":1000000,
+               "iops_rd":0,
+               "iops_wr":0,
             },
             "type":"unknown"
          },
@@ -3116,8 +3210,13 @@ The main json-object contains the following:
 
 - "status": migration status (json-string)
      - Possible values: "active", "completed", "failed", "cancelled"
-- "ram": only present if "status" is "active", it is a json-object with the
-  following RAM information (in bytes):
+- "total-time": total amount of ms since migration started.  If
+                migration has ended, it returns the total migration
+                time (json-int)
+- "downtime": only present when migration has finished correctly
+              total amount in ms for downtime that happened (json-int)
+- "ram": only present if "status" is "active" or "complete", it is a
+         json-object with the following RAM information (in bytes):
          - "transferred": amount transferred (json-int)
          - "remaining": amount remaining (json-int)
          - "total": total (json-int)
@@ -3137,7 +3236,17 @@ Examples:
 2. Migration is done and has succeeded
 
 -> { "execute": "query-migrate" }
-<- { "return": { "status": "completed" } }
+<- {
+      "return":{
+         "status": "completed",
+         "total-time": 1215,
+         "downtime":22,
+         "ram":{
+            "transferred":123,
+            "remaining":123,
+            "total":246
+      }
+   }
 
 3. Migration is done and has failed
 
@@ -3150,6 +3259,7 @@ Examples:
 <- {
       "return":{
          "status":"active",
+         "total-time": 1215,
          "ram":{
             "transferred":123,
             "remaining":123,
@@ -3164,6 +3274,7 @@ Examples:
 <- {
       "return":{
          "status":"active",
+         "total-time": 1215,
          "ram":{
             "total":1057024,
             "remaining":1053304,

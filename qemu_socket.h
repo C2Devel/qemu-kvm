@@ -30,6 +30,7 @@ int inet_aton(const char *cp, struct in_addr *ia);
 #endif /* !_WIN32 */
 
 #include "qemu-option.h"
+#include "qapi-visit.h"
 #include "error.h"
 #include "qerror.h"
 
@@ -37,7 +38,7 @@ int inet_aton(const char *cp, struct in_addr *ia);
 int qemu_socket(int domain, int type, int protocol);
 int qemu_accept(int s, struct sockaddr *addr, socklen_t *addrlen);
 void socket_set_nonblock(int fd);
-int send_all(CharDriverState *chr, int fd, const void *buf, int len1);
+int send_all(int fd, const void *buf, int len1);
 
 /* callback function for nonblocking connect
  * valid fd on success, negative error code on failure
@@ -54,13 +55,23 @@ int inet_nonblocking_connect(const char *str,
                              NonBlockingConnectHandler *callback,
                              void *opaque, Error **errp);
 
-int inet_dgram_opts(QemuOpts *opts);
+int inet_dgram_opts(QemuOpts *opts, Error **errp);
 const char *inet_strfamily(int family);
 
-int unix_listen_opts(QemuOpts *opts);
-int unix_listen(const char *path, char *ostr, int olen);
-int unix_connect_opts(QemuOpts *opts);
-int unix_connect(const char *path);
+int unix_listen_opts(QemuOpts *opts, Error **errp);
+int unix_listen(const char *path, char *ostr, int olen, Error **errp);
+int unix_connect_opts(QemuOpts *opts, Error **errp,
+                      NonBlockingConnectHandler *callback, void *opaque);
+int unix_connect(const char *path, Error **errp);
+int unix_nonblocking_connect(const char *str,
+                             NonBlockingConnectHandler *callback,
+                             void *opaque, Error **errp);
+
+SocketAddress *socket_parse(const char *str, Error **errp);
+int socket_connect(SocketAddress *addr, Error **errp,
+                   NonBlockingConnectHandler *callback, void *opaque);
+int socket_listen(SocketAddress *addr, Error **errp);
+int socket_dgram(SocketAddress *remote, SocketAddress *local, Error **errp);
 
 /* Old, ipv4 only bits.  Don't use for new code. */
 int parse_host_port(struct sockaddr_in *saddr, const char *str);

@@ -294,7 +294,7 @@ static inline PageDesc **page_l1_map(target_ulong index)
 #if TARGET_LONG_BITS > 32
     /* Host memory outside guest VM.  For 32-bit targets we have already
        excluded high addresses.  */
-    if (index > ((target_ulong)L2_SIZE * L1_SIZE))
+    if (index >= ((target_ulong)L2_SIZE * L1_SIZE))
         return NULL;
 #endif
     return &l1_map[index >> L2_BITS];
@@ -2583,18 +2583,16 @@ static void *file_ram_alloc(RAMBlock *block,
         return NULL;
     }
 
-    if (asprintf(&filename, "%s/kvm.XXXXXX", path) == -1) {
-	return NULL;
-    }
+    filename = g_strdup_printf("%s/kvm.XXXXXX", path);
 
     fd = mkstemp(filename);
     if (fd < 0) {
 	perror("mkstemp");
-	free(filename);
+	g_free(filename);
 	return NULL;
     }
     unlink(filename);
-    free(filename);
+    g_free(filename);
 
     memory = (memory+hpagesize-1) & ~(hpagesize-1);
 

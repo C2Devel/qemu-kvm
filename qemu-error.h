@@ -13,6 +13,8 @@
 #ifndef QEMU_ERROR_H
 #define QEMU_ERROR_H
 
+#include <stdbool.h>
+
 typedef struct Location {
     /* all members are private to qemu-error.c */
     enum { LOC_NONE, LOC_CMDLINE, LOC_FILE } kind;
@@ -37,5 +39,6 @@ void error_printf_unless_qmp(const char *fmt, ...)
 void error_print_loc(void);
 void error_set_progname(const char *argv0);
 void error_report(const char *fmt, ...) __attribute__ ((format(printf, 1, 2)));
+extern bool enable_timestamp_msg;
 
 #endif

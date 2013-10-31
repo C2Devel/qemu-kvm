@@ -536,7 +536,6 @@ struct Rom {
     QTAILQ_ENTRY(Rom) next;
 };
 
-static FWCfgState *fw_cfg;
 static QTAILQ_HEAD(, Rom) roms = QTAILQ_HEAD_INITIALIZER(roms);
 int rom_enable_driver_roms;
 
@@ -595,7 +594,7 @@ int rom_add_file(const char *file, const char *fw_dir,
     }
     close(fd);
     rom_insert(rom);
-    if (rom->fw_file && fw_cfg) {
+    if (rom->fw_file && fw_get_global()) {
         const char *basename;
         char fw_file_name[56];
 
@@ -607,7 +606,8 @@ int rom_add_file(const char *file, const char *fw_dir,
         }
         snprintf(fw_file_name, sizeof(fw_file_name), "%s/%s", rom->fw_dir,
                  basename);
-        fw_cfg_add_file(fw_cfg, fw_file_name, rom->data, rom->romsize);
+        fw_cfg_add_file(fw_get_global(), fw_file_name, rom->data,
+                        rom->romsize);
         snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
     } else {
         snprintf(devpath, sizeof(devpath), "/rom@" TARGET_FMT_plx, addr);
@@ -701,11 +701,6 @@ int rom_load_all(void)
     qemu_register_reset(rom_reset, NULL);
     roms_loaded = 1;
     return 0;
-}
-
-void rom_set_fw(void *f)
-{
-    fw_cfg = f;
 }
 
 static Rom *find_rom(target_phys_addr_t addr)

@@ -2125,14 +2125,14 @@ static void omap_sti_fifo_write(void *opaque, target_phys_addr_t addr,
 
     if (ch == STI_TRACE_CONTROL_CHANNEL) {
         /* Flush channel <i>value</i>.  */
-        qemu_chr_write(s->chr, (const uint8_t *) "\r", 1);
+        qemu_chr_fe_write(s->chr, (const uint8_t *) "\r", 1);
     } else if (ch == STI_TRACE_CONSOLE_CHANNEL || 1) {
         if (value == 0xc0 || value == 0xc3) {
             /* Open channel <i>ch</i>.  */
         } else if (value == 0x00)
-            qemu_chr_write(s->chr, (const uint8_t *) "\n", 1);
+            qemu_chr_fe_write(s->chr, (const uint8_t *) "\n", 1);
         else
-            qemu_chr_write(s->chr, &byte, 1);
+            qemu_chr_fe_write(s->chr, &byte, 1);
     }
 }
 
@@ -2159,7 +2159,7 @@ static struct omap_sti_s *omap_sti_init(struct omap_target_agent_s *ta,
     s->irq = irq;
     omap_sti_reset(s);
 
-    s->chr = chr ?: qemu_chr_open("null", "null", NULL);
+    s->chr = chr ?: qemu_chr_new("null", "null", NULL);
 
     iomemtype = l4_register_io_memory(omap_sti_readfn,
                     omap_sti_writefn, s);

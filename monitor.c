@@ -165,8 +165,8 @@ struct Monitor {
     int reset_seen;
     int flags;
     int suspend_cnt;
-    uint8_t outbuf[1024];
-    int outbuf_index;
+    QString *outbuf;
+    guint watch;
     ReadLineState *rs;
     MonitorControl *mc;
     CPUState *mon_cpu;
@@ -264,15 +264,47 @@ static int monitor_read_password(Monitor *mon, ReadLineFunc *readline_func,
     }
 }
 
+static gboolean monitor_unblocked(GIOChannel *chan, GIOCondition cond,
+                                  void *opaque)
+{
+    Monitor *mon = opaque;
+
+    mon->watch = 0;
+    monitor_flush(mon);
+    return FALSE;
+}
+
 void monitor_flush(Monitor *mon)
 {
-    if (mon && mon->outbuf_index != 0 && !mon->mux_out) {
-        qemu_chr_write(mon->chr, mon->outbuf, mon->outbuf_index);
-        mon->outbuf_index = 0;
+    int rc;
+    size_t len;
+    const char *buf;
+
+    buf = qstring_get_str(mon->outbuf);
+    len = qstring_get_length(mon->outbuf);
+
+    if (mon && len && !mon->mux_out) {
+        rc = qemu_chr_fe_write(mon->chr, (const uint8_t *) buf, len);
+        if (rc == len) {
+            /* all flushed */
+            QDECREF(mon->outbuf);
+            mon->outbuf = qstring_new();
+            return;
+        }
+        if (rc > 0) {
+            /* partinal write */
+            QString *tmp = qstring_from_str(buf + rc);
+            QDECREF(mon->outbuf);
+            mon->outbuf = tmp;
+        }
+        if (mon->watch == 0) {
+            mon->watch = qemu_chr_fe_add_watch(mon->chr, G_IO_OUT,
+                                               monitor_unblocked, mon);
+        }
     }
 }
 
-/* flush at every end of line or if the buffer is full */
+/* flush at every end of line */
 static void monitor_puts(Monitor *mon, const char *str)
 {
     char c;
@@ -281,18 +313,19 @@ static void monitor_puts(Monitor *mon, const char *str)
         c = *str++;
         if (c == '\0')
             break;
-        if (c == '\n')
-            mon->outbuf[mon->outbuf_index++] = '\r';
-        mon->outbuf[mon->outbuf_index++] = c;
-        if (mon->outbuf_index >= (sizeof(mon->outbuf) - 1)
-            || c == '\n')
+        if (c == '\n') {
+            qstring_append_chr(mon->outbuf, '\r');
+        }
+        qstring_append_chr(mon->outbuf, c);
+        if (c == '\n') {
             monitor_flush(mon);
+        }
     }
 }
 
 void monitor_vprintf(Monitor *mon, const char *fmt, va_list ap)
 {
-    char buf[4096];
+    char *buf;
 
     if (!mon)
         return;
@@ -303,8 +336,9 @@ void monitor_vprintf(Monitor *mon, const char *fmt, va_list ap)
         return;
     }
 
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    buf = g_strdup_vprintf(fmt, ap);
     monitor_puts(mon, buf);
+    g_free(buf);
 }
 
 void monitor_printf(Monitor *mon, const char *fmt, ...)
@@ -468,6 +502,7 @@ static const char *monitor_event_names[] = {
     [QEVENT_WAKEUP] = "WAKEUP",
     [QEVENT_BALLOON_CHANGE] = "BALLOON_CHANGE",
     [QEVENT_SPICE_MIGRATE_COMPLETED] = "SPICE_MIGRATE_COMPLETED",
+    [QEVENT_GUEST_PANICKED] = "GUEST_PANICKED",
 };
 QEMU_BUILD_BUG_ON(ARRAY_SIZE(monitor_event_names) != QEVENT_MAX)
 
@@ -659,6 +694,8 @@ static int do_hmp_passthrough(Monitor *mon, const QDict *params,
     }
 
     memset(&hmp, 0, sizeof(hmp));
+    hmp.outbuf = qstring_new();
+
     qemu_chr_init_mem(&mchar);
     hmp.chr = &mchar;
 
@@ -682,6 +719,7 @@ static int do_hmp_passthrough(Monitor *mon, const QDict *params,
     }
 
 out:
+    QDECREF(hmp.outbuf);
     qemu_chr_close_mem(hmp.chr);
     return ret;
 }
@@ -1233,8 +1271,11 @@ static int do_change_vnc(Monitor *mon, const char *target, const char *arg)
             return monitor_read_password(mon, change_vnc_password_cb, NULL);
         }
     } else {
-        if (vnc_display_open(NULL, target) < 0) {
-            qerror_report(QERR_VNC_SERVER_FAILED, target);
+        Error *local_err = NULL;
+        vnc_display_open(NULL, target, &local_err);
+        if (error_is_set(&local_err)) {
+            qerror_report_err(local_err);
+            error_free(local_err);
             return -1;
         }
     }
@@ -1570,8 +1611,7 @@ static int do_cont(Monitor *mon, const QDict *qdict, QObject **ret_data)
     if (runstate_check(RUN_STATE_INMIGRATE)) {
         qerror_report(QERR_MIGRATION_EXPECTED);
         return -1;
-    } else if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
-               runstate_check(RUN_STATE_SHUTDOWN)) {
+    } else if (runstate_needs_reset()) {
         qerror_report(QERR_RESET_REQUIRED);
         return -1;
     }
@@ -2759,7 +2799,7 @@ static int do_getfd(Monitor *mon, const QDict *qdict, QObject **ret_data)
     mon_fd_t *monfd;
     int fd;
 
-    fd = qemu_chr_get_msgfd(mon->chr);
+    fd = qemu_chr_fe_get_msgfd(mon->chr);
     if (fd == -1) {
         qerror_report(QERR_FD_NOT_SUPPLIED);
         return -1;
@@ -4688,6 +4728,9 @@ static int check_client_args_type(const QDict *client_args,
         case 'O':
             assert(flags & QMP_ACCEPT_UNKNOWNS);
             break;
+        case 'q':
+            /* Any QObject can be passed.  */
+            break;
         case '/':
         case '.':
             /*
@@ -5097,18 +5140,6 @@ static void monitor_event(void *opaque, int event)
  * End:
  */
 
-static const QemuChrHandlers monitor_handlers = {
-    .fd_can_read = monitor_can_read,
-    .fd_read = monitor_read,
-    .fd_event = monitor_event,
-};
-
-static const QemuChrHandlers monitor_control_handlers = {
-    .fd_can_read = monitor_can_read,
-    .fd_read = monitor_control_read,
-    .fd_event = monitor_control_event,
-};
-
 void monitor_init(CharDriverState *chr, int flags)
 {
     static int is_first_init = 1;
@@ -5120,7 +5151,8 @@ void monitor_init(CharDriverState *chr, int flags)
         is_first_init = 0;
     }
 
-    mon = qemu_mallocz(sizeof(*mon));
+    mon = g_malloc0(sizeof(*mon));
+    mon->outbuf = qstring_new();
 
     mon->chr = chr;
     mon->flags = flags;
@@ -5131,12 +5163,13 @@ void monitor_init(CharDriverState *chr, int flags)
 
     if (monitor_ctrl_mode(mon)) {
         mon->mc = qemu_mallocz(sizeof(MonitorControl));
-
         /* Control mode requires special handlers */
-        qemu_chr_add_handlers(chr, &monitor_control_handlers, mon);
-        qemu_chr_set_echo(chr, true);
+        qemu_chr_add_handlers(chr, monitor_can_read, monitor_control_read,
+                              monitor_control_event, mon);
+        qemu_chr_fe_set_echo(chr, true);
     } else {
-        qemu_chr_add_handlers(chr, &monitor_handlers, mon);
+        qemu_chr_add_handlers(chr, monitor_can_read, monitor_read,
+                              monitor_event, mon);
     }
 
     QLIST_INSERT_HEAD(&mon_list, mon, entry);

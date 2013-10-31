@@ -1030,6 +1030,7 @@ int kvm_run(CPUState *env)
     }
 #endif
     if (1) {
+        trace_kvm_run_exit(env->cpu_index, run->exit_reason);
         switch (run->exit_reason) {
         case KVM_EXIT_UNKNOWN:
             r = handle_unhandled(run->hw.hardware_exit_reason);
@@ -2256,8 +2257,7 @@ int kvm_main_loop(void)
             qemu_irq_raise(qemu_system_powerdown);
         } else if (qemu_reset_requested()) {
             qemu_kvm_system_reset(VMRESET_REPORT);
-            if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
-                runstate_check(RUN_STATE_SHUTDOWN)) {
+            if (runstate_needs_reset()) {
                 runstate_set(RUN_STATE_PAUSED);
             }
         } else if (qemu_wakeup_requested()) {

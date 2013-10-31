@@ -36,6 +36,10 @@ void error_setg_errno(Error **errp, int os_errno, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
 void error_setg(Error **errp, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+static inline void error_setg_file_open(Error **errp, int os_errno, const char *filename)
+{
+    error_setg_errno(errp, os_errno, "Could not open '%s'", filename);
+}
 
 /**
  * Returns true if an indirect pointer to an error is pointing to a valid
@@ -61,7 +65,7 @@ void error_set_field(Error *err, const char *field, const char *value);
 /**
  * Propagate an error to an indirect pointer to an error.  This function will
  * always transfer ownership of the error reference and handles the case where
- * dst_err is NULL correctly.
+ * dst_err is NULL correctly.  Errors after the first are discarded.
  */
 void error_propagate(Error **dst_err, Error *local_err);
 

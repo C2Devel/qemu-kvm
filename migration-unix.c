@@ -18,6 +18,7 @@
 #include "sysemu.h"
 #include "buffered_file.h"
 #include "block.h"
+#include "trace.h"
 
 //#define DEBUG_MIGRATION_UNIX
 
@@ -102,6 +103,7 @@ MigrationState *unix_start_outgoing_migration(Monitor *mon,
     s->mig_state.shared = inc;
 
     s->state = MIG_STATE_ACTIVE;
+    trace_migrate_set_state(MIG_STATE_ACTIVE);
     s->mon = NULL;
     s->bandwidth_limit = bandwidth_limit;
     s->fd = qemu_socket(PF_UNIX, SOCK_STREAM, 0);

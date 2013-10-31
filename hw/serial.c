@@ -25,6 +25,8 @@
 #include "hw.h"
 #include "qemu-char.h"
 #include "isa.h"
+#include "pci.h"
+#include "pci_ids.h"
 #include "pc.h"
 #include "qemu-timer.h"
 #include "sysemu.h"
@@ -259,7 +261,7 @@ static void serial_update_parameters(SerialState *s)
     ssp.data_bits = data_bits;
     ssp.stop_bits = stop_bits;
     s->char_transmit_time =  (get_ticks_per_sec() / speed) * frame_size;
-    qemu_chr_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_PARAMS, &ssp);
+    qemu_chr_fe_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_PARAMS, &ssp);
 #if 0
     printf("speed=%d parity=%c data=%d stop=%d\n",
            speed, parity, data_bits, stop_bits);
@@ -273,7 +275,7 @@ static void serial_update_msl(SerialState *s)
 
     qemu_del_timer(s->modem_status_poll);
 
-    if (qemu_chr_ioctl(s->chr,CHR_IOCTL_SERIAL_GET_TIOCM, &flags) == -ENOTSUP) {
+    if (qemu_chr_fe_ioctl(s->chr,CHR_IOCTL_SERIAL_GET_TIOCM, &flags) == -ENOTSUP) {
         s->poll_msl = -1;
         return;
     }
@@ -320,7 +322,7 @@ static void serial_xmit(void *opaque)
     if (s->mcr & UART_MCR_LOOP) {
         /* in loopback mode, say that we just received a char */
         serial_receive1(s, &s->tsr, 1);
-    } else if (qemu_chr_write(s->chr, &s->tsr, 1) != 1) {
+    } else if (qemu_chr_fe_write(s->chr, &s->tsr, 1) != 1) {
         if ((s->tsr_retry > 0) && (s->tsr_retry <= MAX_XMIT_RETRY)) {
             s->tsr_retry++;
             qemu_mod_timer(s->transmit_timer,  new_xmit_ts + s->char_transmit_time);
@@ -455,7 +457,7 @@ static void serial_ioport_write(void *opaque, uint32_t addr, uint32_t val)
             break_enable = (val >> 6) & 1;
             if (break_enable != s->last_break_enable) {
                 s->last_break_enable = break_enable;
-                qemu_chr_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_BREAK,
+                qemu_chr_fe_ioctl(s->chr, CHR_IOCTL_SERIAL_SET_BREAK,
                                &break_enable);
             }
         }
@@ -470,7 +472,7 @@ static void serial_ioport_write(void *opaque, uint32_t addr, uint32_t val)
 
             if (s->poll_msl >= 0 && old_mcr != s->mcr) {
 
-                qemu_chr_ioctl(s->chr,CHR_IOCTL_SERIAL_GET_TIOCM, &flags);
+                qemu_chr_fe_ioctl(s->chr,CHR_IOCTL_SERIAL_GET_TIOCM, &flags);
 
                 flags &= ~(CHR_TIOCM_RTS | CHR_TIOCM_DTR);
 
@@ -479,7 +481,7 @@ static void serial_ioport_write(void *opaque, uint32_t addr, uint32_t val)
                 if (val & UART_MCR_DTR)
                     flags |= CHR_TIOCM_DTR;
 
-                qemu_chr_ioctl(s->chr,CHR_IOCTL_SERIAL_SET_TIOCM, &flags);
+                qemu_chr_fe_ioctl(s->chr,CHR_IOCTL_SERIAL_SET_TIOCM, &flags);
                 /* Update the modem status after a one-character-send wait-time, since there may be a response
                    from the device/computer at the other end of the serial line */
                 qemu_mod_timer(s->modem_status_poll, qemu_get_clock(vm_clock) + s->char_transmit_time);
@@ -718,17 +720,11 @@ static void serial_reset(void *opaque)
     qemu_irq_lower(s->irq);
 }
 
-static const QemuChrHandlers serial_handlers = {
-    .fd_can_read = serial_can_receive1,
-    .fd_read = serial_receive1,
-    .fd_event = serial_event,
-};
-
-static void serial_init_core(SerialState *s)
+static int serial_init_core(SerialState *s)
 {
     if (!s->chr) {
-        fprintf(stderr, "Can't create serial device, empty char device\n");
-	exit(1);
+        error_report("Can't create serial device, empty char device");
+        return -1;
     }
 
     s->modem_status_poll = qemu_new_timer(vm_clock, (QEMUTimerCB *) serial_update_msl, s);
@@ -738,7 +734,15 @@ static void serial_init_core(SerialState *s)
 
     qemu_register_reset(serial_reset, s);
 
-    qemu_chr_add_handlers(s->chr, &serial_handlers, s);
+    qemu_chr_add_handlers(s->chr, serial_can_receive1, serial_receive1,
+                          serial_event, s);
+    return 0;
+}
+
+static void serial_exit_core(SerialState *s)
+{
+    qemu_chr_add_handlers(s->chr, NULL, NULL, NULL, NULL);
+    qemu_unregister_reset(serial_reset, s);
 }
 
 /* Change the main reference oscillator frequency. */
@@ -769,7 +773,8 @@ static int serial_isa_initfn(ISADevice *dev)
 
     s->baudbase = 115200;
     isa_init_irq(dev, &s->irq, isa->isairq);
-    serial_init_core(s);
+    if (serial_init_core(s) < 0)
+        return -1;
     vmstate_register(&dev->qdev, isa->iobase, &vmstate_serial, s);
 
     register_ioport_write(isa->iobase, 8, 1, serial_ioport_write, s);
@@ -800,7 +805,10 @@ SerialState *serial_init(int base, qemu_irq irq, int baudbase,
     s->irq = irq;
     s->baudbase = baudbase;
     s->chr = chr;
-    serial_init_core(s);
+    if (serial_init_core(s) < 0) {
+        free(s);
+        return NULL;
+    }
 
     vmstate_register(NULL, base, &vmstate_serial, s);
 
@@ -895,7 +903,10 @@ SerialState *serial_mm_init (target_phys_addr_t base, int it_shift,
     s->baudbase = baudbase;
     s->chr = chr;
 
-    serial_init_core(s);
+    if (serial_init_core(s) < 0) {
+        qemu_free(s);
+        return NULL;
+    }
     vmstate_register(NULL, base, &vmstate_serial, s);
 
     if (ioregister) {
@@ -921,9 +932,89 @@ static ISADeviceInfo serial_isa_info = {
     },
 };
 
+typedef struct PCISerialState {
+    PCIDevice dev;
+    pcibus_t addr;
+    SerialState state;
+} PCISerialState;
+
+static void serial_pci_map(PCIDevice *pci_dev, int region_num,
+                           pcibus_t addr, pcibus_t size, int type)
+{
+    PCISerialState *pci = DO_UPCAST(PCISerialState, dev, pci_dev);
+    SerialState *s = &pci->state;
+
+    if (pci->addr) {
+        isa_unassign_ioport(pci->addr, 8);
+        pci->addr = 0;
+    }
+    register_ioport_write(addr, 8, 1, serial_ioport_write, s);
+    register_ioport_read(addr, 8, 1, serial_ioport_read, s);
+    pci->addr = addr;
+}
+
+static int serial_pci_init(PCIDevice *dev)
+{
+    PCISerialState *pci = DO_UPCAST(PCISerialState, dev, dev);
+    SerialState *s = &pci->state;
+
+    s->baudbase = 115200;
+    if (serial_init_core(s) < 0)
+        return -1;
+
+    pci_config_set_vendor_id(pci->dev.config, PCI_VENDOR_ID_REDHAT);
+    pci_config_set_device_id(pci->dev.config, PCI_DEVICE_ID_REDHAT_SERIAL);
+    pci_config_set_class(pci->dev.config, PCI_CLASS_COMMUNICATION_SERIAL);
+    pci->dev.config[PCI_REVISION_ID] = 0x01;
+    pci->dev.config[PCI_INTERRUPT_PIN] = 0x01;
+    s->irq = pci->dev.irq[0];
+
+    pci_register_bar(&pci->dev, 0, 8, PCI_BASE_ADDRESS_SPACE_IO, serial_pci_map);
+    return 0;
+}
+
+static int serial_pci_exit(PCIDevice *dev)
+{
+    PCISerialState *pci = DO_UPCAST(PCISerialState, dev, dev);
+    SerialState *s = &pci->state;
+
+    if (pci->addr) {
+        isa_unassign_ioport(pci->addr, 8);
+        pci->addr = 0;
+    }
+    serial_exit_core(s);
+    return 0;
+}
+
+static const VMStateDescription vmstate_pci_serial = {
+    .name = "pci-serial",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields      = (VMStateField[]) {
+        VMSTATE_PCI_DEVICE(dev, PCISerialState),
+        VMSTATE_STRUCT(state, PCISerialState, 0, vmstate_serial, SerialState),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
+static Property serial_pci_properties[] = {
+    DEFINE_PROP_CHR("chardev",  PCISerialState, state.chr),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
+static PCIDeviceInfo serial_pci_info = {
+    .qdev.name    = "pci-serial",
+    .qdev.size    = sizeof(PCISerialState),
+    .qdev.vmsd    = &vmstate_pci_serial,
+    .init         = serial_pci_init,
+    .exit         = serial_pci_exit,
+    .qdev.props   = serial_pci_properties,
+};
+
 static void serial_register_devices(void)
 {
     isa_qdev_register(&serial_isa_info);
+    pci_qdev_register(&serial_pci_info);
 }
 
 device_init(serial_register_devices)

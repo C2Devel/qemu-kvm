@@ -70,7 +70,7 @@ const char *%(name)s_lookup[] = {
         ret += mcgen('''
     "%(value)s",
 ''',
-                     value=value.lower())
+                     value=value)
 
     ret += mcgen('''
     NULL,
@@ -78,6 +78,16 @@ const char *%(name)s_lookup[] = {
 
 ''')
     return ret
+
+def generate_enum_name(name):
+    if name.isupper():
+        return c_fun(name, False)
+    new_name = ''
+    for c in c_fun(name, False):
+        if c.isupper():
+            new_name += '_'
+        new_name += c
+    return new_name.lstrip('_').upper()
 
 def generate_enum(name, values):
     lookup_decl = mcgen('''
@@ -100,7 +110,7 @@ typedef enum %(name)s
     %(abbrev)s_%(value)s = %(i)d,
 ''',
                      abbrev=de_camel_case(name).upper(),
-                     value=c_fun(value).upper(),
+                     value=generate_enum_name(value),
                      i=i)
         i += 1
 

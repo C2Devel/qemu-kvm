@@ -187,7 +187,7 @@ void QEMU_NORETURN hw_error(const char *fmt, ...)
 
 /* IO callbacks.  */
 typedef void IOReadHandler(void *opaque, const uint8_t *buf, int size);
-typedef int IOCanRWHandler(void *opaque);
+typedef int IOCanReadHandler(void *opaque);
 typedef void IOHandler(void *opaque);
 
 struct ParallelIOArg {
@@ -316,5 +316,10 @@ static inline uint8_t from_bcd(uint8_t val)
 #include "module.h"
 
 #endif /* dyngen-exec.h hack */
+
+/*
+ * helper to parse debug environment variables
+ */
+int parse_debug_env(const char *name, int max, int initial);
 
 #endif

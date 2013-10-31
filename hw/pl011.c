@@ -133,7 +133,7 @@ static void pl011_write(void *opaque, target_phys_addr_t offset,
         /* ??? Check if transmitter is enabled.  */
         ch = value;
         if (s->chr)
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
         s->int_level |= PL011_INT_TX;
         pl011_update(s);
         break;
@@ -286,12 +286,6 @@ static int pl011_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static const QemuChrHandlers pl011_handlers = {
-    .fd_can_read = pl011_can_receive,
-    .fd_read = pl011_receive,
-    .fd_event = pl011_event,
-};
-
 static int pl011_init(SysBusDevice *dev, const unsigned char *id)
 {
     int iomemtype;
@@ -309,7 +303,8 @@ static int pl011_init(SysBusDevice *dev, const unsigned char *id)
     s->cr = 0x300;
     s->flags = 0x90;
     if (s->chr) {
-        qemu_chr_add_handlers(s->chr, &pl011_handlers, s);
+        qemu_chr_add_handlers(s->chr, pl011_can_receive, pl011_receive,
+                              pl011_event, s);
     }
     register_savevm(&dev->qdev, "pl011_uart", -1, 1, pl011_save, pl011_load, s);
     return 0;

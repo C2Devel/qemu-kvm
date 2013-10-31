@@ -123,7 +123,7 @@ int qemu_aio_process_queue(void)
     AioHandler *node;
     int ret = 0;
 
-    walking_handlers = 1;
+    walking_handlers++;
 
     QLIST_FOREACH(node, &aio_handlers, node) {
         if (node->io_process_queue) {
@@ -133,7 +133,7 @@ int qemu_aio_process_queue(void)
         }
     }
 
-    walking_handlers = 0;
+    walking_handlers--;
 
     return ret;
 }
@@ -157,7 +157,7 @@ void qemu_aio_wait(void)
         fd_set rdfds, wrfds;
         int max_fd = -1;
 
-        walking_handlers = 1;
+        walking_handlers++;
 
         FD_ZERO(&rdfds);
         FD_ZERO(&wrfds);
@@ -181,7 +181,7 @@ void qemu_aio_wait(void)
             }
         }
 
-        walking_handlers = 0;
+        walking_handlers--;
 
         /* No AIO operations?  Get us out of here */
         if (max_fd == -1)
@@ -194,13 +194,13 @@ void qemu_aio_wait(void)
 
         /* if we have any readable fds, dispatch event */
         if (ret > 0) {
-            walking_handlers = 1;
-
             /* we have to walk very carefully in case
              * qemu_aio_set_fd_handler is called while we're walking */
             node = QLIST_FIRST(&aio_handlers);
             while (node) {
                 AioHandler *tmp;
+
+                walking_handlers++;
 
                 if (!node->deleted &&
                     FD_ISSET(node->fd, &rdfds) &&
@@ -216,13 +216,13 @@ void qemu_aio_wait(void)
                 tmp = node;
                 node = QLIST_NEXT(node, node);
 
-                if (tmp->deleted) {
+                walking_handlers--;
+
+                if (!walking_handlers && tmp->deleted) {
                     QLIST_REMOVE(tmp, node);
                     qemu_free(tmp);
                 }
             }
-
-            walking_handlers = 0;
         }
     } while (ret == 0);
 }

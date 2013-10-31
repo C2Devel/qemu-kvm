@@ -102,7 +102,7 @@ ser_writel (void *opaque, target_phys_addr_t addr, uint32_t value)
     switch (addr)
     {
         case RW_DOUT:
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
             s->regs[R_INTR] |= 1;
             s->pending_tx = 1;
             s->regs[addr] = value;
@@ -161,12 +161,6 @@ static void serial_event(void *opaque, int event)
 
 }
 
-static const QemuChrHandlers serial_handlers = {
-    .fd_can_read = serial_can_receive,
-    .fd_read = serial_receive,
-    .fd_event = serial_event,
-};
-
 static int etraxfs_ser_init(SysBusDevice *dev)
 {
     struct etrax_serial *s = FROM_SYSBUS(typeof (*s), dev);
@@ -180,9 +174,10 @@ static int etraxfs_ser_init(SysBusDevice *dev)
     ser_regs = cpu_register_io_memory(ser_read, ser_write, s);
     sysbus_init_mmio(dev, R_MAX * 4, ser_regs);
     s->chr = qdev_init_chardev(&dev->qdev);
-    if (s->chr) {
-        qemu_chr_add_handlers(s->chr, &serial_handlers, s);
-    }
+    if (s->chr)
+        qemu_chr_add_handlers(s->chr,
+                      serial_can_receive, serial_receive,
+                      serial_event, s);
     return 0;
 }
 

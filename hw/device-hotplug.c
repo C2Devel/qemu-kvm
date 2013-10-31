@@ -50,7 +50,12 @@ static void check_parm(const char *key, QObject *obj, void *opaque)
     static const char *valid_keys[] = {
         "id", "cyls", "heads", "secs", "trans", "media", "snapshot",
         "file", "cache", "aio", "format", "serial", "rerror", "werror",
-        "readonly", "copy-on-read", NULL
+        "readonly", "copy-on-read",
+#ifdef CONFIG_BLOCK_IO_THROTTLING
+        "bps", "bps_rd", "bps_wr", "iops", "iops_rd", "iops_wr",
+#endif
+        NULL
+
     };
     int *stopped = opaque;
     const char **p;

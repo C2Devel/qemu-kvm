@@ -30,6 +30,7 @@
 /* Needed early for CONFIG_BSD etc. */
 #include "config-host.h"
 #include "sysemu.h"
+#include <sys/mman.h>
 
 void os_setup_early_signal_handling(void)
 {
@@ -38,4 +39,16 @@ void os_setup_early_signal_handling(void)
     act.sa_flags = 0;
     act.sa_handler = SIG_IGN;
     sigaction(SIGPIPE, &act, NULL);
+}
+
+int os_mlock(void)
+{
+    int ret = 0;
+
+    ret = mlockall(MCL_CURRENT | MCL_FUTURE);
+    if (ret < 0) {
+        perror("mlockall");
+    }
+
+    return ret;
 }

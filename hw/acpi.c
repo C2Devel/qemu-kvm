@@ -34,8 +34,6 @@
 /* i82731AB (PIIX4) compatible power management function */
 #define PM_FREQ 3579545
 
-#define ACPI_DBG_IO_ADDR  0xb044
-
 #define GPE_BASE 0xafe0
 #define PROC_BASE 0xaf00
 #define PCI_UP_BASE 0xae00
@@ -337,13 +335,6 @@ static uint32_t pm_smi_readb(void *opaque, uint32_t addr)
     printf("pm_smi_readb addr=0x%x val=0x%02x\n", addr, val);
 #endif
     return val;
-}
-
-static void acpi_dbg_writel(void *opaque, uint32_t addr, uint32_t val)
-{
-#if defined(DEBUG)
-    printf("ACPI: DBG: 0x%08x\n", val);
-#endif
 }
 
 static void smb_transaction(PIIX4PMState *s)
@@ -702,8 +693,6 @@ static int piix4_pm_initfn(PCIDevice *dev)
     register_ioport_write(0xb2, 2, 1, pm_smi_writeb, s);
     register_ioport_read(0xb2, 2, 1, pm_smi_readb, s);
 
-    register_ioport_write(ACPI_DBG_IO_ADDR, 4, 4, acpi_dbg_writel, s);
-
     if (kvm_enabled()) {
         /* Mark SMM as already inited to prevent SMM from running.  KVM does not
          * support SMM mode. */
@@ -979,6 +968,11 @@ void qemu_system_cpu_hot_add(int cpu, int state, Monitor *mon)
 {
     CPUState *env;
     uint32_t apic_id;
+
+    if (!acpi_enabled) {
+        monitor_printf(mon, "CPU hot add is disabled by -no-acpi option\n");
+        return;
+    }
 
     if ((cpu < 1) || (cpu > max_cpus - 1)) {
         monitor_printf(mon, "cpu id[%d] must be in range [1..%d]\n",

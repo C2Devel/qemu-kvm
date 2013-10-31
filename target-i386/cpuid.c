@@ -99,6 +99,7 @@ int enforce_cpuid = 0;
 static bool kvm_pv_eoi_disabled;
 static bool pmu_passthrough_enabled;
 static bool tsc_deadline_disabled;
+static bool kvm_sep_disabled;
 
 static void host_cpuid(uint32_t function, uint32_t count, uint32_t *eax,
                        uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
@@ -210,14 +211,14 @@ typedef struct x86_def_t {
 #define I486_FEATURES (CPUID_FP87 | CPUID_VME | CPUID_PSE)
 #define PENTIUM_FEATURES (I486_FEATURES | CPUID_DE | CPUID_TSC | \
           CPUID_MSR | CPUID_MCE | CPUID_CX8 | CPUID_MMX)
-#define PENTIUM2_FEATURES (PENTIUM_FEATURES | CPUID_PAE | \
+#define PENTIUM2_FEATURES (PENTIUM_FEATURES | CPUID_PAE | CPUID_SEP | \
           CPUID_MTRR | CPUID_PGE | CPUID_MCA | CPUID_CMOV | CPUID_PAT | \
           CPUID_PSE36 | CPUID_FXSR)
 #define PENTIUM3_FEATURES (PENTIUM2_FEATURES | CPUID_SSE)
 #define PPRO_FEATURES (CPUID_FP87 | CPUID_DE | CPUID_PSE | CPUID_TSC | \
           CPUID_MSR | CPUID_MCE | CPUID_CX8 | CPUID_PGE | CPUID_CMOV | \
           CPUID_PAT | CPUID_FXSR | CPUID_MMX | CPUID_SSE | CPUID_SSE2 | \
-          CPUID_PAE | CPUID_APIC)
+          CPUID_PAE | CPUID_SEP | CPUID_APIC)
 
 /* maintains list of cpu model definitions
  */
@@ -440,7 +441,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 3,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_CX16 | CPUID_EXT_SSE3,
@@ -465,7 +466,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 3,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_SSE3,
@@ -490,7 +491,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 3,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_X2APIC | CPUID_EXT_SSSE3 | CPUID_EXT_SSE3,
@@ -510,7 +511,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 3,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_X2APIC | CPUID_EXT_SSE41 | CPUID_EXT_CX16 |
@@ -531,7 +532,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 3,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_POPCNT | CPUID_EXT_X2APIC | CPUID_EXT_SSE42 |
@@ -552,7 +553,7 @@ static x86_def_t builtin_x86_defs[] = {
         .model = 44,
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
-             CPUID_PAT | CPUID_CMOV | CPUID_PGE | CPUID_APIC |
+             CPUID_PAT | CPUID_CMOV | CPUID_PGE | CPUID_SEP | CPUID_APIC |
              CPUID_CX8 | CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC |
              CPUID_PSE | CPUID_DE | CPUID_FP87 | CPUID_MTRR | CPUID_CLFLUSH |
              CPUID_MCA | CPUID_PSE36,
@@ -579,7 +580,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_AVX | CPUID_EXT_XSAVE | CPUID_EXT_AES |
@@ -603,7 +604,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_AVX | CPUID_EXT_XSAVE | CPUID_EXT_AES |
@@ -632,7 +633,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_X2APIC | CPUID_EXT_SSE3,
@@ -656,7 +657,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_X2APIC | CPUID_EXT_CX16 | CPUID_EXT_SSE3,
@@ -681,7 +682,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 1,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_POPCNT | CPUID_EXT_X2APIC | CPUID_EXT_CX16 |
@@ -708,7 +709,7 @@ static x86_def_t builtin_x86_defs[] = {
         .stepping = 2,
         .features = CPUID_SSE2 | CPUID_SSE | CPUID_FXSR | CPUID_MMX |
              CPUID_CLFLUSH | CPUID_PSE36 | CPUID_PAT | CPUID_CMOV | CPUID_MCA |
-             CPUID_PGE | CPUID_MTRR | CPUID_APIC | CPUID_CX8 |
+             CPUID_PGE | CPUID_MTRR | CPUID_SEP | CPUID_APIC | CPUID_CX8 |
              CPUID_MCE | CPUID_PAE | CPUID_MSR | CPUID_TSC | CPUID_PSE |
              CPUID_DE | CPUID_FP87,
         .ext_features = CPUID_EXT_AVX | CPUID_EXT_XSAVE | CPUID_EXT_AES |
@@ -852,6 +853,7 @@ static void summary_cpuid_features(CPUX86State *env, x86_def_t *hd)
             {&hd->ext_features, 0x00000001, R_ECX, CPUID_EXT_X2APIC},
             {&hd->ext2_features, 0x80000001, R_EDX, 0},
             {&hd->ext3_features, 0x80000001, R_ECX, 0},
+            {&hd->cpuid_7_0_ebx_features, 0x7, R_EBX, 0},
             {NULL}}, *p;
 
     kvm_cpu_fill_host(hd);
@@ -886,6 +888,9 @@ static int kvm_check_features_against_host(CPUX86State *env, x86_def_t *guest_de
         {&guest_def->ext3_features, &host_def.ext3_features,
             ~0, kvm_nested ? 0 : CPUID_EXT3_SVM,
             ext3_feature_name, "8000_0001:ecx"},
+        {&guest_def->cpuid_7_0_ebx_features, &host_def.cpuid_7_0_ebx_features,
+            ~0, 0,
+            cpuid_7_0_ebx_feature_name, "EAX=7,ECX=0:ebx"},
         {NULL}}, *p;
 
     assert(kvm_enabled());
@@ -940,6 +945,11 @@ static int cpu_x86_find_by_name(x86_def_t *x86_cpu_def, const char *cpu_model)
     }
     if (tsc_deadline_disabled) {
         x86_cpu_def->ext_features &= ~CPUID_EXT_TSC_DEADLINE_TIMER;
+    }
+
+    /* RHEL 6.4 and below machine types have SEP disabled */
+    if (kvm_sep_disabled) {
+	    x86_cpu_def->features &= ~CPUID_SEP;
     }
 
     /* end of machine-type compatibility bits */
@@ -1509,6 +1519,8 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
 void set_pmu_passthrough(bool enable);
 void disable_kvm_pv_eoi(void);
 void disable_tsc_deadline(void);
+void disable_kvm_sep(void);
+
 void set_cpu_model_level(const char *name, int level);
 
 void set_pmu_passthrough(bool enable)
@@ -1524,6 +1536,11 @@ void disable_kvm_pv_eoi(void)
 void disable_tsc_deadline(void)
 {
     tsc_deadline_disabled = true;
+}
+
+void disable_kvm_sep(void)
+{
+	kvm_sep_disabled = true;
 }
 
 void set_cpu_model_level(const char *name, int level)

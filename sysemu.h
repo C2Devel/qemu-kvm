@@ -34,6 +34,7 @@ typedef enum {
     RUN_STATE_SAVE_VM,         /* paused saving VM state */
     RUN_STATE_SHUTDOWN,       /* guest shut down and -no-shutdown is in use */
     RUN_STATE_WATCHDOG,       /* watchdog fired and qemu is configured to pause */
+    RUN_STATE_GUEST_PANICKED, /* guest has been panicked as a result of guest OS panic */
     RUN_STATE_MAX
 } RunState;
 
@@ -52,6 +53,7 @@ void runstate_init(void);
 bool runstate_check(RunState state);
 void runstate_set(RunState new_state);
 int runstate_is_running(void);
+bool runstate_needs_reset(void);
 const char *runstate_as_string(void);
 typedef struct vm_change_state_entry VMChangeStateEntry;
 typedef void VMChangeStateHandler(void *opaque, int running, RunState state);
@@ -127,6 +129,7 @@ int qemu_loadvm_state(QEMUFile *f);
 void do_info_slirp(Monitor *mon);
 
 void os_setup_early_signal_handling(void);
+int os_mlock(void);
 
 typedef enum DisplayType
 {

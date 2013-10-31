@@ -4,6 +4,7 @@
 #include "qemu-char.h"
 #include "qdict.h"
 #include "notify.h"
+#include "error.h"
 
 /* keyboard/mouse support */
 
@@ -353,7 +354,6 @@ void vga_hw_text_update(console_ch_t *chardata);
 
 int is_graphic_console(void);
 int is_fixedsize_console(void);
-CharDriverState *text_console_init(QemuOpts *opts);
 void text_consoles_set_display(DisplayState *ds);
 void console_select(unsigned int index);
 void console_color_init(DisplayState *ds);
@@ -370,7 +370,7 @@ void cocoa_display_init(DisplayState *ds, int full_screen);
 /* vnc.c */
 void vnc_display_init(DisplayState *ds);
 void vnc_display_close(DisplayState *ds);
-int vnc_display_open(DisplayState *ds, const char *display);
+void vnc_display_open(DisplayState *ds, const char *display, Error **errp);
 int vnc_display_password(DisplayState *ds, const char *password);
 int vnc_display_pw_expire(DisplayState *ds, time_t expires);
 void do_info_vnc_print(Monitor *mon, const QObject *data);

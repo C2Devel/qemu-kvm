@@ -728,6 +728,16 @@ void qemu_spice_init(void)
         spice_server_set_agent_copypaste(spice_server, false);
     }
 
+    if (qemu_opt_get_bool(opts, "disable-agent-file-xfer", 0)) {
+#if SPICE_SERVER_VERSION >= 0x000c04
+        spice_server_set_agent_file_xfer(spice_server, false);
+#else
+        error_report("this qemu build does not support the "
+                     "\"disable-agent-file-xfer\" option");
+        exit(1);
+#endif
+    }
+
     compression = SPICE_IMAGE_COMPRESS_AUTO_GLZ;
     str = qemu_opt_get(opts, "image-compression");
     if (str) {

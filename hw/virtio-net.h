@@ -28,6 +28,8 @@
 /* The feature bitmap for virtio net */
 #define VIRTIO_NET_F_CSUM       0       /* Host handles pkts w/ partial csum */
 #define VIRTIO_NET_F_GUEST_CSUM 1       /* Guest handles pkts w/ partial csum */
+#define VIRTIO_NET_F_CTRL_GUEST_OFFLOADS 2 /* Control channel offload
+                                         * configuration support */
 #define VIRTIO_NET_F_MAC        5       /* Host has given MAC address. */
 #define VIRTIO_NET_F_GSO        6       /* Host handles pkts w/ any GSO type */
 #define VIRTIO_NET_F_GUEST_TSO4 7       /* Guest can handle TSOv4 in. */
@@ -44,6 +46,8 @@
 #define VIRTIO_NET_F_CTRL_RX    18      /* Control channel RX mode support */
 #define VIRTIO_NET_F_CTRL_VLAN  19      /* Control channel VLAN filtering */
 #define VIRTIO_NET_F_CTRL_RX_EXTRA 20   /* Extra RX mode control support */
+
+#define VIRTIO_NET_F_CTRL_MAC_ADDR   23 /* Set MAC address */
 
 #define VIRTIO_NET_S_LINK_UP    1       /* Link is up */
 
@@ -125,16 +129,16 @@ typedef uint8_t virtio_net_ctrl_ack;
  * 0 and 1 are supported with the VIRTIO_NET_F_CTRL_RX feature.
  * Commands 2-5 are added with VIRTIO_NET_F_CTRL_RX_EXTRA.
  */
-#define VIRTIO_NET_CTRL_RX_MODE    0
- #define VIRTIO_NET_CTRL_RX_MODE_PROMISC      0
- #define VIRTIO_NET_CTRL_RX_MODE_ALLMULTI     1
- #define VIRTIO_NET_CTRL_RX_MODE_ALLUNI       2
- #define VIRTIO_NET_CTRL_RX_MODE_NOMULTI      3
- #define VIRTIO_NET_CTRL_RX_MODE_NOUNI        4
- #define VIRTIO_NET_CTRL_RX_MODE_NOBCAST      5
+#define VIRTIO_NET_CTRL_RX    0
+ #define VIRTIO_NET_CTRL_RX_PROMISC      0
+ #define VIRTIO_NET_CTRL_RX_ALLMULTI     1
+ #define VIRTIO_NET_CTRL_RX_ALLUNI       2
+ #define VIRTIO_NET_CTRL_RX_NOMULTI      3
+ #define VIRTIO_NET_CTRL_RX_NOUNI        4
+ #define VIRTIO_NET_CTRL_RX_NOBCAST      5
 
 /*
- * Control the MAC filter table.
+ * Control the MAC
  *
  * The MAC filter table is managed by the hypervisor, the guest should
  * assume the size is infinite.  Filtering should be considered
@@ -147,6 +151,10 @@ typedef uint8_t virtio_net_ctrl_ack;
  * first sg list contains unicast addresses, the second is for multicast.
  * This functionality is present if the VIRTIO_NET_F_CTRL_RX feature
  * is available.
+ *
+ * The ADDR_SET command requests one out scatterlist, it contains a
+ * 6 bytes MAC address. This functionality is present if the
+ * VIRTIO_NET_F_CTRL_MAC_ADDR feature is available.
  */
 struct virtio_net_ctrl_mac {
     uint32_t entries;
@@ -154,6 +162,7 @@ struct virtio_net_ctrl_mac {
 };
 #define VIRTIO_NET_CTRL_MAC    1
  #define VIRTIO_NET_CTRL_MAC_TABLE_SET        0
+ #define VIRTIO_NET_CTRL_MAC_ADDR_SET         1
 
 /*
  * Control VLAN filtering
@@ -167,6 +176,15 @@ struct virtio_net_ctrl_mac {
 #define VIRTIO_NET_CTRL_VLAN       2
  #define VIRTIO_NET_CTRL_VLAN_ADD             0
  #define VIRTIO_NET_CTRL_VLAN_DEL             1
+
+/*
+ * Control network offloads
+ *
+ * Dynamic offloads are available with the
+ * VIRTIO_NET_F_CTRL_GUEST_OFFLOADS feature bit.
+ */
+#define VIRTIO_NET_CTRL_GUEST_OFFLOADS   5
+ #define VIRTIO_NET_CTRL_GUEST_OFFLOADS_SET        0
 
 #define DEFINE_VIRTIO_NET_FEATURES(_state, _field) \
         DEFINE_VIRTIO_COMMON_FEATURES(_state, _field), \
@@ -186,5 +204,7 @@ struct virtio_net_ctrl_mac {
         DEFINE_PROP_BIT("ctrl_vq", _state, _field, VIRTIO_NET_F_CTRL_VQ, true), \
         DEFINE_PROP_BIT("ctrl_rx", _state, _field, VIRTIO_NET_F_CTRL_RX, true), \
         DEFINE_PROP_BIT("ctrl_vlan", _state, _field, VIRTIO_NET_F_CTRL_VLAN, true), \
-        DEFINE_PROP_BIT("ctrl_rx_extra", _state, _field, VIRTIO_NET_F_CTRL_RX_EXTRA, true)
+        DEFINE_PROP_BIT("ctrl_rx_extra", _state, _field, VIRTIO_NET_F_CTRL_RX_EXTRA, true), \
+        DEFINE_PROP_BIT("ctrl_guest_offloads", _state, _field, VIRTIO_NET_F_CTRL_GUEST_OFFLOADS, true), \
+        DEFINE_PROP_BIT("ctrl_mac_addr", _state, _field, VIRTIO_NET_F_CTRL_MAC_ADDR, true)
 #endif

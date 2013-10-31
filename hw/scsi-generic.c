@@ -202,7 +202,9 @@ static void scsi_read_complete(void * opaque, int ret)
         scsi_command_complete(r, 0);
     } else {
         /* Snoop READ CAPACITY output to set the blocksize.  */
-        if (r->req.cmd.buf[0] == READ_CAPACITY_10) {
+        if (r->req.cmd.buf[0] == READ_CAPACITY_10 &&
+	    (r->buf[0] != 0xFF || r->buf[1] != 0xFF || r->buf[2] != 0xFF ||
+	     r->buf[3] != 0xFF || s->max_lba == 0)) {
             s->blocksize = (r->buf[4] << 24) | (r->buf[5] << 16) |
                            (r->buf[6] << 8) | r->buf[7];
             s->max_lba = ((uint64_t) r->buf[0] << 24) | ((uint64_t) r->buf[1] << 16) |

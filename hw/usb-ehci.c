@@ -2364,12 +2364,14 @@ static PCIDeviceInfo ehci_info[] = {
         .qdev.name    = "usb-ehci",
         .qdev.size    = sizeof(EHCIState),
         .qdev.vmsd    = &vmstate_ehci,
+        .no_hotplug   = 1,
         .init         = usb_ehci_initfn,
         .qdev.props   = ehci_properties,
     },{
         .qdev.name    = "ich9-usb-ehci1",
         .qdev.size    = sizeof(EHCIState),
         .qdev.vmsd    = &vmstate_ehci,
+        .no_hotplug   = 1,
         .init         = usb_ehci_initfn_ich9,
         .qdev.props   = ehci_properties,
     },{

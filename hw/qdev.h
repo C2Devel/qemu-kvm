@@ -99,6 +99,7 @@ enum PropertyType {
     PROP_TYPE_VLAN,
     PROP_TYPE_PTR,
     PROP_TYPE_BIT,
+    PROP_TYPE_BLOCKSIZE,
 };
 
 struct PropertyInfo {
@@ -226,6 +227,7 @@ extern PropertyInfo qdev_prop_drive;
 extern PropertyInfo qdev_prop_netdev;
 extern PropertyInfo qdev_prop_vlan;
 extern PropertyInfo qdev_prop_pci_devfn;
+extern PropertyInfo qdev_prop_blocksize;
 
 #define DEFINE_PROP(_name, _state, _field, _prop, _type) { \
         .name      = (_name),                                    \
@@ -280,6 +282,8 @@ extern PropertyInfo qdev_prop_pci_devfn;
     DEFINE_PROP(_n, _s, _f, qdev_prop_drive, BlockDriverState *)
 #define DEFINE_PROP_MACADDR(_n, _s, _f)         \
     DEFINE_PROP(_n, _s, _f, qdev_prop_macaddr, MACAddr)
+#define DEFINE_PROP_BLOCKSIZE(_n, _s, _f, _d) \
+    DEFINE_PROP_DEFAULT(_n, _s, _f, _d, qdev_prop_blocksize, uint16_t)
 
 #define DEFINE_PROP_END_OF_LIST()               \
     {}
@@ -295,6 +299,7 @@ void qdev_prop_set_uint16(DeviceState *dev, const char *name, uint16_t value);
 void qdev_prop_set_uint32(DeviceState *dev, const char *name, uint32_t value);
 void qdev_prop_set_int32(DeviceState *dev, const char *name, int32_t value);
 void qdev_prop_set_uint64(DeviceState *dev, const char *name, uint64_t value);
+void qdev_prop_set_string(DeviceState *dev, const char *name, const char *value);
 void qdev_prop_set_chr(DeviceState *dev, const char *name, CharDriverState *value);
 void qdev_prop_set_netdev(DeviceState *dev, const char *name, VLANClientState *value);
 void qdev_prop_set_vlan(DeviceState *dev, const char *name, VLANState *value);

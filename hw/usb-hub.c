@@ -33,6 +33,7 @@ typedef struct USBHubPort {
     USBPort port;
     uint16_t wPortStatus;
     uint16_t wPortChange;
+    uint16_t wPortChange_reported;
 } USBHubPort;
 
 typedef struct USBHubState {
@@ -416,8 +417,11 @@ static int usb_hub_handle_data(USBDevice *dev, USBPacket *p)
             status = 0;
             for(i = 0; i < NUM_PORTS; i++) {
                 port = &s->ports[i];
-                if (port->wPortChange)
+                if (port->wPortChange &&
+                    port->wPortChange_reported != port->wPortChange) {
                     status |= (1 << (i + 1));
+                }
+                port->wPortChange_reported = port->wPortChange;
             }
             if (status != 0) {
                 for(i = 0; i < n; i++) {
@@ -502,6 +506,11 @@ static int usb_hub_initfn(USBDevice *dev)
     USBHubState *s = DO_UPCAST(USBHubState, dev, dev);
     USBHubPort *port;
     int i;
+
+    if (dev->port->hubcount == 5) {
+        error_report("usb hub chain too deep");
+        return -1;
+    }
 
     usb_desc_create_serial(dev);
     usb_desc_init(dev);

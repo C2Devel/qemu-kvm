@@ -17,6 +17,25 @@
 #include "qemu-queue.h"
 
 #ifndef CONFIG_USER_ONLY
+typedef struct GuestPhysBlock {
+    /* visible to guest, reflects PCI hole, etc */
+    target_phys_addr_t target_start;
+
+    /* implies size */
+    target_phys_addr_t target_end;
+
+    /* points into host memory */
+    uint8_t *host_addr;
+
+    QTAILQ_ENTRY(GuestPhysBlock) next;
+} GuestPhysBlock;
+
+/* point-in-time snapshot of guest-visible physical mappings */
+typedef struct GuestPhysBlockList {
+    unsigned num;
+    QTAILQ_HEAD(GuestPhysBlockHead, GuestPhysBlock) head;
+} GuestPhysBlockList;
+
 /* The physical and virtual address in the memory mapping are contiguous. */
 typedef struct MemoryMapping {
     target_phys_addr_t phys_addr;
@@ -45,6 +64,10 @@ void memory_mapping_list_free(MemoryMappingList *list);
 
 void memory_mapping_list_init(MemoryMappingList *list);
 
+void guest_phys_blocks_free(GuestPhysBlockList *list);
+void guest_phys_blocks_init(GuestPhysBlockList *list);
+void guest_phys_blocks_append(GuestPhysBlockList *list);
+
 /*
  * Return value:
  *    0: success
@@ -52,16 +75,20 @@ void memory_mapping_list_init(MemoryMappingList *list);
  *   -2: unsupported
  */
 #if defined(CONFIG_HAVE_GET_MEMORY_MAPPING)
-int qemu_get_guest_memory_mapping(MemoryMappingList *list);
+int qemu_get_guest_memory_mapping(MemoryMappingList *list,
+                                  const GuestPhysBlockList *guest_phys_blocks);
 #else
-static inline int qemu_get_guest_memory_mapping(MemoryMappingList *list)
+static inline
+int qemu_get_guest_memory_mapping(MemoryMappingList *list,
+                                  const GuestPhysBlockList *guest_phys_blocks)
 {
     return -2;
 }
 #endif
 
 /* get guest's memory mapping without do paging(virtual address is 0). */
-void qemu_get_guest_simple_memory_mapping(MemoryMappingList *list);
+void qemu_get_guest_simple_memory_mapping(MemoryMappingList *list,
+                                  const GuestPhysBlockList *guest_phys_blocks);
 
 void memory_mapping_filter(MemoryMappingList *list, int64_t begin,
                            int64_t length);

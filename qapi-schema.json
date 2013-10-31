@@ -224,6 +224,53 @@
 #endif
 
 ##
+# @ImageCheck:
+#
+# Information about a QEMU image file check
+#
+# @filename: name of the image file checked
+#
+# @format: format of the image file checked
+#
+# @check-errors: number of unexpected errors occurred during check
+#
+# @image-end-offset: #optional offset (in bytes) where the image ends, this
+#                    field is present if the driver for the image format
+#                    supports it
+#
+# @corruptions: #optional number of corruptions found during the check if any
+#
+# @leaks: #optional number of leaks found during the check if any
+#
+# @corruptions-fixed: #optional number of corruptions fixed during the check
+#                     if any
+#
+# @leaks-fixed: #optional number of leaks fixed during the check if any
+#
+# @total-clusters: #optional total number of clusters, this field is present
+#                  if the driver for the image format supports it
+#
+# @allocated-clusters: #optional total number of allocated clusters, this
+#                      field is present if the driver for the image format
+#                      supports it
+#
+# @fragmented-clusters: #optional total number of fragmented clusters, this
+#                       field is present if the driver for the image format
+#                       supports it
+#
+# Since: 1.4
+#
+##
+
+{ 'type': 'ImageCheck',
+  'data': {'filename': 'str', 'format': 'str', 'check-errors': 'int',
+           '*image-end-offset': 'int', '*corruptions': 'int', '*leaks': 'int',
+           '*corruptions-fixed': 'int', '*leaks-fixed': 'int',
+           '*total-clusters': 'int', '*allocated-clusters': 'int',
+           '*fragmented-clusters': 'int' } }
+
+
+##
 # @EventInfo:
 #
 # Information about a QMP event
@@ -296,3 +343,268 @@
 { 'command': 'dump-guest-memory',
   'data': { 'paging': 'bool', 'protocol': 'str', '*begin': 'int',
             '*length': 'int' } }
+
+##
+# @String
+#
+# A fat type wrapping 'str', to be embedded in lists.
+#
+# Since 1.2
+##
+{ 'type': 'String',
+  'data': {
+    'str': 'str' } }
+
+##
+# @InetSocketAddress
+#
+# Captures a socket address or address range in the Internet namespace.
+#
+# @host: host part of the address
+#
+# @port: port part of the address, or lowest port if @to is present
+#
+# @to: highest port to try
+#
+# @ipv4: whether to accept IPv4 addresses, default try both IPv4 and IPv6
+#        #optional
+#
+# @ipv6: whether to accept IPv6 addresses, default try both IPv4 and IPv6
+#        #optional
+#
+# Since 1.3
+##
+{ 'type': 'InetSocketAddress',
+  'data': {
+    'host': 'str',
+    'port': 'str',
+    '*to': 'uint16',
+    '*ipv4': 'bool',
+    '*ipv6': 'bool' } }
+
+##
+# @UnixSocketAddress
+#
+# Captures a socket address in the local ("Unix socket") namespace.
+#
+# @path: filesystem path to use
+#
+# Since 1.3
+##
+{ 'type': 'UnixSocketAddress',
+  'data': {
+    'path': 'str' } }
+
+##
+# @SocketAddress
+#
+# Captures the address of a socket, which could also be a named file descriptor
+#
+# Since 1.3
+##
+{ 'union': 'SocketAddress',
+  'data': {
+    'inet': 'InetSocketAddress',
+    'unix': 'UnixSocketAddress',
+    'fd': 'String' } }
+
+##
+## @ChardevFile:
+#
+# Configuration info for file chardevs.
+#
+# @in:  #optional The name of the input file
+# @out: The name of the output file
+#
+# Since: 1.4
+##
+{ 'type': 'ChardevFile', 'data': { '*in' : 'str',
+                                   'out' : 'str' } }
+
+##
+# @ChardevHostdev:
+#
+# Configuration info for device and pipe chardevs.
+#
+# @device: The name of the special file for the device,
+#          i.e. /dev/ttyS0 on Unix or COM1: on Windows
+# @type: What kind of device this is.
+#
+# Since: 1.4
+##
+{ 'type': 'ChardevHostdev', 'data': { 'device' : 'str' } }
+
+##
+# @ChardevSocket:
+#
+# Configuration info for (stream) socket chardevs.
+#
+# @addr: socket address to listen on (server=true)
+#        or connect to (server=false)
+# @server: #optional create server socket (default: true)
+# @wait: #optional wait for incoming connection on server
+#        sockets (default: false).
+# @nodelay: #optional set TCP_NODELAY socket option (default: false)
+# @telnet: #optional enable telnet protocol on server
+#          sockets (default: false)
+#
+# Since: 1.4
+##
+{ 'type': 'ChardevSocket', 'data': { 'addr'     : 'SocketAddress',
+                                     '*server'  : 'bool',
+                                     '*wait'    : 'bool',
+                                     '*nodelay' : 'bool',
+                                     '*telnet'  : 'bool' } }
+
+##
+# @ChardevDgram:
+#
+# Configuration info for datagram socket chardevs.
+#
+# @remote: remote address
+# @local: #optional local address
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevDgram', 'data': { 'remote' : 'SocketAddress',
+                                    '*local' : 'SocketAddress' } }
+
+##
+# @ChardevMux:
+#
+# Configuration info for mux chardevs.
+#
+# @chardev: name of the base chardev.
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevMux', 'data': { 'chardev' : 'str' } }
+
+##
+# @ChardevStdio:
+#
+# Configuration info for stdio chardevs.
+#
+# @signal: #optional Allow signals (such as SIGINT triggered by ^C)
+#          be delivered to qemu.  Default: true in -nographic mode,
+#          false otherwise.
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevStdio', 'data': { '*signal' : 'bool' } }
+
+##
+# @ChardevSpiceChannel:
+#
+# Configuration info for spice vm channel chardevs.
+#
+# @type: kind of channel (for example vdagent).
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevSpiceChannel', 'data': { 'type'  : 'str' } }
+
+##
+# @ChardevSpicePort:
+#
+# Configuration info for spice port chardevs.
+#
+# @fqdn: name of the channel (see docs/spice-port-fqdn.txt)
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevSpicePort', 'data': { 'fqdn'  : 'str' } }
+
+##
+# @ChardevVC:
+#
+# Configuration info for virtual console chardevs.
+#
+# @width:  console width,  in pixels
+# @height: console height, in pixels
+# @cols:   console width,  in chars
+# @rows:   console height, in chars
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevVC', 'data': { '*width'  : 'int',
+                                 '*height' : 'int',
+                                 '*cols'   : 'int',
+                                 '*rows'   : 'int' } }
+
+##
+# @ChardevRingbuf:
+#
+# Configuration info for memory chardevs
+#
+# @size: #optional Ringbuffer size, must be power of two, default is 65536
+#
+# Since: 1.5
+##
+{ 'type': 'ChardevRingbuf', 'data': { '*size'  : 'int' } }
+
+##
+# @ChardevBackend:
+#
+# Configuration info for the new chardev backend.
+#
+# Since: 1.4
+##
+{ 'type': 'ChardevDummy', 'data': { } }
+
+{ 'union': 'ChardevBackend', 'data': { 'file'   : 'ChardevFile',
+                                       'serial' : 'ChardevHostdev',
+                                       'parallel': 'ChardevHostdev',
+                                       'pipe'   : 'ChardevHostdev',
+                                       'socket' : 'ChardevSocket',
+                                       'dgram'  : 'ChardevDgram',
+                                       'pty'    : 'ChardevDummy',
+                                       'null'   : 'ChardevDummy',
+                                       'mux'    : 'ChardevMux',
+                                       'msmouse': 'ChardevDummy',
+                                       'braille': 'ChardevDummy',
+                                       'stdio'  : 'ChardevStdio',
+                                       'console': 'ChardevDummy',
+                                       'spicevmc' : 'ChardevSpiceChannel',
+                                       'spiceport' : 'ChardevSpicePort',
+                                       'vc'     : 'ChardevVC',
+                                       'memory' : 'ChardevRingbuf' } }
+
+##
+# @ChardevReturn:
+#
+# Return info about the chardev backend just created.
+#
+# Since: 1.4
+##
+{ 'type' : 'ChardevReturn', 'data': { '*pty' : 'str' } }
+
+##
+# @chardev-add:
+#
+# Add a file chardev
+#
+# @id: the chardev's ID, must be unique
+# @backend: backend type and parameters
+#
+# Returns: chardev info.
+#
+# Since: 1.4
+##
+{ 'command': 'chardev-add', 'data': {'id'      : 'str',
+                                     'backend' : 'ChardevBackend' },
+  'returns': 'ChardevReturn' }
+
+##
+# @chardev-remove:
+#
+# Remove a chardev
+#
+# @id: the chardev's ID, must exist and not be in use
+#
+# Returns: Nothing on success
+#
+# Since: 1.4
+##
+{ 'command': 'chardev-remove', 'data': {'id': 'str'} }
+

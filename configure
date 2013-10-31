@@ -40,7 +40,8 @@ cc="gcc"
 audio_drv_list=""
 audio_card_list="ac97 es1370 sb16"
 audio_possible_cards="ac97 es1370 sb16 cs4231a adlib gus"
-block_drv_whitelist=""
+block_drv_rw_whitelist=""
+block_drv_ro_whitelist=""
 host_cc="gcc"
 ar="ar"
 make="make"
@@ -287,8 +288,10 @@ smartcard=""
 smartcard_nss=""
 live_snapshots="yes"
 block_stream="yes"
+io_throttling="yes"
 usb_redir=""
 virtio_blk_data_plane=""
+glusterfs=""
 
 # OS specific
 if check_define __linux__ ; then
@@ -512,7 +515,9 @@ for opt do
   ;;
   --audio-drv-list=*) audio_drv_list="$optarg"
   ;;
-  --block-drv-whitelist=*) block_drv_whitelist=`echo "$optarg" | sed -e 's/,/ /g'`
+  --block-drv-rw-whitelist=*|--block-drv-whitelist=*) block_drv_rw_whitelist=`echo "$optarg" | sed -e 's/,/ /g'`
+  ;;
+  --block-drv-ro-whitelist=*) block_drv_ro_whitelist=`echo "$optarg" | sed -e 's/,/ /g'`
   ;;
   --enable-debug-tcg) debug_tcg="yes"
   ;;
@@ -692,6 +697,10 @@ for opt do
   ;;
   --enable-block-stream) block_stream="yes"
   ;;
+  --disable-io-throttling) io_throttling="no"
+  ;;
+  --enable-io-throttling) io_throttling="yes"
+  ;;
   --disable-usb-redir) usb_redir="no"
   ;;
   --enable-usb-redir) usb_redir="yes"
@@ -699,14 +708,20 @@ for opt do
   --disable-rhev-features)
        live_snapshots="no";
        block_stream="no";
+       io_throttling="no";
   ;;
   --enable-rhev-features)
        live_snapshots="yes";
        block_stream="yes";
+       io_throttling="yes";
   ;;
   --disable-virtio-blk-data-plane) virtio_blk_data_plane="no"
   ;;
   --enable-virtio-blk-data-plane) virtio_blk_data_plane="yes"
+  ;;
+  --disable-glusterfs) glusterfs="no"
+  ;;
+  --enable-glusterfs) glusterfs="yes"
   ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
@@ -793,7 +808,7 @@ echo "  --make=MAKE              use specified make [$make]"
 echo "  --install=INSTALL        use specified install [$install]"
 echo "  --static                 enable static build [$static]"
 echo "  --sysconfdir=PATH        install config in PATH"
-echo "  --localstatedir=PATH     install local state in PATH"
+echo "  --localstatedir=PATH     install local state in PATH (set at runtime on win32)"
 echo "  --enable-debug-tcg       enable TCG debugging"
 echo "  --disable-debug-tcg      disable TCG debugging (default)"
 echo "  --enable-debug           enable common debug build options"
@@ -808,7 +823,12 @@ echo "  --audio-drv-list=LIST    set audio drivers list:"
 echo "                           Available drivers: $audio_possible_drivers"
 echo "  --audio-card-list=LIST   set list of emulated audio cards [$audio_card_list]"
 echo "                           Available cards: $audio_possible_cards"
-echo "  --block-drv-whitelist=L  set block driver whitelist"
+echo "  --block-drv-whitelist=L  Same as --block-drv-rw-whitelist=L"
+echo "  --block-drv-rw-whitelist=L"
+echo "                           set block driver read-write whitelist"
+echo "                           (affects only QEMU, not qemu-img)"
+echo "  --block-drv-ro-whitelist=L"
+echo "                           set block driver read-only whitelist"
 echo "                           (affects only QEMU, not qemu-img)"
 echo "  --enable-mixemu          enable mixer emulation"
 echo "  --disable-xen            disable xen backend driver support"
@@ -883,10 +903,14 @@ echo "  --disable-live-snapshots disable live block device snapshot support"
 echo "  --enable-live-snapshots  enable live block device snapshot support"
 echo "  --disable-block-stream   disable block streaming support"
 echo "  --enable-block-stream    enable block streaming support"
+echo "  --disable-io-throttling  disable block io throttling support"
+echo "  --enable-io-throttling   enable block io throttling support"
 echo "  --disable-usb-redir      disable usb network redirection support"
 echo "  --enable-usb-redir       enable usb network redirection support"
 echo "  --disable-rhev-features  disable RHEV-only features"
 echo "  --enable-rhev-features   enable RHEV-only features"
+echo "  --enable-glusterfs       enable GlusterFS backend"
+echo "  --disable-glusterfs      disable GlusterFS backend"
 echo ""
 echo "NOTE: The object files are built at the place where configure is launched"
 exit 1
@@ -1510,9 +1534,9 @@ fi
 
 ##########################################
 # glib support probe
-if $pkg_config --modversion glib-2.0 > /dev/null 2>&1 ; then
-    glib_cflags=`$pkg_config --cflags glib-2.0 2>/dev/null`
-    glib_libs=`$pkg_config --libs glib-2.0 2>/dev/null`
+if $pkg_config --modversion glib-2.0 gmodule-2.0 > /dev/null 2>&1 ; then
+    glib_cflags=`$pkg_config --cflags glib-2.0 gmodule-2.0 2>/dev/null`
+    glib_libs=`$pkg_config --libs glib-2.0 gmodule-2.0 2>/dev/null`
     LIBS="$glib_libs $LIBS"
     LIBS="$glib_libs $LIBS"
     libs_qga="$glib_libs $libs_qga"
@@ -1782,6 +1806,29 @@ EOF
       feature_not_found "fdt"
     fi
     fdt=no
+  fi
+fi
+
+##########################################
+# glusterfs probe
+if test "$glusterfs" != "no" ; then
+  cat > $TMPC <<EOF
+#include <glusterfs/api/glfs.h>
+int main(void) {
+    (void) glfs_new("volume");
+    return 0;
+}
+EOF
+  glusterfs_libs="-lgfapi -lgfrpc -lgfxdr"
+  if compile_prog "" "$glusterfs_libs" ; then
+    glusterfs=yes
+    libs_tools="$glusterfs_libs $libs_tools"
+    libs_softmmu="$glusterfs_libs $libs_softmmu"
+  else
+    if test "$glusterfs" = "yes" ; then
+      feature_not_found "GlusterFS backend support"
+    fi
+    glusterfs=no
   fi
 fi
 
@@ -2223,9 +2270,8 @@ if test "$mingw32" = "yes" ; then
   if test -z "$sysconfdir" ; then
       sysconfdir="${prefix}"
   fi
-  if test -z "$local_statedir" ; then
-      local_statedir="${prefix}"
-  fi
+  # no need to set a fixed default local_statedir on Win32, the value depends
+  # on the runtime environment
 else
   if test -z "$prefix" ; then
       prefix="/usr/local"
@@ -2260,8 +2306,11 @@ echo "Install prefix    $prefix"
 echo "BIOS directory    $prefix$datasuffix"
 echo "binary directory  $prefix$binsuffix"
 if test "$mingw32" = "no" ; then
+echo "local state directory   `eval echo $local_statedir`"
 echo "Manual directory  $prefix$mansuffix"
 echo "ELF interp prefix $interp_prefix"
+else
+echo "local state directory   queried at runtime"
 fi
 echo "Source path       $source_path"
 echo "C compiler        $cc"
@@ -2292,7 +2341,8 @@ echo "check support     $check_utests"
 echo "mingw32 support   $mingw32"
 echo "Audio drivers     $audio_drv_list"
 echo "Extra audio cards $audio_card_list"
-echo "Block whitelist   $block_drv_whitelist"
+echo "Block whitelist (rw) $block_drv_rw_whitelist"
+echo "Block whitelist (ro) $block_drv_ro_whitelist"
 echo "Mixer emulation   $mixemu"
 echo "VNC TLS support   $vnc_tls"
 echo "VNC SASL support  $vnc_sasl"
@@ -2328,9 +2378,11 @@ echo "spice support     $spice ($spice_protocol_version/$spice_server_version)"
 echo "nss used          $smartcard_nss"
 echo "Live snapshots    $live_snapshots"
 echo "Block streaming   $block_stream"
+echo "IO throttling     $io_throttling"
 echo "xfsctl support    $xfs"
 echo "usb net redir     $usb_redir"
 echo "virtio-blk-data-plane $virtio_blk_data_plane"
+echo "GlusterFS support $glusterfs"
 
 if test $sdl_too_old = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -2437,7 +2489,8 @@ fi
 if test "$audio_win_int" = "yes" ; then
   echo "CONFIG_AUDIO_WIN_INT=y" >> $config_host_mak
 fi
-echo "CONFIG_BDRV_WHITELIST=$block_drv_whitelist" >> $config_host_mak
+echo "CONFIG_BDRV_RW_WHITELIST=$block_drv_rw_whitelist" >> $config_host_mak
+echo "CONFIG_BDRV_RO_WHITELIST=$block_drv_ro_whitelist" >> $config_host_mak
 if test "$mixemu" = "yes" ; then
   echo "CONFIG_MIXEMU=y" >> $config_host_mak
 fi
@@ -2591,6 +2644,10 @@ if test "$block_stream" = "yes" ; then
   echo "CONFIG_BLOCK_STREAM=y" >> $config_host_mak
 fi
 
+if test "$io_throttling" = "yes" ; then
+  echo "CONFIG_BLOCK_IO_THROTTLING=y" >> $config_host_mak
+fi
+
 if test "$usb_redir" = "yes" ; then
   echo "CONFIG_USB_REDIR=y" >> $config_host_mak
 fi
@@ -2612,6 +2669,10 @@ fi
 
 if test "$has_environ" = "yes" ; then
   echo "CONFIG_HAS_ENVIRON=y" >> $config_host_mak
+fi
+
+if test "$glusterfs" = "yes" ; then
+  echo "CONFIG_GLUSTERFS=y" >> $config_host_mak
 fi
 
 # USB host support
@@ -2662,7 +2723,9 @@ echo "bindir=\${prefix}$binsuffix" >> $config_host_mak
 echo "mandir=\${prefix}$mansuffix" >> $config_host_mak
 echo "datadir=\${prefix}$datasuffix" >> $config_host_mak
 echo "sysconfdir=$sysconfdir" >> $config_host_mak
-echo "qemu_localstatedir=$local_statedir" >> $config_host_mak
+if test "$mingw32" = "no" ; then
+  echo "qemu_localstatedir=$local_statedir" >> $config_host_mak
+fi
 echo "docdir=\${prefix}$docsuffix" >> $config_host_mak
 echo "MAKE=$make" >> $config_host_mak
 echo "INSTALL=$install" >> $config_host_mak

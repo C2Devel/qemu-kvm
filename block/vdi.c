@@ -59,9 +59,6 @@
 /* TODO: move uuid emulation to some central place in QEMU. */
 #include "sysemu.h"     /* UUID_FMT */
 typedef unsigned char uuid_t[16];
-void uuid_generate(uuid_t out);
-int uuid_is_null(const uuid_t uu);
-void uuid_unparse(const uuid_t uu, char *out);
 #endif
 
 /* Code configuration options. */
@@ -118,18 +115,18 @@ void uuid_unparse(const uuid_t uu, char *out);
 #define VDI_UNALLOCATED UINT32_MAX
 
 #if !defined(CONFIG_UUID)
-void uuid_generate(uuid_t out)
+static inline void uuid_generate(uuid_t out)
 {
-    memset(out, 0, sizeof(out));
+    memset(out, 0, sizeof(uuid_t));
 }
 
-int uuid_is_null(const uuid_t uu)
+static inline int uuid_is_null(const uuid_t uu)
 {
     uuid_t null_uuid = { 0 };
-    return memcmp(uu, null_uuid, sizeof(uu)) == 0;
+    return memcmp(uu, null_uuid, sizeof(uuid_t)) == 0;
 }
 
-void uuid_unparse(const uuid_t uu, char *out)
+static inline void uuid_unparse(const uuid_t uu, char *out)
 {
     snprintf(out, 37, UUID_FMT,
             uu[0], uu[1], uu[2], uu[3], uu[4], uu[5], uu[6], uu[7],
@@ -291,7 +288,8 @@ static void vdi_header_print(VdiHeader *header)
 }
 #endif
 
-static int vdi_check(BlockDriverState *bs, BdrvCheckResult *res)
+static int vdi_check(BlockDriverState *bs, BdrvCheckResult *res,
+                     BdrvCheckMode fix)
 {
     /* TODO: additional checks possible. */
     BDRVVdiState *s = (BDRVVdiState *)bs->opaque;
@@ -299,6 +297,10 @@ static int vdi_check(BlockDriverState *bs, BdrvCheckResult *res)
     uint32_t block;
     uint32_t *bmap;
     logout("\n");
+
+    if (fix) {
+        return -ENOTSUP;
+    }
 
     bmap = g_malloc(s->header.blocks_in_image * sizeof(uint32_t));
     memset(bmap, 0xff, s->header.blocks_in_image * sizeof(uint32_t));

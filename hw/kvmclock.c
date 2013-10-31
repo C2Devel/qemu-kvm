@@ -29,40 +29,6 @@ typedef struct KVMClockState {
 
 static KVMClockState kvmclock_state;
 
-static void kvmclock_pre_save(void *opaque)
-{
-    KVMClockState *s = opaque;
-    struct kvm_clock_data data;
-    int ret;
-
-    if (s->clock_valid) {
-        return;
-    }
-
-    ret = kvm_vm_ioctl(kvm_state, KVM_GET_CLOCK, &data);
-    if (ret < 0) {
-        fprintf(stderr, "KVM_GET_CLOCK failed: %s\n", strerror(ret));
-        data.clock = 0;
-    }
-    s->clock = data.clock;
-    /*
-     * If the VM is stopped, declare the clock state valid to avoid re-reading
-     * it on next vmsave (which would return a different value). Will be reset
-     * when the VM is continued.
-     */
-    s->clock_valid = !runstate_is_running();
-}
-
-static int kvmclock_post_load(void *opaque, int version_id)
-{
-    KVMClockState *s = opaque;
-    struct kvm_clock_data data;
-
-    data.clock = s->clock;
-    data.flags = 0;
-    return kvm_vm_ioctl(kvm_state, KVM_SET_CLOCK, &data);
-}
-
 static void kvmclock_vm_state_change(void *opaque, int running, RunState state)
 {
     KVMClockState *s = opaque;
@@ -71,7 +37,17 @@ static void kvmclock_vm_state_change(void *opaque, int running, RunState state)
     int ret;
 
     if (running) {
+        struct kvm_clock_data data;
+
         s->clock_valid = false;
+
+        data.clock = s->clock;
+        data.flags = 0;
+        ret = kvm_vm_ioctl(kvm_state, KVM_SET_CLOCK, &data);
+        if (ret < 0) {
+            fprintf(stderr, "KVM_SET_CLOCK failed: %s\n", strerror(ret));
+            abort();
+        }
 
         if (!cap_clock_ctrl) {
             return;
@@ -85,6 +61,26 @@ static void kvmclock_vm_state_change(void *opaque, int running, RunState state)
                 return;
             }
         }
+    } else {
+        struct kvm_clock_data data;
+        int ret;
+
+        if (s->clock_valid) {
+            return;
+        }
+        ret = kvm_vm_ioctl(kvm_state, KVM_GET_CLOCK, &data);
+        if (ret < 0) {
+            fprintf(stderr, "KVM_GET_CLOCK failed: %s\n", strerror(ret));
+            abort();
+        }
+        s->clock = data.clock;
+
+        /*
+         * If the VM is stopped, declare the clock state valid to
+         * avoid re-reading it on next vmsave (which would return
+         * a different value). Will be reset when the VM is continued.
+         */
+        s->clock_valid = true;
     }
 }
 
@@ -93,8 +89,6 @@ static const VMStateDescription kvmclock_vmsd = {
     .version_id = 1,
     .minimum_version_id = 1,
     .minimum_version_id_old = 1,
-    .pre_save = kvmclock_pre_save,
-    .post_load = kvmclock_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT64(clock, KVMClockState),
         VMSTATE_END_OF_LIST()

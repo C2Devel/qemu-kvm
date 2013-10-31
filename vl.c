@@ -124,6 +124,8 @@ int main(int argc, char **argv)
 #define main qemu_main
 #endif /* CONFIG_COCOA */
 
+#include <glib.h>
+
 #include "hw/hw.h"
 #include "hw/boards.h"
 #include "hw/usb.h"
@@ -131,7 +133,6 @@ int main(int argc, char **argv)
 #include "hw/pc.h"
 #include "hw/audiodev.h"
 #include "hw/isa.h"
-#include "hw/baum.h"
 #include "hw/bt.h"
 #include "hw/watchdog.h"
 #include "hw/smbios.h"
@@ -268,6 +269,7 @@ int boot_menu;
 #ifdef CONFIG_FAKE_MACHINE
 int fake_machine = 0;
 #endif
+bool boot_strict;
 
 typedef struct FWBootEntry FWBootEntry;
 
@@ -408,6 +410,7 @@ static const RunStateTransition runstate_transitions_def[] = {
     { RUN_STATE_RUNNING, RUN_STATE_SAVE_VM },
     { RUN_STATE_RUNNING, RUN_STATE_SHUTDOWN },
     { RUN_STATE_RUNNING, RUN_STATE_WATCHDOG },
+    { RUN_STATE_RUNNING, RUN_STATE_GUEST_PANICKED },
 
     { RUN_STATE_SAVE_VM, RUN_STATE_RUNNING },
 
@@ -416,6 +419,9 @@ static const RunStateTransition runstate_transitions_def[] = {
 
     { RUN_STATE_WATCHDOG, RUN_STATE_RUNNING },
     { RUN_STATE_WATCHDOG, RUN_STATE_FINISH_MIGRATE },
+
+    { RUN_STATE_GUEST_PANICKED, RUN_STATE_PAUSED },
+    { RUN_STATE_GUEST_PANICKED, RUN_STATE_FINISH_MIGRATE },
 
     { RUN_STATE_MAX, RUN_STATE_MAX },
 };
@@ -435,6 +441,7 @@ static const char *const runstate_name_tbl[RUN_STATE_MAX] = {
     [RUN_STATE_RUNNING] = "running",
     [RUN_STATE_SAVE_VM] = "save-vm",
     [RUN_STATE_SHUTDOWN] = "shutdown",
+    [RUN_STATE_GUEST_PANICKED] = "guest-panicked",
     [RUN_STATE_WATCHDOG] = "watchdog",
 };
 
@@ -467,7 +474,7 @@ void runstate_set(RunState new_state)
            confident enough that we've captured all valid transitions */
         // abort();
     }
-
+    trace_runstate_set(new_state);
     current_run_state = new_state;
 }
 
@@ -481,6 +488,13 @@ const char *runstate_as_string(void)
 int runstate_is_running(void)
 {
     return runstate_check(RUN_STATE_RUNNING);
+}
+
+bool runstate_needs_reset(void)
+{
+    return runstate_check(RUN_STATE_INTERNAL_ERROR) ||
+        runstate_check(RUN_STATE_SHUTDOWN) ||
+        runstate_check(RUN_STATE_GUEST_PANICKED);
 }
 
 /***********************************************************/
@@ -1812,6 +1826,12 @@ static void win32_rearm_timer(struct qemu_alarm_timer *t)
 
 #endif /* _WIN32 */
 
+static void quit_timers(void)
+{
+    alarm_timer->stop(alarm_timer);
+    alarm_timer = NULL;
+}
+
 static int init_timer_alarm(void)
 {
     struct qemu_alarm_timer *t = NULL;
@@ -1831,17 +1851,12 @@ static int init_timer_alarm(void)
     }
 
     alarm_timer = t;
+    atexit(&quit_timers);
 
     return 0;
 
 fail:
     return err;
-}
-
-static void quit_timers(void)
-{
-    alarm_timer->stop(alarm_timer);
-    alarm_timer = NULL;
 }
 
 /***********************************************************/
@@ -2367,6 +2382,12 @@ char *get_boot_devices_list(uint32_t *size)
 
     *size = total;
 
+    if (boot_strict && *size > 0) {
+        list[total-1] = '\n';
+        list = g_realloc(list, total + 5);
+        memcpy(&list[total], "HALT", 5);
+        *size = total + 5;
+    }
     return list;
 }
 
@@ -2459,6 +2480,26 @@ static void smp_parse(const char *optarg)
     smp_threads = threads > 0 ? threads : 1;
     if (max_cpus == 0)
         max_cpus = smp_cpus;
+}
+
+static void configure_realtime(QemuOpts *opts)
+{
+    bool enable_mlock;
+
+    enable_mlock = qemu_opt_get_bool(opts, "mlock", true);
+
+    if (enable_mlock) {
+        if (os_mlock() < 0) {
+            fprintf(stderr, "qemu: locking memory failed\n");
+            exit(1);
+        }
+    }
+}
+
+
+static void configure_msg(QemuOpts *opts)
+{
+    enable_timestamp_msg = qemu_opt_get_bool(opts, "timestamp", true);
 }
 
 /***********************************************************/
@@ -2629,7 +2670,7 @@ static void dumb_display_init(void)
 
 typedef struct IOHandlerRecord {
     int fd;
-    IOCanRWHandler *fd_read_poll;
+    IOCanReadHandler *fd_read_poll;
     IOHandler *fd_read;
     IOHandler *fd_write;
     int deleted;
@@ -2642,46 +2683,11 @@ typedef struct IOHandlerRecord {
 static QLIST_HEAD(, IOHandlerRecord) io_handlers =
     QLIST_HEAD_INITIALIZER(io_handlers);
 
-static IOHandlerRecord *find_iohandler(int fd)
-{
-    IOHandlerRecord *ioh;
-
-    QLIST_FOREACH(ioh, &io_handlers, next) {
-        if (ioh->fd == fd) {
-            return ioh;
-        }
-    }
-    return NULL;
-}
-
-void enable_write_fd_handler(int fd, IOHandler *fd_write)
-{
-    IOHandlerRecord *ioh;
-
-    ioh = find_iohandler(fd);
-    if (!ioh) {
-        return;
-    }
-
-    ioh->fd_write = fd_write;
-}
-
-void disable_write_fd_handler(int fd)
-{
-    IOHandlerRecord *ioh;
-
-    ioh = find_iohandler(fd);
-    if (!ioh) {
-        return;
-    }
-
-    ioh->fd_write = NULL;
-}
 
 /* XXX: fd_read_poll should be suppressed, but an API change is
    necessary in the character devices to suppress fd_can_read(). */
 int qemu_set_fd_handler2(int fd,
-                         IOCanRWHandler *fd_read_poll,
+                         IOCanReadHandler *fd_read_poll,
                          IOHandler *fd_read,
                          IOHandler *fd_write,
                          void *opaque)
@@ -3925,6 +3931,75 @@ void vm_stop(RunState reason)
 #endif
 
 
+static GPollFD poll_fds[1024 * 2]; /* this is probably overkill */
+static int n_poll_fds;
+static int max_priority;
+
+static void glib_select_fill(int *max_fd, fd_set *rfds, fd_set *wfds,
+                             fd_set *xfds, struct timeval *tv)
+{
+    GMainContext *context = g_main_context_default();
+    int i;
+    int timeout = 0, cur_timeout;
+
+    g_main_context_prepare(context, &max_priority);
+
+    n_poll_fds = g_main_context_query(context, max_priority, &timeout,
+                                      poll_fds, ARRAY_SIZE(poll_fds));
+    g_assert(n_poll_fds <= ARRAY_SIZE(poll_fds));
+
+    for (i = 0; i < n_poll_fds; i++) {
+        GPollFD *p = &poll_fds[i];
+
+        if ((p->events & G_IO_IN)) {
+            FD_SET(p->fd, rfds);
+            *max_fd = MAX(*max_fd, p->fd);
+        }
+        if ((p->events & G_IO_OUT)) {
+            FD_SET(p->fd, wfds);
+            *max_fd = MAX(*max_fd, p->fd);
+        }
+        if ((p->events & G_IO_ERR)) {
+            FD_SET(p->fd, xfds);
+            *max_fd = MAX(*max_fd, p->fd);
+        }
+    }
+
+    cur_timeout = (tv->tv_sec * 1000) + ((tv->tv_usec + 500) / 1000);
+    if (timeout >= 0 && timeout < cur_timeout) {
+        tv->tv_sec = timeout / 1000;
+        tv->tv_usec = (timeout % 1000) * 1000;
+    }
+}
+
+static void glib_select_poll(fd_set *rfds, fd_set *wfds, fd_set *xfds,
+                             bool err)
+{
+    GMainContext *context = g_main_context_default();
+
+    if (!err) {
+        int i;
+
+        for (i = 0; i < n_poll_fds; i++) {
+            GPollFD *p = &poll_fds[i];
+
+            if ((p->events & G_IO_IN) && FD_ISSET(p->fd, rfds)) {
+                p->revents |= G_IO_IN;
+            }
+            if ((p->events & G_IO_OUT) && FD_ISSET(p->fd, wfds)) {
+                p->revents |= G_IO_OUT;
+            }
+            if ((p->events & G_IO_ERR) && FD_ISSET(p->fd, xfds)) {
+                p->revents |= G_IO_ERR;
+            }
+        }
+    }
+
+    if (g_main_context_check(context, max_priority, poll_fds, n_poll_fds)) {
+        g_main_context_dispatch(context);
+    }
+}
+
 void main_loop_wait(int timeout)
 {
     IOHandlerRecord *ioh;
@@ -3942,6 +4017,7 @@ void main_loop_wait(int timeout)
     FD_ZERO(&rfds);
     FD_ZERO(&wfds);
     FD_ZERO(&xfds);
+
     QLIST_FOREACH(ioh, &io_handlers, next) {
         if (ioh->deleted)
             continue;
@@ -3963,6 +4039,8 @@ void main_loop_wait(int timeout)
     tv.tv_usec = (timeout % 1000) * 1000;
 
     slirp_select_fill(&nfds, &rfds, &wfds, &xfds);
+
+    glib_select_fill(&nfds, &rfds, &wfds, &xfds, &tv);
 
     qemu_mutex_unlock_iothread();
     ret = select(nfds + 1, &rfds, &wfds, &xfds, &tv);
@@ -3991,6 +4069,7 @@ void main_loop_wait(int timeout)
     }
 
     slirp_select_poll(&rfds, &wfds, &xfds, (ret < 0));
+    glib_select_poll(&rfds, &wfds, &xfds, (ret < 0));
 
     /* rearm timer, if not periodic */
     if (alarm_timer->flags & ALARM_FLAG_EXPIRED) {
@@ -4228,8 +4307,7 @@ static void main_loop(void)
             pause_all_vcpus();
             qemu_system_reset(VMRESET_REPORT);
             resume_all_vcpus();
-            if (runstate_check(RUN_STATE_INTERNAL_ERROR) ||
-                runstate_check(RUN_STATE_SHUTDOWN)) {
+            if (runstate_needs_reset()) {
                 runstate_set(RUN_STATE_PAUSED);
             }
         }
@@ -4711,11 +4789,14 @@ static int device_init_func(QemuOpts *opts, void *opaque)
 
 static int chardev_init_func(QemuOpts *opts, void *opaque)
 {
-    CharDriverState *chr;
+    Error *local_err = NULL;
 
-    chr = qemu_chr_open_opts(opts, NULL);
-    if (!chr)
+    qemu_chr_new_from_opts(opts, NULL, &local_err);
+    if (error_is_set(&local_err)) {
+        error_report("%s", error_get_pretty(local_err));
+        error_free(local_err);
         return -1;
+    }
     return 0;
 }
 
@@ -4841,7 +4922,7 @@ static int serial_parse(const char *devname)
         exit(1);
     }
     snprintf(label, sizeof(label), "serial%d", index);
-    serial_hds[index] = qemu_chr_open(label, devname, NULL);
+    serial_hds[index] = qemu_chr_new(label, devname, NULL);
     if (!serial_hds[index]) {
         fprintf(stderr, "qemu: could not open serial device '%s': %s\n",
                 devname, strerror(errno));
@@ -4863,7 +4944,7 @@ static int parallel_parse(const char *devname)
         exit(1);
     }
     snprintf(label, sizeof(label), "parallel%d", index);
-    parallel_hds[index] = qemu_chr_open(label, devname, NULL);
+    parallel_hds[index] = qemu_chr_new(label, devname, NULL);
     if (!parallel_hds[index]) {
         fprintf(stderr, "qemu: could not open parallel device '%s': %s\n",
                 devname, strerror(errno));
@@ -4893,7 +4974,7 @@ static int virtcon_parse(const char *devname)
     qemu_opt_set(dev_opts, "driver", "virtconsole");
 
     snprintf(label, sizeof(label), "virtcon%d", index);
-    virtcon_hds[index] = qemu_chr_open(label, devname, NULL);
+    virtcon_hds[index] = qemu_chr_new(label, devname, NULL);
     if (!virtcon_hds[index]) {
         fprintf(stderr, "qemu: could not open virtio console '%s': %s\n",
                 devname, strerror(errno));
@@ -4909,7 +4990,7 @@ static int debugcon_parse(const char *devname)
 {   
     QemuOpts *opts;
 
-    if (!qemu_chr_open("debugcon", devname, NULL)) {
+    if (!qemu_chr_new("debugcon", devname, NULL)) {
         exit(1);
     }
     opts = qemu_opts_create(&qemu_device_opts, "debugcon", 1);
@@ -5402,7 +5483,7 @@ int main(int argc, char **argv, char **envp)
                 {
                     static const char * const params[] = {
                         "order", "once", "menu",
-                        "reboot-timeout", NULL
+                        "reboot-timeout", "strict", NULL
                     };
                     char buf[sizeof(boot_devices)];
                     char *standard_boot_devices;
@@ -5438,6 +5519,19 @@ int main(int argc, char **argv, char **envp)
                                 boot_menu = 1;
                             } else if (!strcmp(buf, "off")) {
                                 boot_menu = 0;
+                            } else {
+                                fprintf(stderr,
+                                        "qemu: invalid option value '%s'\n",
+                                        buf);
+                                exit(1);
+                            }
+                        }
+                        if (get_param_value(buf, sizeof(buf),
+                                            "strict", optarg)) {
+                            if (!strcmp(buf, "on")) {
+                                boot_strict = true;
+                            } else if (!strcmp(buf, "off")) {
+                                boot_strict = false;
                             } else {
                                 fprintf(stderr,
                                         "qemu: invalid option value '%s'\n",
@@ -6004,9 +6098,24 @@ int main(int argc, char **argv, char **envp)
                 fake_machine = 1;
                 break;
 #endif
+            case QEMU_OPTION_realtime:
+                opts = qemu_opts_parse(qemu_find_opts("realtime"), optarg, 0);
+                if (!opts) {
+                    exit(1);
+                }
+                configure_realtime(opts);
+                break;
+            case QEMU_OPTION_msg:
+                opts = qemu_opts_parse(qemu_find_opts("msg"), optarg, 0);
+                if (!opts) {
+                    exit(1);
+                }
+                configure_msg(opts);
+                break;
             }
         }
     }
+    fips_set_state(true);
     loc_set_none();
 
     /* If no data_dir is specified then try to find it relative to the
@@ -6057,6 +6166,9 @@ int main(int argc, char **argv, char **envp)
     }
     if (machine->no_sdcard) {
         default_sdcard = 0;
+    }
+    if (machine->no_mixemu) {
+        disable_mixemu();
     }
 
     if (display_type == DT_NOGRAPHIC) {
@@ -6201,6 +6313,9 @@ int main(int argc, char **argv, char **envp)
 #ifdef _WIN32
     socket_init();
 #endif
+
+    /* clean up network at qemu process termination */
+    atexit(&net_cleanup);
 
     if (net_init_clients() < 0) {
         exit(1);
@@ -6380,10 +6495,13 @@ int main(int argc, char **argv, char **envp)
 
     /* init remote displays */
     if (vnc_display) {
+        Error *local_err = NULL;
         vnc_display_init(ds);
-        if (vnc_display_open(ds, vnc_display) < 0) {
-            fprintf(stderr, "Failed to start VNC server on `%s'\n",
-                    vnc_display);
+        vnc_display_open(ds, vnc_display, &local_err);
+        if (local_err != NULL) {
+            error_report("Failed to start VNC server on `%s': %s",
+                         vnc_display, error_get_pretty(local_err));
+            error_free(local_err);
             exit(1);
         }
 
@@ -6440,7 +6558,7 @@ int main(int argc, char **argv, char **envp)
         int ret = qemu_start_incoming_migration(incoming, &errp);
         if (ret < 0) {
             if (error_is_set(&errp)) {
-                fprintf(stderr, "Migrate: %s\n", error_get_pretty(errp));
+                error_report("Migrate: %s", error_get_pretty(errp));
                 error_free(errp);
             }
             fprintf(stderr, "Migration failed. Exit code %s(%d), exiting.\n",
@@ -6524,8 +6642,6 @@ int main(int argc, char **argv, char **envp)
 #endif
 
     main_loop();
-    quit_timers();
-    net_cleanup();
 
     return 0;
 }

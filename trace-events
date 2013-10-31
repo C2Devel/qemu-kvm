@@ -46,6 +46,11 @@ disable virtio_queue_notify(void *vdev, int n, void *vq) "vdev %p n %d vq %p"
 disable virtio_irq(void *vq) "vq %p"
 disable virtio_notify(void *vdev, void *vq) "vdev %p vq %p"
 
+# hw/virtio-console.c
+disable virtio_console_flush_buf(unsigned int port, size_t len, ssize_t ret) "port %u, in_len %zu, out_len %zd"
+disable virtio_console_chr_read(unsigned int port, int size) "port %u, size %d"
+disable virtio_console_chr_event(unsigned int port, int event) "port %u, event %d"
+
 # block.c
 disable multiwrite_cb(void *mcb, int ret) "mcb %p ret %d"
 disable bdrv_aio_multiwrite(void *mcb, int num_callbacks, int num_reqs) "mcb %p num_callbacks %d num_reqs %d"
@@ -179,6 +184,7 @@ disable scsi_request_sense(int target, int lun, int tag) "target %d lun %d tag %
 
 # vl.c
 disable vm_state_notify(int running, int reason) "running %d reason %d"
+disable runstate_set(int new_state) "new state %d"
 
 # block/qed-l2-cache.c
 disable qed_alloc_l2_cache_entry(void *l2_cache, void *entry) "l2_cache %p entry %p"
@@ -297,3 +303,12 @@ disable monitor_protocol_event_throttle(uint32_t event, uint64_t rate) "event=%d
 disable hbitmap_iter_skip_words(const void *hb, void *hbi, uint64_t pos, unsigned long cur) "hb %p hbi %p pos %"PRId64" cur 0x%lx" 
 disable hbitmap_reset(void *hb, uint64_t start, uint64_t count, uint64_t sbit, uint64_t ebit) "hb %p items %"PRIu64",%"PRIu64" bits %"PRIu64"..%"PRIu64
 disable hbitmap_set(void *hb, uint64_t start, uint64_t count, uint64_t sbit, uint64_t ebit) "hb %p items %"PRIu64",%"PRIu64" bits %"PRIu64"..%"PRIu64
+
+# migration.c
+disable migrate_set_state(int new_state) "new state %d"
+
+# kvm-all.c
+disable kvm_ioctl(int type, void *arg) "type %d, arg %p"
+disable kvm_vm_ioctl(int type, void *arg) "type %d, arg %p"
+disable kvm_vcpu_ioctl(int cpu_index, int type, void *arg) "cpu_index %d, type %d, arg %p"
+disable kvm_run_exit(int cpu_index, uint32_t reason) "cpu_index %d, reason %d"

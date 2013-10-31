@@ -61,6 +61,9 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_BASE_NOT_REACHABLE \
     "{ 'class': 'GenericError', 'data': { 'base': %s, 'top': %s } }"
 
+#define QERR_BLOCK_FORMAT_FEATURE_NOT_SUPPORTED \
+    "{ 'class': 'BlockFormatFeatureNotSupported', 'data': { 'format': %s, 'name': %s, 'feature': %s } }"
+
 #define QERR_BUS_NOT_FOUND \
     "{ 'class': 'BusNotFound', 'data': { 'bus': %s } }"
 
@@ -234,6 +237,9 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_QGA_COMMAND_FAILED \
     "{ 'class': 'QgaCommandFailed', 'data': { 'message': %s } }"
+
+#define QERR_INVALID_PARAMETER_COMBINATION \
+    "{ 'class': 'InvalidParameterCombination', 'data': {} }"
 
 #define QERR_SOCKET_CONNECT_FAILED \
     "{ 'class': 'SockConnectFailed', 'data': {} }"

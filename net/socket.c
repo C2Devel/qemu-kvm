@@ -56,8 +56,8 @@ static ssize_t net_socket_receive(VLANClientState *nc, const uint8_t *buf, size_
     uint32_t len;
     len = htonl(size);
 
-    send_all(NULL, s->fd, (const uint8_t *)&len, sizeof(len));
-    return send_all(NULL, s->fd, buf, size);
+    send_all(s->fd, (const uint8_t *)&len, sizeof(len));
+    return send_all(s->fd, buf, size);
 }
 
 static ssize_t net_socket_receive_dgram(VLANClientState *nc, const uint8_t *buf, size_t size)

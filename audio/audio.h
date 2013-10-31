@@ -24,6 +24,9 @@
 #ifndef QEMU_AUDIO_H
 #define QEMU_AUDIO_H
 
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdarg.h>
 #include "config-host.h"
 #include "qemu-queue.h"
 
@@ -166,5 +169,8 @@ static inline void *advance (void *p, int incr)
 
 int wav_start_capture (CaptureState *s, const char *path, int freq,
                        int bits, int nchannels);
+
+void disable_mixemu (void);
+bool get_mixemu_disabled (void);
 
 #endif  /* audio.h */

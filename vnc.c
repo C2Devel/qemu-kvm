@@ -37,6 +37,7 @@
 
 #include "vnc_keysym.h"
 #include "d3des.h"
+#include "osdep.h"
 
 #define count_bits(c, v) { \
     for (c = 0; v; v >>= 1) \
@@ -1515,19 +1516,63 @@ static void press_key(VncState *vs, int keysym)
     kbd_put_keycode(keycode | SCANCODE_UP);
 }
 
+static int current_led_state(VncState *vs)
+{
+    int ledstate = 0;
+
+    if (vs->modifiers_state[0x46]) {
+        ledstate |= QEMU_SCROLL_LOCK_LED;
+    }
+    if (vs->modifiers_state[0x45]) {
+        ledstate |= QEMU_NUM_LOCK_LED;
+    }
+    if (vs->modifiers_state[0x3a]) {
+        ledstate |= QEMU_CAPS_LOCK_LED;
+    }
+
+    return ledstate;
+}
+
+static void vnc_led_state_change(VncState *vs)
+{
+    int ledstate = 0;
+
+    if (!vnc_has_feature(vs, VNC_FEATURE_LED_STATE)) {
+        return;
+    }
+
+    ledstate = current_led_state(vs);
+    vnc_write_u8(vs, VNC_MSG_SERVER_FRAMEBUFFER_UPDATE);
+    vnc_write_u8(vs, 0);
+    vnc_write_u16(vs, 1);
+    vnc_framebuffer_update(vs, 0, 0, 1, 1, VNC_ENCODING_LED_STATE);
+    vnc_write_u8(vs, ledstate);
+    vnc_flush(vs);
+}
+
 static void kbd_leds(void *opaque, int ledstate)
 {
     VncState *vs = opaque;
-    int caps, num;
+    int caps, num, scr;
+    bool has_changed = (ledstate != current_led_state(vs));
 
     caps = ledstate & QEMU_CAPS_LOCK_LED ? 1 : 0;
     num  = ledstate & QEMU_NUM_LOCK_LED  ? 1 : 0;
+    scr  = ledstate & QEMU_SCROLL_LOCK_LED ? 1 : 0;
 
     if (vs->modifiers_state[0x3a] != caps) {
         vs->modifiers_state[0x3a] = caps;
     }
     if (vs->modifiers_state[0x45] != num) {
         vs->modifiers_state[0x45] = num;
+    }
+    if (vs->modifiers_state[0x46] != scr) {
+        vs->modifiers_state[0x46] = scr;
+    }
+
+    /* Sending the current led state message to the client */
+    if (has_changed) {
+        vnc_led_state_change(vs);
     }
 }
 
@@ -1561,7 +1606,12 @@ static void do_key_event(VncState *vs, int down, int keycode, int sym)
         break;
     }
 
-    if (down && keycode_is_keypad(vs->vd->kbd_layout, keycode)) {
+    /* Turn off the lock state sync logic if the client support the led
+       state extension.
+    */
+    if (down &&
+        !vnc_has_feature(vs, VNC_FEATURE_LED_STATE) &&
+        keycode_is_keypad(vs->vd->kbd_layout, keycode)) {
         /* If the numlock state needs to change then simulate an additional
            keypress before sending this one.  This will happen if the user
            toggles numlock away from the VNC window.
@@ -1579,7 +1629,9 @@ static void do_key_event(VncState *vs, int down, int keycode, int sym)
         }
     }
 
-    if (down && ((sym >= 'A' && sym <= 'Z') || (sym >= 'a' && sym <= 'z'))) {
+    if (down &&
+        !vnc_has_feature(vs, VNC_FEATURE_LED_STATE) &&
+        ((sym >= 'A' && sym <= 'Z') || (sym >= 'a' && sym <= 'z'))) {
         /* If the capslock state needs to change then simulate an additional
            keypress before sending this one.  This will happen if the user
            toggles capslock away from the VNC window.
@@ -1839,6 +1891,9 @@ static void set_encodings(VncState *vs, int32_t *encodings, size_t n_encodings)
         case VNC_ENCODING_WMVi:
             vs->features |= VNC_FEATURE_WMVI_MASK;
             break;
+        case VNC_ENCODING_LED_STATE:
+            vs->features |= VNC_FEATURE_LED_STATE_MASK;
+            break;
         case VNC_ENCODING_COMPRESSLEVEL0 ... VNC_ENCODING_COMPRESSLEVEL0 + 9:
             vs->tight_compression = (enc & 0x0F);
             break;
@@ -1853,6 +1908,7 @@ static void set_encodings(VncState *vs, int32_t *encodings, size_t n_encodings)
 
     vnc_desktop_resize(vs);
     check_pointer_type_change(&vs->mouse_mode_notifier, NULL);
+    vnc_led_state_change(vs);
 }
 
 static void set_pixel_conversion(VncState *vs)
@@ -2645,7 +2701,7 @@ char *vnc_display_local_addr(DisplayState *ds)
     return vnc_socket_local_addr("%s:%s", vs->lsock);
 }
 
-int vnc_display_open(DisplayState *ds, const char *display)
+void vnc_display_open(DisplayState *ds, const char *display, Error **errp)
 {
     VncDisplay *vs = ds ? (VncDisplay *)ds->opaque : vnc_display;
     const char *options;
@@ -2661,20 +2717,28 @@ int vnc_display_open(DisplayState *ds, const char *display)
 #endif
     int acl = 0;
 
-    if (!vnc_display)
-        return -1;
+    if (!vnc_display) {
+        error_setg(errp, "VNC display not active");
+        return;
+    }
     vnc_display_close(ds);
     if (strcmp(display, "none") == 0)
-        return 0;
+        return;
 
-    if (!(vs->display = strdup(display)))
-        return -1;
+    vs->display = g_strdup(display);
     vs->share_policy = VNC_SHARE_POLICY_ALLOW_EXCLUSIVE;
 
     options = display;
     while ((options = strchr(options, ','))) {
         options++;
         if (strncmp(options, "password", 8) == 0) {
+            if (fips_get_state()) {
+                error_setg(errp,
+                           "VNC password auth disabled due to FIPS mode, "
+                           "consider using the VeNCrypt or SASL authentication "
+                           "methods as an alternative");
+                goto fail;
+            }
             password = 1; /* Require password auth */
         } else if (strncmp(options, "reverse", 7) == 0) {
             reverse = 1;
@@ -2703,18 +2767,14 @@ int vnc_display_open(DisplayState *ds, const char *display)
 
                 VNC_DEBUG("Trying certificate path '%s'\n", path);
                 if (vnc_tls_set_x509_creds_dir(vs, path) < 0) {
-                    fprintf(stderr, "Failed to find x509 certificates/keys in %s\n", path);
-                    qemu_free(path);
-                    qemu_free(vs->display);
-                    vs->display = NULL;
-                    return -1;
+                    error_setg(errp, "Failed to find x509 certificates/keys in %s", path);
+                    g_free(path);
+                    goto fail;
                 }
                 qemu_free(path);
             } else {
-                fprintf(stderr, "No certificate path provided\n");
-                qemu_free(vs->display);
-                vs->display = NULL;
-                return -1;
+                error_setg(errp, "No certificate path provided");
+                goto fail;
             }
 #endif
         } else if (strncmp(options, "acl", 3) == 0) {
@@ -2727,10 +2787,8 @@ int vnc_display_open(DisplayState *ds, const char *display)
             } else if (strncmp(options+6, "force-shared", 12) == 0) {
                 vs->share_policy = VNC_SHARE_POLICY_FORCE_SHARED;
             } else {
-                fprintf(stderr, "unknown vnc share= option\n");
-                g_free(vs->display);
-                vs->display = NULL;
-                return -1;
+                error_setg(errp, "unknown vnc share= option");
+                goto fail;
             }
         }
     }
@@ -2831,30 +2889,26 @@ int vnc_display_open(DisplayState *ds, const char *display)
 
 #ifdef CONFIG_VNC_SASL
     if ((saslErr = sasl_server_init(NULL, "qemu-kvm")) != SASL_OK) {
-        fprintf(stderr, "Failed to initialize SASL auth %s",
-                sasl_errstring(saslErr, NULL, NULL));
-        free(vs->display);
-        vs->display = NULL;
-        return -1;
+        error_setg(errp, "Failed to initialize SASL auth: %s",
+                   sasl_errstring(saslErr, NULL, NULL));
+        goto fail;
     }
 #endif
 
     if (reverse) {
         /* connect to viewer */
         if (strncmp(display, "unix:", 5) == 0)
-            vs->lsock = unix_connect(display+5);
+            vs->lsock = unix_connect(display+5, errp);
         else
-            vs->lsock = inet_connect(display, NULL);
-        if (-1 == vs->lsock) {
-            free(vs->display);
-            vs->display = NULL;
-            return -1;
+            vs->lsock = inet_connect(display, errp);
+        if (vs->lsock < 0) {
+            goto fail;
         } else {
             int csock = vs->lsock;
             vs->lsock = -1;
             vnc_connect(vs, csock);
         }
-        return 0;
+        return;
 
     } else {
         /* listen for connects */
@@ -2862,18 +2916,25 @@ int vnc_display_open(DisplayState *ds, const char *display)
         dpy = qemu_malloc(256);
         if (strncmp(display, "unix:", 5) == 0) {
             pstrcpy(dpy, 256, "unix:");
-            vs->lsock = unix_listen(display+5, dpy+5, 256-5);
+            vs->lsock = unix_listen(display+5, dpy+5, 256-5, errp);
         } else {
             vs->lsock = inet_listen(display, dpy, 256,
-                                    SOCK_STREAM, 5900, NULL);
+                                    SOCK_STREAM, 5900, errp);
         }
-        if (-1 == vs->lsock) {
-            free(dpy);
-            return -1;
-        } else {
-            free(vs->display);
-            vs->display = dpy;
+        if (vs->lsock < 0) {
+            g_free(dpy);
+            goto fail;
         }
+        g_free(vs->display);
+        vs->display = dpy;
+        qemu_set_fd_handler2(vs->lsock, NULL, vnc_listen_read, NULL, vs);
     }
-    return qemu_set_fd_handler2(vs->lsock, NULL, vnc_listen_read, NULL, vs);
+    return;
+
+fail:
+    if (!error_is_set(errp)) {
+        error_set(errp, QERR_VNC_SERVER_FAILED, display);
+    }
+    g_free(vs->display);
+    vs->display = NULL;
 }

@@ -27,7 +27,7 @@ do {                                                    \
 #define D_VERBOSE 4
 
 /* TODO: do we still need this? */
-uint8_t DEFAULT_ATR[] = {
+static const uint8_t DEFAULT_ATR[] = {
 /*
  * From some example somewhere
  * 0x3B, 0xB0, 0x18, 0x00, 0xD1, 0x81, 0x05, 0xB1, 0x40, 0x38, 0x1F, 0x03, 0x28
@@ -72,8 +72,8 @@ static void ccid_card_vscard_send_msg(PassthruState *s,
     scr_msg_header.type = htonl(type);
     scr_msg_header.reader_id = htonl(reader_id);
     scr_msg_header.length = htonl(length);
-    qemu_chr_write(s->cs, (uint8_t *)&scr_msg_header, sizeof(VSCMsgHeader));
-    qemu_chr_write(s->cs, payload, length);
+    qemu_chr_fe_write(s->cs, (uint8_t *)&scr_msg_header, sizeof(VSCMsgHeader));
+    qemu_chr_fe_write(s->cs, payload, length);
 }
 
 static void ccid_card_vscard_send_apdu(PassthruState *s,
@@ -138,6 +138,59 @@ static void ccid_card_vscard_handle_init(
     ccid_card_vscard_send_init(card);
 }
 
+static int check_atr(PassthruState *card, uint8_t *data, int len)
+{
+    int historical_length, opt_bytes;
+    int td_count = 0;
+    int td;
+
+    if (len < 2) {
+        return 0;
+    }
+    historical_length = data[1] & 0xf;
+    opt_bytes = 0;
+    if (data[0] != 0x3b && data[0] != 0x3f) {
+        DPRINTF(card, D_WARN, "atr's T0 is 0x%X, not in {0x3b, 0x3f}\n",
+                data[0]);
+        return 0;
+    }
+    td_count = 0;
+    td = data[1] >> 4;
+    while (td && td_count < 2 && opt_bytes + historical_length + 2 < len) {
+        td_count++;
+        if (td & 0x1) {
+            opt_bytes++;
+        }
+        if (td & 0x2) {
+            opt_bytes++;
+        }
+        if (td & 0x4) {
+            opt_bytes++;
+        }
+        if (td & 0x8) {
+            opt_bytes++;
+            td = data[opt_bytes + 2] >> 4;
+        }
+    }
+    if (len < 2 + historical_length + opt_bytes) {
+        DPRINTF(card, D_WARN,
+            "atr too short: len %d, but historical_len %d, T1 0x%X\n",
+            len, historical_length, data[1]);
+        return 0;
+    }
+    if (len > 2 + historical_length + opt_bytes) {
+        DPRINTF(card, D_WARN,
+            "atr too long: len %d, but hist/opt %d/%d, T1 0x%X\n",
+            len, historical_length, opt_bytes, data[1]);
+        /* let it through */
+    }
+    DPRINTF(card, D_VERBOSE,
+            "atr passes check: %d total length, %d historical, %d optional\n",
+            len, historical_length, opt_bytes);
+
+    return 1;
+}
+
 static void ccid_card_vscard_handle_message(PassthruState *card,
     VSCMsgHeader *scr_msg_header)
 {
@@ -148,6 +201,12 @@ static void ccid_card_vscard_handle_message(PassthruState *card,
         DPRINTF(card, D_INFO, "VSC_ATR %d\n", scr_msg_header->length);
         if (scr_msg_header->length > MAX_ATR_SIZE) {
             error_report("ATR size exceeds spec, ignoring");
+            ccid_card_vscard_send_error(card, scr_msg_header->reader_id,
+                                        VSC_GENERAL_ERROR);
+            break;
+        }
+        if (!check_atr(card, data, scr_msg_header->length)) {
+            error_report("ATR is inconsistent, ignoring");
             ccid_card_vscard_send_error(card, scr_msg_header->reader_id,
                                         VSC_GENERAL_ERROR);
             break;
@@ -199,7 +258,7 @@ static void ccid_card_vscard_handle_message(PassthruState *card,
 
 static void ccid_card_vscard_drop_connection(PassthruState *card)
 {
-    qemu_chr_close(card->cs);
+    qemu_chr_delete(card->cs);
     card->vscard_in_pos = card->vscard_in_hdr = 0;
 }
 
@@ -274,12 +333,6 @@ static const uint8_t *passthru_get_atr(CCIDCardState *base, uint32_t *len)
     return card->atr;
 }
 
-static const QemuChrHandlers ccid_card_vscard_chr_handlers = {
-    .fd_can_read = ccid_card_vscard_can_read,
-    .fd_read = ccid_card_vscard_read,
-    .fd_event = ccid_card_vscard_event,
-};
-
 static int passthru_initfn(CCIDCardState *base)
 {
     PassthruState *card = DO_UPCAST(PassthruState, base, base);
@@ -288,12 +341,16 @@ static int passthru_initfn(CCIDCardState *base)
     card->vscard_in_hdr = 0;
     if (card->cs) {
         DPRINTF(card, D_INFO, "initing chardev\n");
-        qemu_chr_add_handlers(card->cs, &ccid_card_vscard_chr_handlers, card);
+        qemu_chr_add_handlers(card->cs, ccid_card_vscard_can_read,
+                              ccid_card_vscard_read, ccid_card_vscard_event,
+                              card);
         ccid_card_vscard_send_init(card);
     } else {
         error_report("missing chardev");
         return -1;
     }
+    card->debug = parse_debug_env("QEMU_CCID_PASSTHRU_DEBUG", D_VERBOSE,
+                                  card->debug);
     assert(sizeof(DEFAULT_ATR) <= MAX_ATR_SIZE);
     memcpy(card->atr, DEFAULT_ATR, sizeof(DEFAULT_ATR));
     card->atr_length = sizeof(DEFAULT_ATR);

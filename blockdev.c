@@ -307,6 +307,38 @@ int drives_reopen(void)
     return 0;
 }
 
+static bool do_check_io_limits(BlockIOLimit *io_limits, Error **errp)
+{
+    bool bps_flag;
+    bool iops_flag;
+
+    assert(io_limits);
+
+    bps_flag  = (io_limits->bps[BLOCK_IO_LIMIT_TOTAL] != 0)
+                 && ((io_limits->bps[BLOCK_IO_LIMIT_READ] != 0)
+                 || (io_limits->bps[BLOCK_IO_LIMIT_WRITE] != 0));
+    iops_flag = (io_limits->iops[BLOCK_IO_LIMIT_TOTAL] != 0)
+                 && ((io_limits->iops[BLOCK_IO_LIMIT_READ] != 0)
+                 || (io_limits->iops[BLOCK_IO_LIMIT_WRITE] != 0));
+    if (bps_flag || iops_flag) {
+        error_setg(errp, "bps(iops) and bps_rd/bps_wr(iops_rd/iops_wr) "
+                         "cannot be used at the same time");
+        return false;
+    }
+
+    if (io_limits->bps[BLOCK_IO_LIMIT_TOTAL] < 0 ||
+        io_limits->bps[BLOCK_IO_LIMIT_WRITE] < 0 ||
+        io_limits->bps[BLOCK_IO_LIMIT_READ] < 0 ||
+        io_limits->iops[BLOCK_IO_LIMIT_TOTAL] < 0 ||
+        io_limits->iops[BLOCK_IO_LIMIT_WRITE] < 0 ||
+        io_limits->iops[BLOCK_IO_LIMIT_READ] < 0) {
+        error_setg(errp, "bps and iops values must be 0 or greater");
+        return false;
+    }
+
+    return true;
+}
+
 DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
 {
     const char *buf;
@@ -327,8 +359,12 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
     const char *devaddr;
     DriveInfo *dinfo;
     int is_extboot = 0;
+    BlockIOLimit io_limits;
     int snapshot = 0;
     bool copy_on_read;
+#ifdef CONFIG_BLOCK_IO_THROTTLING
+    Error *error = NULL;
+#endif
 
     translation = BIOS_ATA_TRANSLATION_AUTO;
 
@@ -452,7 +488,7 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
            error_printf("\n");
            return NULL;
         }
-        drv = bdrv_find_whitelisted_format(buf);
+        drv = bdrv_find_whitelisted_format(buf, ro);
         if (!drv) {
             error_report("'%s' invalid format", buf);
             return NULL;
@@ -464,6 +500,30 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
         error_report("two bootable drives specified");
         return NULL;
     }
+
+#ifdef CONFIG_BLOCK_IO_THROTTLING
+    /* disk I/O throttling */
+    io_limits.bps[BLOCK_IO_LIMIT_TOTAL]  =
+                           qemu_opt_get_number(opts, "bps", 0);
+    io_limits.bps[BLOCK_IO_LIMIT_READ]   =
+                           qemu_opt_get_number(opts, "bps_rd", 0);
+    io_limits.bps[BLOCK_IO_LIMIT_WRITE]  =
+                           qemu_opt_get_number(opts, "bps_wr", 0);
+    io_limits.iops[BLOCK_IO_LIMIT_TOTAL] =
+                           qemu_opt_get_number(opts, "iops", 0);
+    io_limits.iops[BLOCK_IO_LIMIT_READ]  =
+                           qemu_opt_get_number(opts, "iops_rd", 0);
+    io_limits.iops[BLOCK_IO_LIMIT_WRITE] =
+                           qemu_opt_get_number(opts, "iops_wr", 0);
+
+    if (!do_check_io_limits(&io_limits, &error)) {
+        error_report("%s", error_get_pretty(error));
+        error_free(error);
+        return NULL;
+    }
+#else
+    memset(&io_limits, '\0', sizeof io_limits);
+#endif
 
     on_write_error = BLOCK_ERR_STOP_ENOSPC;
     if ((buf = qemu_opt_get(opts, "werror")) != NULL) {
@@ -575,6 +635,9 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
 
     bdrv_set_on_error(dinfo->bdrv, on_read_error, on_write_error);
 
+    /* disk I/O throttling */
+    bdrv_set_io_limits(dinfo->bdrv, &io_limits);
+
     switch(type) {
     case IF_IDE:
     case IF_SCSI:
@@ -660,22 +723,23 @@ err:
 
 void do_commit(Monitor *mon, const QDict *qdict)
 {
-    int all_devices;
-    DriveInfo *dinfo;
     const char *device = qdict_get_str(qdict, "device");
+    BlockDriverState *bs;
+    int ret;
 
-    all_devices = !strcmp(device, "all");
-    QTAILQ_FOREACH(dinfo, &drives, next) {
-        int ret;
-
-        if (!all_devices)
-            if (strcmp(bdrv_get_device_name(dinfo->bdrv), device))
-                continue;
-        ret = bdrv_commit(dinfo->bdrv);
-        if (ret == -EBUSY) {
-            qerror_report(QERR_DEVICE_IN_USE, device);
+    if (!strcmp(device, "all")) {
+        ret = bdrv_commit_all();
+    } else {
+        bs = bdrv_find(device);
+        if (!bs) {
+            monitor_printf(mon, "Device '%s' not found\n", device);
             return;
         }
+        ret = bdrv_commit(bs);
+    }
+    if (ret < 0) {
+        monitor_printf(mon, "'commit' error for '%s': %s\n", device,
+                       strerror(-ret));
     }
 }
 
@@ -830,7 +894,7 @@ void qmp___com_redhat_drive_mirror(const char *device, const char *target,
         .has_speed = has_speed,
         .speed = speed,
     };
-    blockdev_do_action(BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR, &mirror, errp);
+    blockdev_do_action(BLOCKDEV_ACTION_KIND_COM_REDHAT_DRIVE_MIRROR, &mirror, errp);
 }
 
 /* New and old BlockDriverState structs for group snapshots */
@@ -851,6 +915,7 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
     int ret = 0;
     BlockdevActionList *dev_entry = dev_list;
     BlkTransactionStates *states, *next;
+    Error *local_err = NULL;
 
     QSIMPLEQ_HEAD(snap_bdrv_states, BlkTransactionStates) snap_bdrv_states;
     QSIMPLEQ_INIT(&snap_bdrv_states);
@@ -898,7 +963,7 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
             full = false;
             break;
 
-        case BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR:
+        case BLOCKDEV_ACTION_KIND_COM_REDHAT_DRIVE_MIRROR:
             device = dev_info->__com_redhat_drive_mirror->device;
             if (!dev_info->__com_redhat_drive_mirror->has_mode) {
                 dev_info->__com_redhat_drive_mirror->mode = NEW_IMAGE_MODE_ABSOLUTE_PATHS;
@@ -974,29 +1039,28 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
             assert(format && drv);
             bdrv_get_geometry(states->old_bs, &size);
             size *= 512;
-            ret = bdrv_img_create(new_image_file, format,
-                                  NULL, NULL, NULL, size, flags);
+            bdrv_img_create(new_image_file, format,
+                            NULL, NULL, NULL, size, flags, &local_err);
         } else {
             /* create new image w/backing file */
             switch (mode) {
             case NEW_IMAGE_MODE_EXISTING:
-                ret = 0;
                 break;
             case NEW_IMAGE_MODE_ABSOLUTE_PATHS:
-                ret = bdrv_img_create(new_image_file, format,
-                                      source->filename,
-                                      source->drv->format_name,
-                                      NULL, -1, flags);
+                bdrv_img_create(new_image_file, format,
+                                source->filename,
+                                source->drv->format_name,
+                                NULL, -1, flags, &local_err);
                 break;
             default:
-                ret = -1;
+                error_setg(&local_err, "%s: invalid NewImageMode %u",
+                           __FUNCTION__, (unsigned)mode);
                 break;
             }
         }
 
-        if (ret) {
-            error_set(errp, QERR_OPEN_FILE_FAILED, new_image_file,
-                      strerror(-ret));
+        if (error_is_set(&local_err)) {
+            error_propagate(errp, local_err);
             goto delete_and_fail;
         }
 
@@ -1008,7 +1072,7 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
                             flags | BDRV_O_NO_BACKING, drv);
             break;
 
-        case BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR:
+        case BLOCKDEV_ACTION_KIND_COM_REDHAT_DRIVE_MIRROR:
             /* Grab a reference so hotplug does not delete the BlockDriverState
              * from underneath us.
              */
@@ -1047,7 +1111,7 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
                         NULL);
             break;
 
-        case BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR:
+        case BLOCKDEV_ACTION_KIND_COM_REDHAT_DRIVE_MIRROR:
             mirror_commit(states->old_bs);
             break;
 
@@ -1072,7 +1136,7 @@ delete_and_fail:
             }
             break;
 
-        case BLOCKDEV_ACTION_KIND___COM_REDHAT_DRIVE_MIRROR:
+        case BLOCKDEV_ACTION_KIND_COM_REDHAT_DRIVE_MIRROR:
             /* This will still invoke the callback and release the
              * reference.  */
             if (states->new_bs) {
@@ -1165,7 +1229,7 @@ int do_change_block(Monitor *mon, const char *device,
         return -1;
     }
     if (fmt) {
-        drv = bdrv_find_whitelisted_format(fmt);
+        drv = bdrv_find_whitelisted_format(fmt, bs->read_only);
         if (!drv) {
             qerror_report(QERR_INVALID_BLOCK_FORMAT, fmt);
             return -1;
@@ -1182,6 +1246,68 @@ int do_change_block(Monitor *mon, const char *device,
         return -1;
     }
     return monitor_read_bdrv_key_start(mon, bs, NULL, NULL);
+}
+
+/* throttling disk I/O limits */
+int do_block_set_io_throttle(Monitor *mon,
+                       const QDict *qdict, QObject **ret_data)
+{
+    BlockIOLimit io_limits;
+    const char *devname = qdict_get_str(qdict, "device");
+    BlockDriverState *bs;
+    Error *error = NULL;
+
+    io_limits.bps[BLOCK_IO_LIMIT_TOTAL]
+                        = qdict_get_try_int(qdict, "bps", -1);
+    io_limits.bps[BLOCK_IO_LIMIT_READ]
+                        = qdict_get_try_int(qdict, "bps_rd", -1);
+    io_limits.bps[BLOCK_IO_LIMIT_WRITE]
+                        = qdict_get_try_int(qdict, "bps_wr", -1);
+    io_limits.iops[BLOCK_IO_LIMIT_TOTAL]
+                        = qdict_get_try_int(qdict, "iops", -1);
+    io_limits.iops[BLOCK_IO_LIMIT_READ]
+                        = qdict_get_try_int(qdict, "iops_rd", -1);
+    io_limits.iops[BLOCK_IO_LIMIT_WRITE]
+                        = qdict_get_try_int(qdict, "iops_wr", -1);
+
+    bs = bdrv_find(devname);
+    if (!bs) {
+        qerror_report(QERR_DEVICE_NOT_FOUND, devname);
+        return -1;
+    }
+
+    if ((io_limits.bps[BLOCK_IO_LIMIT_TOTAL] == -1)
+        || (io_limits.bps[BLOCK_IO_LIMIT_READ] == -1)
+        || (io_limits.bps[BLOCK_IO_LIMIT_WRITE] == -1)
+        || (io_limits.iops[BLOCK_IO_LIMIT_TOTAL] == -1)
+        || (io_limits.iops[BLOCK_IO_LIMIT_READ] == -1)
+        || (io_limits.iops[BLOCK_IO_LIMIT_WRITE] == -1)) {
+        qerror_report(QERR_MISSING_PARAMETER,
+                      "bps/bps_rd/bps_wr/iops/iops_rd/iops_wr");
+        return -1;
+    }
+
+    if (!do_check_io_limits(&io_limits, &error)) {
+        if (error_is_set(&error)) {
+            qerror_report(QERR_GENERIC_ERROR, error_get_pretty(error));
+        }
+        error_free(error);
+        return -1;
+    }
+
+    bs->io_limits = io_limits;
+
+    if (!bs->io_limits_enabled && bdrv_io_limits_enabled(bs)) {
+        bdrv_io_limits_enable(bs);
+    } else if (bs->io_limits_enabled && !bdrv_io_limits_enabled(bs)) {
+        bdrv_io_limits_disable(bs);
+    } else {
+        if (bs->block_timer) {
+            qemu_mod_timer(bs->block_timer, qemu_get_clock(vm_clock));
+        }
+    }
+
+    return 0;
 }
 
 int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data)
@@ -1211,6 +1337,9 @@ int do_drive_del(Monitor *mon, const QDict *qdict, QObject **ret_data)
      */
     if (bdrv_get_attached_dev(bs)) {
         bdrv_make_anon(bs);
+
+        /* Further I/O must not pause the guest */
+        bdrv_set_on_error(bs, BLOCK_ERR_REPORT, BLOCK_ERR_REPORT);
     } else {
         drive_uninit(drive_get_by_blockdev(bs));
     }

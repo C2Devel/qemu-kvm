@@ -370,7 +370,7 @@ static void free_chr(DeviceState *dev, Property *prop)
     CharDriverState **ptr = qdev_get_prop_ptr(dev, prop);
 
     if (*ptr) {
-        qemu_chr_add_handlers(*ptr, NULL, NULL);
+        qemu_chr_add_handlers(*ptr, NULL, NULL, NULL, NULL);
     }
 }
 
@@ -564,6 +564,40 @@ PropertyInfo qdev_prop_pci_devfn = {
     .print = print_pci_devfn,
 };
 
+/* --- blocksize --- */
+
+static int parse_blocksize(DeviceState *dev, Property *prop, const char *str)
+{
+    int16_t *ptr = qdev_get_prop_ptr(dev, prop);
+    unsigned long value;
+    char *end;
+
+    /* accept both hex and decimal */
+    value = strtoul(str, &end, 0);
+    if ((*end != '\0') || (end == str)) {
+        return -EINVAL;
+    }
+    if (value < 512 || value > 65024) {
+        return -EINVAL;
+    }
+
+    /* We rely on power-of-2 blocksizes for bitmasks */
+    if ((value & (value - 1)) != 0) {
+        return -EINVAL;
+    }
+
+    *ptr = value;
+    return 0;
+}
+
+PropertyInfo qdev_prop_blocksize = {
+    .name  = "blocksize",
+    .type  = PROP_TYPE_BLOCKSIZE,
+    .size  = sizeof(uint16_t),
+    .parse = parse_blocksize,
+    .print = print_uint16,
+};
+
 /* --- public helpers --- */
 
 static Property *qdev_prop_walk(Property *props, const char *name)
@@ -684,6 +718,11 @@ void qdev_prop_set_int32(DeviceState *dev, const char *name, int32_t value)
 void qdev_prop_set_uint64(DeviceState *dev, const char *name, uint64_t value)
 {
     qdev_prop_set(dev, name, &value, PROP_TYPE_UINT64);
+}
+
+void qdev_prop_set_string(DeviceState *dev, const char *name, const char *value)
+{
+    qdev_prop_set(dev, name, &value, PROP_TYPE_STRING);
 }
 
 int qdev_prop_set_drive(DeviceState *dev, const char *name, BlockDriverState *value)

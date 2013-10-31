@@ -32,13 +32,8 @@
 
 %ifarch i686
 %bcond_with     qemu_kvm              # disabled
-%bcond_with     guest_agent_win32     # disabled - mingw is only available for
-                                      #            x86_64
 %else
 %bcond_without  qemu_kvm              # enabled
-%if %{with guest_agent}
-%bcond_without  guest_agent_win32     # enabled
-%endif # with guest_agent
 %endif
 
 # Package name and path configuration variables:
@@ -62,8 +57,8 @@
 %define obsoletes_ver   10:0-0
 %define pkgsuffix       -rhev
 # conflict with RHEL packages:
-%define conflicts_suffix -rhel
-# older RHEL packages didn't have the qemu-kvm-rhel/qemu-img-rhel provides:
+%define conflicts_suffix %{nil}
+# older RHEL packages didn't have the qemu-kvm/qemu-img provides:
 %define old_conflict_ver 2:0.12.1.2-2.352.el6
 %else
 # RHEL package:
@@ -88,14 +83,13 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define zrelease 5
 %define buildid %{nil}
 
 %define sublevel 0.12.1.2
-%define pkgrelease 2.355
+%define pkgrelease 2.402
 
 %define rpmversion %{sublevel}
-%define full_release %{pkgrelease}%{?dist}.%{?zrelease}%{?buildid}
+%define full_release %{pkgrelease}%{?dist}%{?buildid}
 
 # rhel_rhev_conflicts:
 # reusable macro for the many conflicts/provides/obsoletes settings
@@ -6403,28 +6397,1238 @@ Patch3871: kvm-Revert-audio-add-VOICE_VOLUME-ctl.patch
 Patch3872: kvm-Revert-audio-split-sample-conversion-and-volume-mixi.patch
 # For bz#taskinfo?taskID=5353762 - 
 Patch3873: kvm-Revert-e1000-no-need-auto-negotiation-if-link-was-do.patch
+# For bz#890012 - tray-open should be 1 after ejects the CD-ROM for virtio-scsi device
+Patch3874: kvm-block-fix-block-tray-status.patch
+# For bz#889135 - core trace/dump if specify the value of physical_block_size/logical_block_size is not multiple of 512 bytes
+Patch3875: kvm-qdev-add-blocksize-property-type.patch
+# For bz#889135 - core trace/dump if specify the value of physical_block_size/logical_block_size is not multiple of 512 bytes
+Patch3876: kvm-block-enforce-constraints-on-block-size-properties.patch
 # For bz#910842 - CVE-2012-6075  qemu (e1000 device driver): Buffer overflow when processing large packets when SBP and LPE flags are disabled [rhel-6.5]
-Patch3874: kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch
+Patch3877: kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch
 # For bz#910842 - CVE-2012-6075  qemu (e1000 device driver): Buffer overflow when processing large packets when SBP and LPE flags are disabled [rhel-6.5]
-Patch3875: kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch
-# For bz#929105 - [RHEL6.4] [regression] qemu-kvm does not enable ioeventfd
-Patch3876: kvm-Fix-regression-introduced-by-machine-accel.patch
-# For bz#958750 - QMP event shows incorrect balloon value when balloon size is grater than or equal to 4G
-Patch3877: kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch
+Patch3878: kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch
+Patch3879: kvm-Revert-block-fix-block-tray-status.patch
 # For bz#907716 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
-# For bz#927591 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
-Patch3878: kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch
+Patch3880: kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch
 # For bz#907716 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
-# For bz#927591 - use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest
-Patch3879: kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch
-# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
-Patch3880: kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch
-# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
-Patch3881: kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch
-# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
-Patch3882: kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch
-# For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
-Patch3883: kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch
+Patch3881: kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch
+# For bz#916020 - [RHEL6.4] [regression] qemu-kvm does not enable ioeventfd
+Patch3882: kvm-Fix-regression-introduced-by-machine-accel.patch
+# For bz#817066 - QEMU should disable VNC password auth when in FIPS 140-2 mode
+Patch3883: kvm-vnc-disable-VNC-password-authentication-security-typ.patch
+# For bz#869496 - screendump wont save PPM image file if qemu-kvm booted with '-S'
+Patch3884: kvm-vga-simplify-screendump.patch
+# For bz#843797 - qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down
+Patch3885: kvm-virtio-net-stop-start-bh-when-appropriate.patch
+# For bz#884590 - ovs-ifup affect but ovs-ifdown not affect when run a guest with a wrong netdriver(e.g. ... -device virtio-pci-net,...)
+Patch3886: kvm-net-clean-up-network-at-qemu-process-termination.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3887: kvm-qemu-img-add-image-fragmentation-statistics.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3888: kvm-qemu-img-check-r-for-repairing-images.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3889: kvm-qemu-img-check-Print-fixed-clusters-and-recheck.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3890: kvm-qcow2-Support-for-fixing-refcount-inconsistencies.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3891: kvm-qemu-img-find-the-image-end-offset-during-check.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3892: kvm-block-add-BLOCK_O_CHECK-for-qemu-img-check.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3893: kvm-qemu.img.c-Use-error_report-instead-of-own-error-imp.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3894: kvm-Remove-NULL-checks-for-bdrv_new-return-value.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3895: kvm-qemu-img-Improve-error-messages-for-failed-bdrv_open.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3896: kvm-Don-t-require-encryption-password-for-qemu-img-info-.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3897: kvm-block-Replace-bdrv_get_format-by-bdrv_get_format_nam.patch
+# For bz#888008 - RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device
+Patch3898: kvm-qemu-img-add-json-output-option-to-the-check-command.patch
+# For bz#901484 - Read-only LVM volume can be opened r/w
+Patch3899: kvm-block-raw-posix-detect-readonly-Linux-block-devices-.patch
+# For bz#924165 - qemu-img convert -s is silently ignored
+Patch3900: kvm-qemu-img-convert-Remove-s-from-getopt-string.patch
+# For bz#864378 - qemu-img convert fails with Floating Point Exception with zero length source image
+Patch3901: kvm-qemu-img-Fix-division-by-zero-for-zero-size-images.patch
+# For bz#903204 - don't boot from un-selected devices (add a boot option 'strict' to qemu)
+Patch3902: kvm-add-a-boot-option-to-do-strict-boot.patch
+# For bz#893344 - "info qtree" output for qxl-vga does not match between rhel6.0 host and rhel6.4 host with -M rhel6.0.0
+Patch3903: kvm-qxl-set-revision-to-1-for-rhel6.0.0.patch
+# For bz#879096 - qemu should disable hot-unplug usb-ehci controller and give a prompt if not support
+Patch3904: kvm-usb-tag-usb-host-adapters-as-not-hotpluggable.patch
+# For bz#927336 - QMP event shows incorrect balloon value when balloon size is grater than or equal to 4G
+Patch3905: kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3906: kvm-qemu-ga-align-versioning-with-QEMU_VERSION.patch
+# For bz#918311 - Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3907: kvm-qemu-ga-make-names-more-generic-for-mount-list-funct.patch
+# For bz#918311 - Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3908: kvm-qemu-ga-add-guest-fstrim-command.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3909: kvm-error-drop-error_get_qobject-error_set_qobject.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3910: kvm-qemu-ga-don-t-leak-a-file-descriptor-upon-failed-loc.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3911: kvm-qemu-ga-Fix-null-pointer-passed-to-unlink-in-failure.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3912: kvm-qapi-Fix-enumeration-typo-error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3913: kvm-qemu-ga-Remove-unreachable-code-after-g_error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3914: kvm-qemu-ga-prefer-pstrcpy-consistently-NUL-terminate-if.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3915: kvm-cleanup-useless-return-sentence.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3916: kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3917: kvm-qemu-sockets-add-Error-to-all-functions.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3918: kvm-qemu-ga-ask-and-print-error-information-from-qemu-so.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3919: kvm-qga-channel-posix.c-Include-headers-it-needs.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3920: kvm-qemu-ga-guest_file_handle_find-take-an-Error-argumen.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3921: kvm-qemu-ga-qmp_guest_file_close-fix-fclose-error-check.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3922: kvm-qemu-ga-qmp_guest_shutdown-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3923: kvm-qemu-ga-build_fs_mount_list-take-an-Error-argument.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3924: kvm-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprintf-error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3925: kvm-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-error_se.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3926: kvm-qemu-ga-bios_supports_mode-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3927: kvm-qemu-ga-guest_suspend-improve-error-reporting.patch
+# For bz#911569 - [Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests)
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3928: kvm-qemu-ga-execute-hook-to-quiesce-the-guest-on-fsfreez.patch
+# For bz#911569 - [Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests)
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3929: kvm-qemu-ga-sample-fsfreeze-hooks.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3930: kvm-qga-channel-posix.c-Explicitly-include-string.h.patch
+# For bz#892996 - qemu-ga leaks fds to exec()ed processes [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3931: kvm-qemu-ga-ga_open_pidfile-use-qemu_open.patch
+# For bz#892996 - qemu-ga leaks fds to exec()ed processes [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3932: kvm-qemu-ga-add-ga_open_logfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3933: kvm-qemu-ga-Document-intentional-fall-through-in-channel.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3934: kvm-qemu-ga-Drop-pointless-lseek-from-ga_open_pidfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3935: kvm-qemu-ga-Plug-file-descriptor-leak-on-ga_open_pidfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3936: kvm-qemu-ga-Plug-fd-leak-on-ga_channel_listen_accept-err.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3937: kvm-qemu-ga-Plug-fd-leak-on-ga_channel_open-error-paths.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3938: kvm-qemu-ga-Handle-errors-uniformely-in-ga_channel_open.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3939: kvm-qga-add-missing-commas-in-json-docs.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3940: kvm-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cleanup.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3941: kvm-qemu-ga-Fix-unchecked-strdup-by-converting-to-g_strd.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3942: kvm-qga-cast-to-int-for-DWORD-type.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3943: kvm-qemu-ga-fix-confusing-GAChannelMethod-comparison.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3944: kvm-qemu-ga-make-guest-sync-delimited-available-during-f.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3945: kvm-qga-add-guest-get-time-command.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3946: kvm-qga-add-guest-set-time-command.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3947: kvm-qga-introduce-guest-get-vcpus-guest-set-vcpus-with-s.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3948: kvm-qga-implement-qmp_guest_get_vcpus-for-Linux-with-sys.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3949: kvm-qga-implement-qmp_guest_set_vcpus-for-Linux-with-sys.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3950: kvm-Fix-typos-and-misspellings.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3951: kvm-qga-add-windows-implementation-for-guest-get-time.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3952: kvm-qga-add-windows-implementation-for-guest-set-time.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3953: kvm-qga-schema-document-generic-QERR_UNSUPPORTED.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3954: kvm-qga-convert-qemu_mallocz-to-g_malloc0-and-qemu_free-.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3955: kvm-qemu-ga-qmp_guest_file_-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3956: kvm-qemu-ga-qmp_guest_network_get_interfaces-get-rid-of-.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3957: kvm-Replace-non-portable-asprintf-by-g_strdup_printf.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3958: kvm-qemu-ga-Plug-leaks-on-qmp_guest_network_get_interfac.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3959: kvm-qemu-ga-use-key-value-store-to-avoid-recycling-fd-ha.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3960: kvm-qga-schema-mark-optional-GuestLogicalProcessor.can-o.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch3961: kvm-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-overflo.patch
+Patch3963: kvm-Revert-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-.patch
+Patch3964: kvm-Revert-qga-schema-mark-optional-GuestLogicalProcesso.patch
+Patch3965: kvm-Revert-qemu-ga-use-key-value-store-to-avoid-recyclin.patch
+Patch3966: kvm-Revert-qemu-ga-Plug-leaks-on-qmp_guest_network_get_i.patch
+Patch3967: kvm-Revert-Replace-non-portable-asprintf-by-g_strdup_pri.patch
+Patch3968: kvm-Revert-qemu-ga-qmp_guest_network_get_interfaces-get-.patch
+Patch3969: kvm-Revert-qemu-ga-qmp_guest_file_-improve-error-reporti.patch
+Patch3971: kvm-Revert-qga-convert-qemu_mallocz-to-g_malloc0-and-qem.patch
+Patch3972: kvm-Revert-qga-schema-document-generic-QERR_UNSUPPORTED.patch
+Patch3973: kvm-Revert-qga-add-windows-implementation-for-guest-set-.patch
+Patch3974: kvm-Revert-qga-add-windows-implementation-for-guest-get-.patch
+Patch3975: kvm-Revert-Fix-typos-and-misspellings.patch
+Patch3976: kvm-Revert-qga-implement-qmp_guest_set_vcpus-for-Linux-w.patch
+Patch3977: kvm-Revert-qga-implement-qmp_guest_get_vcpus-for-Linux-w.patch
+Patch3978: kvm-Revert-qga-introduce-guest-get-vcpus-guest-set-vcpus.patch
+Patch3979: kvm-Revert-qga-add-guest-set-time-command.patch
+Patch3980: kvm-Revert-qga-add-guest-get-time-command.patch
+Patch3981: kvm-Revert-qemu-ga-make-guest-sync-delimited-available-d.patch
+Patch3982: kvm-Revert-qemu-ga-fix-confusing-GAChannelMethod-compari.patch
+Patch3983: kvm-Revert-qga-cast-to-int-for-DWORD-type.patch
+Patch3984: kvm-Revert-qemu-ga-Fix-unchecked-strdup-by-converting-to.patch
+Patch3985: kvm-Revert-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cl.patch
+Patch3986: kvm-Revert-qga-add-missing-commas-in-json-docs.patch
+Patch3987: kvm-Revert-qemu-ga-Handle-errors-uniformely-in-ga_channe.patch
+Patch3988: kvm-Revert-qemu-ga-Plug-fd-leak-on-ga_channel_open-error.patch
+Patch3989: kvm-Revert-qemu-ga-Plug-fd-leak-on-ga_channel_listen_acc.patch
+Patch3990: kvm-Revert-qemu-ga-Plug-file-descriptor-leak-on-ga_open_.patch
+Patch3991: kvm-Revert-qemu-ga-Drop-pointless-lseek-from-ga_open_pid.patch
+Patch3992: kvm-Revert-qemu-ga-Document-intentional-fall-through-in-.patch
+Patch3993: kvm-Revert-qemu-ga-add-ga_open_logfile.patch
+Patch3994: kvm-Revert-qemu-ga-ga_open_pidfile-use-qemu_open.patch
+Patch3995: kvm-Revert-qga-channel-posix.c-Explicitly-include-string.patch
+Patch3996: kvm-Revert-qemu-ga-sample-fsfreeze-hooks.patch
+Patch3997: kvm-Revert-qemu-ga-execute-hook-to-quiesce-the-guest-on-.patch
+Patch3998: kvm-Revert-qemu-ga-guest_suspend-improve-error-reporting.patch
+Patch3999: kvm-Revert-qemu-ga-bios_supports_mode-improve-error-repo.patch
+Patch4000: kvm-Revert-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-e.patch
+Patch4001: kvm-Revert-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprint.patch
+Patch4002: kvm-Revert-qemu-ga-build_fs_mount_list-take-an-Error-arg.patch
+Patch4003: kvm-Revert-qemu-ga-qmp_guest_shutdown-improve-error-repo.patch
+Patch4004: kvm-Revert-qemu-ga-qmp_guest_file_close-fix-fclose-error.patch
+Patch4005: kvm-Revert-qemu-ga-guest_file_handle_find-take-an-Error-.patch
+Patch4006: kvm-Revert-qga-channel-posix.c-Include-headers-it-needs.patch
+Patch4007: kvm-Revert-qemu-ga-ask-and-print-error-information-from-.patch
+Patch4008: kvm-Revert-qemu-sockets-add-Error-to-all-functions.patch
+Patch4009: kvm-Revert-reimplement-error_setg-and-error_setg_errno-f.patch
+Patch4010: kvm-Revert-cleanup-useless-return-sentence.patch
+Patch4011: kvm-Revert-qemu-ga-prefer-pstrcpy-consistently-NUL-termi.patch
+Patch4012: kvm-Revert-qemu-ga-Remove-unreachable-code-after-g_error.patch
+Patch4013: kvm-Revert-qapi-Fix-enumeration-typo-error.patch
+Patch4014: kvm-Revert-qemu-ga-Fix-null-pointer-passed-to-unlink-in-.patch
+Patch4015: kvm-Revert-qemu-ga-don-t-leak-a-file-descriptor-upon-fai.patch
+Patch4016: kvm-Revert-error-drop-error_get_qobject-error_set_qobjec.patch
+Patch4017: kvm-Revert-qemu-ga-add-guest-fstrim-command.patch
+Patch4018: kvm-Revert-qemu-ga-make-names-more-generic-for-mount-lis.patch
+Patch4019: kvm-Revert-qemu-ga-align-versioning-with-QEMU_VERSION.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4020: kvm-qga-convert-qemu_mallocz-to-g_malloc0-and-qemu_free-.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4021: kvm-qemu-ga-align-versioning-with-QEMU_VERSION.patch
+# For bz#918311 - Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4022: kvm-qemu-ga-make-names-more-generic-for-mount-list-funct.patch
+# For bz#918311 - Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4023: kvm-qemu-ga-add-guest-fstrim-command.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4024: kvm-error-drop-error_get_qobject-error_set_qobject.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4025: kvm-qemu-ga-don-t-leak-a-file-descriptor-upon-failed-loc.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4026: kvm-qemu-ga-Fix-null-pointer-passed-to-unlink-in-failure.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4027: kvm-qapi-Fix-enumeration-typo-error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4028: kvm-qemu-ga-Remove-unreachable-code-after-g_error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4029: kvm-qemu-ga-prefer-pstrcpy-consistently-NUL-terminate-if.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4030: kvm-cleanup-useless-return-sentence.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4031: kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4032: kvm-qemu-sockets-add-Error-to-all-functions.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4033: kvm-qemu-ga-ask-and-print-error-information-from-qemu-so.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4034: kvm-qga-channel-posix.c-Include-headers-it-needs.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4035: kvm-qemu-ga-guest_file_handle_find-take-an-Error-argumen.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4036: kvm-qemu-ga-qmp_guest_file_close-fix-fclose-error-check.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4037: kvm-qemu-ga-qmp_guest_file_-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4038: kvm-qemu-ga-qmp_guest_shutdown-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4039: kvm-qemu-ga-build_fs_mount_list-take-an-Error-argument.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4040: kvm-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprintf-error.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4041: kvm-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-error_se.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4042: kvm-qemu-ga-qmp_guest_network_get_interfaces-get-rid-of-.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4043: kvm-qemu-ga-bios_supports_mode-improve-error-reporting.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4044: kvm-qemu-ga-guest_suspend-improve-error-reporting.patch
+# For bz#911569 - [Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests)
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4045: kvm-qemu-ga-execute-hook-to-quiesce-the-guest-on-fsfreez.patch
+# For bz#911569 - [Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests)
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4046: kvm-qemu-ga-sample-fsfreeze-hooks.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4047: kvm-qga-channel-posix.c-Explicitly-include-string.h.patch
+# For bz#892996 - qemu-ga leaks fds to exec()ed processes [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4048: kvm-qemu-ga-ga_open_pidfile-use-qemu_open.patch
+# For bz#892996 - qemu-ga leaks fds to exec()ed processes [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4049: kvm-qemu-ga-add-ga_open_logfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4050: kvm-qemu-ga-Document-intentional-fall-through-in-channel.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4051: kvm-qemu-ga-Drop-pointless-lseek-from-ga_open_pidfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4052: kvm-qemu-ga-Plug-file-descriptor-leak-on-ga_open_pidfile.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4053: kvm-qemu-ga-Plug-fd-leak-on-ga_channel_listen_accept-err.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4054: kvm-qemu-ga-Plug-fd-leak-on-ga_channel_open-error-paths.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4055: kvm-qemu-ga-Handle-errors-uniformely-in-ga_channel_open.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4056: kvm-qga-add-missing-commas-in-json-docs.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4057: kvm-Replace-non-portable-asprintf-by-g_strdup_printf.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4058: kvm-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cleanup.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4059: kvm-qemu-ga-Plug-leaks-on-qmp_guest_network_get_interfac.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4060: kvm-qemu-ga-Fix-unchecked-strdup-by-converting-to-g_strd.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4061: kvm-qga-cast-to-int-for-DWORD-type.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4062: kvm-qemu-ga-fix-confusing-GAChannelMethod-comparison.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4063: kvm-qemu-ga-make-guest-sync-delimited-available-during-f.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4064: kvm-qemu-ga-use-key-value-store-to-avoid-recycling-fd-ha.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4065: kvm-qga-add-guest-get-time-command.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4066: kvm-qga-add-guest-set-time-command.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4067: kvm-qga-introduce-guest-get-vcpus-guest-set-vcpus-with-s.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4068: kvm-qga-implement-qmp_guest_get_vcpus-for-Linux-with-sys.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4069: kvm-qga-implement-qmp_guest_set_vcpus-for-Linux-with-sys.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4070: kvm-Fix-typos-and-misspellings.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4071: kvm-qga-add-windows-implementation-for-guest-get-time.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4072: kvm-qga-add-windows-implementation-for-guest-set-time.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4073: kvm-qga-schema-mark-optional-GuestLogicalProcessor.can-o.patch
+# For bz#924684 - [FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly]
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4074: kvm-qga-schema-document-generic-QERR_UNSUPPORTED.patch
+# For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
+Patch4075: kvm-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-overflo.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4076: kvm-qcow2-Return-real-error-code-in-qcow2_read_snapshots2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4077: kvm-qcow2-Return-real-error-code-in-qcow2_write_snapshot2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4078: kvm-Add-new-macro-QEMU_PACKED-for-packed-C-structures2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4079: kvm-qcow2-Update-snapshot-table-information-at-once2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4080: kvm-qcow2-Cleanups-and-memleak-fix-in-qcow2_snapshot_cre2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4081: kvm-qcow2-Rework-qcow2_snapshot_create-error-handling2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4082: kvm-qcow2-Return-real-error-in-qcow2_snapshot_goto2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4083: kvm-qcow2-refcount-remove-dead-assignment2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4084: kvm-qcow2-Fix-order-of-refcount-updates-in-qcow2_snapsho2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4085: kvm-qcow2-Fix-order-in-qcow2_snapshot_delete2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4086: kvm-qcow2-Return-real-error-in-qcow2_update_snapshot_ref2.patch
+# For bz#796011 - Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected
+Patch4087: kvm-qcow2-Fix-L1-write-error-handling-in-qcow2_update_sn2.patch
+# For bz#953108 - qemu-img man page still mentions host_device
+Patch4088: kvm-Documentation-Remove-outdated-host_device-note2.patch
+# For bz#925170 - MSI routing for 1553 card to guest stops working
+Patch4089: kvm-pci-assign-Convert-iommu-property-to-booleam2.patch
+# For bz#925170 - MSI routing for 1553 card to guest stops working
+Patch4090: kvm-pci-assign-Allow-to-disable-MSI-perference-for-host-.patch
+# For bz#877240 - QMP: improve error message for blockdev-snapshot-sync failure
+Patch4091: kvm-block-bdrv_img_create-add-Error-argument2.patch
+# For bz#877240 - QMP: improve error message for blockdev-snapshot-sync failure
+Patch4092: kvm-qemu-img-img_create-pass-Error-object-to-bdrv_img_cr.patch
+# For bz#877240 - QMP: improve error message for blockdev-snapshot-sync failure
+Patch4093: kvm-qemu-img-img_create-drop-unneeded-goto-and-ret-varia2.patch
+# For bz#877240 - QMP: improve error message for blockdev-snapshot-sync failure
+Patch4094: kvm-qmp-qmp_transaction-pass-Error-object-to-bdrv_img_cr2.patch
+# For bz#877240 - QMP: improve error message for blockdev-snapshot-sync failure
+Patch4095: kvm-block-bdrv_img_create-drop-unused-error-handling-cod2.patch
+# For bz#821741 - (re-)enable SEP flag on CPU models
+Patch4096: kvm-pc-Add-a-new-machine-type-rhel6.5.0.patch
+# For bz#821741 - (re-)enable SEP flag on CPU models
+Patch4097: kvm-target-i386-cpu-Enable-SEP-by-default-for-rhel6.5.0-.patch
+# For bz#821741 - (re-)enable SEP flag on CPU models
+Patch4098: kvm-revert-disable-SEP-on-all-CPU-models-745717.patch
+# For bz#821741 - (re-)enable SEP flag on CPU models
+Patch4099: kvm-target-i386-cpu-Enable-SEP-for-Haswell-models.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4100: kvm-Revert-usb-redir-Add-flow-control-supportn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4101: kvm-Revert-spice-qemu-char.c-remove-intermediate-buffern.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4102: kvm-Revert-spice-qemu-char.c-add-throttlingn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4103: kvm-Revert-virtio-console-Enable-port-throttling-when-chn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4104: kvm-Revert-char-Throttle-when-host-connection-is-downn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4105: kvm-Revert-char-Equip-the-unix-tcp-backend-to-handle-nonn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4106: kvm-Revert-char-Update-send_all-to-handle-nonblocking-chn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4107: kvm-Revert-char-Disable-write-callback-if-throttled-charn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4108: kvm-Revert-char-Add-framework-for-a-write-unblocked-calln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4109: kvm-Revert-iohandlers-Add-enable-disable_write_fd_handlen.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4110: kvm-Revert-char-Add-a-QemuChrHandlers-struct-to-initialin.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4111: kvm-Revert-char-mark-socket-closed-if-write-fails-with-En.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4112: kvm-Revert-char-Split-out-tcp-socket-close-code-in-a-sepn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4113: kvm-char-rename-qemu_chr_write-qemu_chr_fe_writen.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4114: kvm-char-rename-qemu_chr_printf-qemu_chr_fe_printfn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4115: kvm-char-rename-qemu_chr_read-qemu_chr_be_writen.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4116: kvm-char-rename-qemu_chr_can_read-qemu_chr_be_can_readn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4117: kvm-char-rename-qemu_chr_guest_open-qemu_chr_fe_openn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4118: kvm-char-rename-qemu_chr_guest_close-qemu_chr_fe_closen.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4119: kvm-char-qemu_chr_ioctl-qemu_chr_fe_ioctln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4120: kvm-char-rename-qemu_chr_set_echo-qemu_chr_fe_set_echon.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4121: kvm-char-rename-qemu_chr_open-qemu_chr_newn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4122: kvm-char-qemu_chr_open_opts-qemu_chr_new_from_optsn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4123: kvm-char-rename-qemu_chr_close-qemu_chr_deleten.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4124: kvm-char-rename-qemu_chr_get_msgfd-qemu_chr_fe_get_msgfdn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4125: kvm-char-remove-qemu_chr_send_eventn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4126: kvm-char-document-the-functions-that-will-be-the-publicn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4127: kvm-qemu-char-rename-qemu_chr_event-to-qemu_chr_be_eventn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4128: kvm-rename-IOCanRWHandler-to-IOCanReadHandlern.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4129: kvm-qemu-char-Plug-memory-leak-on-qemu_chr_open_pty-erron.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4130: kvm-char-socket-fix-error-reportingn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4131: kvm-qemu-char-remove-dead-confusing-logic-with-nb_stdio_n.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4132: kvm-char-add-IOWatchPoll-supportn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4133: kvm-qemu-char-convert-fd_chr-to-use-a-GIOChanneln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4134: kvm-qemu-char-convert-pty-to-GIOChanneln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4135: kvm-qemu-char-convert-pty-to-GIOChannelnn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4136: kvm-qemu-char-tcp-make-use-GIOChanneln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4137: kvm-qemu-char-add-watch-supportn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4138: kvm-qemu-char-add-pty-watchn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4139: kvm-char-add-gio-watch-fn-for-tcp-backendsn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4140: kvm-qemu-char-use-a-glib-timeout-instead-of-qemu-timern.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4141: kvm-virtio-console-add-flow-controln.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4142: kvm-virtio-serial-make-flow-control-explicit-in-virtio-cn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4143: kvm-Add-glib-support-to-main-loopn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4144: kvm-virtio-console-Add-some-trace-eventsn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4145: kvm-char-Fix-return-type-of-qemu_chr_fe_add_watchn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4146: kvm-fix-monitorn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4147: kvm-qemu-char-rewrite-io_channel_send_all-and-drop-the-n.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4148: kvm-qstring-add-qstring_get_lengthn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4149: kvm-Monitor-Make-output-buffer-dynamicn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4150: kvm-usb-redir-Add-flow-control-supportn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4151: kvm-qemu-char-eliminate-busy-waiting-on-can_read-returnin.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4152: kvm-qemu-char-really-fix-behavior-on-can_read-0n.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4153: kvm-qemu-char-another-io_add_watch_poll-fixn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4154: kvm-virtio-console-Also-throttle-when-less-was-written-tn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4155: kvm-virtio-console-Remove-any-pending-watches-on-closen.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4156: kvm-spice-qemu-char-Remove-dead-debugging-coden.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4157: kvm-spice-qemu-char-Add-watch-supportn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4158: kvm-spice-qemu-char-Remove-intermediate-buffern.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4159: kvm-qemu-char-use-consistent-idiom-for-removing-sourcesn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4160: kvm-qemu-char-simplify-pty-pollingn.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4161: kvm-qemu-char-correct-return-value-from-chr_read-function.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4162: kvm-qemu-char-do-not-operate-on-sources-from-finalize-can.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4163: kvm-char-introduce-a-blocking-version-of-qemu_chr_fe_wrin.patch
+# For bz#909059 - Switch to upstream solution for chardev flow control
+Patch4164: kvm-virtio-console-add-a-no-flow-control-mode-for-compatn.patch
+# For bz#670162 - [RFE] Removing the backing file using qemu-img re-base
+Patch4165: kvm-qemu-img-allow-rebase-to-a-NULL-backing-file-when-un.patch
+# For bz#670162 - [RFE] Removing the backing file using qemu-img re-base
+Patch4166: kvm-qemu-img-rebase-use-empty-string-to-rebase-without-b.patch
+# For bz#869586 - core dump happens when quitting qemu via monitor
+Patch4167: kvm-virtio-blk-fix-unplug-virsh-reboot.patch
+# For bz#882834 - no warning while check the lacked cpuid_7_0_ebx_feature_name flag
+Patch4168: kvm-target-i386-cpuid-check-cpuid_7_0_ebx-too-on-check-e.patch
+# For bz#947416 - fail to specify the serial number for usb storage device
+Patch4169: kvm-qdev-New-qdev_prop_set_string.patch
+# For bz#947416 - fail to specify the serial number for usb storage device
+Patch4170: kvm-constify-value-pointer-for-qdev_prop_set_string.patch
+# For bz#947416 - fail to specify the serial number for usb storage device
+Patch4171: kvm-usb-storage-Forward-serial-number-to-scsi-disk.patch
+# For bz#953932 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.5]
+Patch4172: kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch
+# For bz#953932 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.5]
+Patch4173: kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch
+# For bz#953932 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.5]
+Patch4174: kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4175: kvm-vmdk-Use-bdrv_-p-write_sync-for-metadata-writes.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4176: kvm-block-Remove-unused-s-hd-in-various-drivers3.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4177: kvm-vmdk-fix-endianness-bugs.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4178: kvm-VMDK-introduce-VmdkExtent.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4179: kvm-VMDK-bugfix-align-offset-to-cluster-in-get_whole_clu.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4180: kvm-VMDK-probe-for-monolithicFlat-images.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4181: kvm-VMDK-separate-vmdk_open-by-format-version.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4182: kvm-VMDK-add-field-BDRVVmdkState.desc_offset.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4183: kvm-VMDK-flush-multiple-extents.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4184: kvm-VMDK-move-static-cid_update-flag-to-bs-field.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4185: kvm-VMDK-change-get_cluster_offset-return-type.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4186: kvm-VMDK-open-read-write-for-monolithicFlat-image.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4187: kvm-VMDK-create-different-subformats.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4188: kvm-VMDK-fix-coding-style.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4189: kvm-block-add-bdrv_get_allocated_file_size-operation.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4190: kvm-Use-new-macro-QEMU_PACKED-for-packed-structures.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4191: kvm-VMDK-enable-twoGbMaxExtentFlat.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4192: kvm-VMDK-add-twoGbMaxExtentSparse-support.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4193: kvm-VMDK-separate-vmdk_read_extent-vmdk_write_extent.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4194: kvm-VMDK-Opening-compressed-extent.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4195: kvm-VMDK-read-write-compressed-extent.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4196: kvm-VMDK-creating-streamOptimized-subformat.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4197: kvm-VMDK-bugfix-open-Haiku-vmdk-image.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4198: kvm-VMDK-bugfix-opening-vSphere-4-exported-image.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4199: kvm-VMDK-fix-leak-of-extent_file.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4200: kvm-vmdk-fix-return-values-of-vmdk_parent_open.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4201: kvm-vmdk-clean-up-open.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4202: kvm-vmdk-remove-unneeded-variable-assignment.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4203: kvm-vmdk-vmdk_read_cid-returns-garbage-if-p_name-is-NULL.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4204: kvm-vmdk-Improve-error-handling.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4205: kvm-vmdk-Fix-possible-segfaults.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4206: kvm-Include-zlib.h-using-include.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4207: kvm-block-vmdk-Fix-warning-from-splint-comparision-of-un.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4208: kvm-vmdk-Fix-header-structure.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4209: kvm-vmdk-Read-footer-for-streamOptimized-images.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4210: kvm-block-vmdk-image-file-reopen.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4211: kvm-vmdk-relative_path-use-pstrcpy-in-place-of-strncpy.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4212: kvm-vmdk-Fix-data-corruption-bug-in-WRITE-and-READ-handl.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4213: kvm-block-Use-error-code-EMEDIUMTYPE-for-wrong-format-in.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4214: kvm-vmdk-Allow-selecting-SCSI-adapter-in-image-creation.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4215: kvm-vmdk-Allow-space-in-file-name.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4216: kvm-vmdk-named-return-code.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4217: kvm-vmdk-add-support-for-zeroed-grain-GTE.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4218: kvm-vmdk-Add-option-to-create-zeroed-grain-image.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4219: kvm-vmdk-change-magic-number-to-macro.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4220: kvm-vmdk-store-fields-of-VmdkMetaData-in-cpu-endian.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4221: kvm-vmdk-add-bdrv_co_write_zeroes.patch
+# For bz#905851 - Fail to start  guest which contains more than 51 usbs disk with multifunction
+Patch4222: kvm-usb-hub-limit-chain-length.patch
+# For bz#905851 - Fail to start  guest which contains more than 51 usbs disk with multifunction
+Patch4223: kvm-usb-hub-report-status-changes-only-once.patch
+# For bz#886878 - atapi: tray statuses (locked and open) are not reset on boot/reboot of guest
+Patch4224: kvm-atapi-reset-cdrom-tray-statuses-on-ide_reset.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4225: kvm-build-sys-add-guards-to-generated-headers.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4226: kvm-audio-allow-machine-to-specify-if-mixemu-is-disabled.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4227: kvm-pc-machine-rhel-6.4-do-not-have-mixemu.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4228: kvm-hda-audio-do-not-export-vmstate_hda_audio_v1.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4229: kvm-hda-audio-register-different-device-depending-on-mix.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4230: kvm-audio-split-sample-conversion-and-volume-mixing3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4231: kvm-audio-add-VOICE_VOLUME-ctl3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4232: kvm-audio-don-t-apply-volume-effect-if-backend-has-VOICE3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4233: kvm-hw-ac97-remove-USE_MIXER-code3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4234: kvm-hw-ac97-the-volume-mask-is-not-only-0x1f3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4235: kvm-hw-ac97-add-support-for-volume-control3.patch
+# For bz#884253 - Allow control of volume from within Windows Guests (Volume Mixture)
+Patch4236: kvm-audio-spice-add-support-for-volume-control3.patch
+# For bz#955302 - [6.5 FEAT] Support for LED state extension to Qemu VNC
+Patch4237: kvm-vnc-Add-SCROLL-lock-key-to-kbd_leds.patch
+# For bz#955302 - [6.5 FEAT] Support for LED state extension to Qemu VNC
+Patch4238: kvm-vnc-Support-for-LED-state-extension.patch
+# For bz#955302 - [6.5 FEAT] Support for LED state extension to Qemu VNC
+Patch4239: kvm-vnc-Adjust-lock-state-sync-logic-with-VNC_FEATURE_LE.patch
+# For bz#955302 - [6.5 FEAT] Support for LED state extension to Qemu VNC
+Patch4240: kvm-doc-document-the-Pseudo-encoding-of-LED-state.patch
+# For bz#962378 - I/O requests of RHEL6.3 KVM guest are hung indefinitely - suspected issue in qcow2_co_flush().
+Patch4241: kvm-block-fix-qcow2_co_flush-deadlock.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4242: kvm-add-a-new-runstate-RUN_STATE_GUEST_PANICKED.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4243: kvm-add-a-new-qevent-QEVENT_GUEST_PANICKED.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4244: kvm-introduce-a-new-qom-device-to-deal-with-panicked-eve.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4245: kvm-fw_cfg-add-required-header-files.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4246: kvm-generalize-rom_set_fw-RHEL-6-only.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4247: kvm-pvpanic-pass-configurable-ioport-to-seabios.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4248: kvm-pvpanic-add-document-of-pvpanic.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4249: kvm-pvpanic-create-pvpanic-by-default-for-machine-1.5.patch
+# For bz#833530 - [Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.
+Patch4250: kvm-vl-new-runstate-transition-RUN_STATE_GUEST_PANICKED-.patch
+# For bz#952240 - hot-plugging multi-func devices caused: qemu: hardware error: register_ioport_write: invalid opaque
+Patch4251: kvm-acpi-drop-debug-port.patch
+# For bz#955302 - [6.5 FEAT] Support for LED state extension to Qemu VNC
+Patch4252: kvm-vnc-Make-ledstate-comparison-before-modifiers-update.patch
+# For bz#826340 - [Hitachi 6.5 FEAT] Support mlock guest memory
+Patch4253: kvm-Add-option-to-mlock-qemu-and-guest-memory.patch
+# For bz#919761 - IRQs are not distributed on a KVM guest correctly.
+Patch4254: kvm-pci-assign-Add-MSI-affinity-support.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4255: kvm-block-add-block-driver-read-only-whitelist.patch
+# For bz#960685 - [RHEL-6.5] Backport support for vmdk image format
+Patch4256: kvm-qcow2-Reinitialise-counter-when-restarting-allocatio.patch
+# For bz#963773 - scsi-cd: tray statuses (locked and open) are not reset on boot/reboot of guest
+Patch4257: kvm-scsi-reset-cdrom-tray-statuses-on-scsi_disk_reset.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4258: kvm-osdep-add-qemu_get_local_state_pathname.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4259: kvm-qga-determine-default-state-dir-and-pidfile-dynamica.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4260: kvm-configure-don-t-save-any-fixed-local_statedir-for-wi.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4261: kvm-qga-create-state-directory-on-win32.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4262: kvm-qga-remove-undefined-behavior-in-ga_install_service.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4263: kvm-qga-save-state-directory-in-ga_install_service.patch
+# For bz#962669 - Windows guest agent service failed to be started
+Patch4264: kvm-Makefile-create-.-var-run-when-installing-the-POSIX-.patch
+# For bz#890011 - flooding with 'scsi-generic: execute_command: read failed !' error if eject the pass-through SCSI CD-ROM
+Patch4265: kvm-scsi-change-removable-field-to-host-many-features.patch
+# For bz#890011 - flooding with 'scsi-generic: execute_command: read failed !' error if eject the pass-through SCSI CD-ROM
+Patch4266: kvm-scsi-disk-scsi-block-device-for-scsi-pass-through-sh.patch
+# For bz#843797 - qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down
+Patch4267: kvm-use-atexit-for-quit_timers.patch
+
+# For bz#976478 - CVE-2013-2231 qemu: qemu-ga win32 service unquoted search path [rhel-6.5]
+Patch4268: kvm-qga-diagnostic-output-should-go-to-stderr.patch
+Patch4269: kvm-qa_install_service-nest-error-paths-more-idiomatically.patch
+Patch4270: kvm-qga-escape-cmdline-args-when-registering-win32-service.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4271: kvm-block-add-the-blockio-limits-command-line-support.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4272: kvm-CoQueue-introduce-qemu_co_queue_wait_insert_head.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4273: kvm-block-add-I-O-throttling-algorithm.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4274: kvm-hmp-qmp-add-block_set_io_throttle.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4275: kvm-block-disable-I-O-throttling-on-sync-api.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4276: kvm-block-add-the-support-to-drain-throttled-requests.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4277: kvm-block-Factor-bdrv_read_unthrottled-out-of-guess_disk.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4278: kvm-block-fix-initialization-in-bdrv_io_limits_enable.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4279: kvm-qapi-Introduce-blockdev-group-snapshot-sync-comman2.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4280: kvm-block-fix-I-O-throttling-accounting-blind-spot.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4281: kvm-block-keep-I-O-throttling-slice-time-constant.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4282: kvm-block-drop-duplicated-slice-extension-code.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4283: kvm-block-clean-up-I-O-throttling-wait_time-code.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4284: kvm-ide-convert-ide_sector_read-to-asynchronous-I-O.patch
+# For bz#956825 - Backport IO throttling into RHEL 6.x KVM
+Patch4285: kvm-ide-convert-ide_sector_write-to-asynchronous-I-O.patch
+# For bz#872015 - A Windows VM can only see 2 of 4 assigned COM ports (Serial Devices)
+Patch4286: kvm-serial-add-pci-variant.patch
+# For bz#872015 - A Windows VM can only see 2 of 4 assigned COM ports (Serial Devices)
+Patch4287: kvm-serial-fix-error-handling.patch
+# For bz#983635 - QMP: bad input crashes QEMU
+Patch4288: kvm-qapi-shortcut-visits-on-errors.patch
+# For bz#983635 - QMP: bad input crashes QEMU
+Patch4289: kvm-qapi-allow-freeing-partially-allocated-objects.patch
+# For bz#983635 - QMP: bad input crashes QEMU
+Patch4290: kvm-qapi-untangle-next_list.patch
+# For bz#983635 - QMP: bad input crashes QEMU
+Patch4291: kvm-qapi-fix-error-propagation.patch
+# For bz#903454 - kvm guest crash after long stop/cont cycle
+Patch4292: kvm-kvmclock-clock-should-count-only-if-vm-is-running.patch
+# For bz#961850 - RFE: add -spice disable-agent-file-transfer cmdline option
+Patch4293: kvm-spice-Add-spice-disable-agent-file-transfer-cmdline-.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4294: kvm-qemu-char-Set-foo_tag-0-when-returning-FALSE-from-ca.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4295: kvm-qapi-generate-correct-enum-names-for-camel-case-enum.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4296: kvm-qapi-don-t-convert-enum-strings-to-lowercase.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4297: kvm-qapi-avoid-reserved-keywords.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4298: kvm-qapi-do-not-protect-enum-values-from-namespace-pollu.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4299: kvm-qapi-add-unix-to-the-set-of-reserved-words.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4300: kvm-qapi-generate-C-types-for-fixed-width-integers.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4301: kvm-qapi-Add-Visitor-interfaces-for-uint-_t-and-int-_t.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4302: kvm-qapi-add-String.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4303: kvm-qapi-add-socket-address-types.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4304: kvm-qmp-add-and-use-q-type-specifier.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4305: kvm-qemu-Add-opt_set_bool-functionality.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4306: kvm-build-add-QAPI-files-to-the-tools.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4307: kvm-qemu-sockets-unix_listen-and-unix_connect-are-portab.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4308: kvm-qemu-sockets-add-nonblocking-connect-for-Unix-socket.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4309: kvm-qemu-sockets-include-strerror-or-gai_strerror-output.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4310: kvm-qemu-sockets-add-error-propagation-to-inet_connect_a.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4311: kvm-qemu-sockets-add-error-propagation-to-inet_dgram_opt.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4312: kvm-qemu-sockets-add-error-propagation-to-inet_parse.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4313: kvm-qemu-sockets-add-error-propagation-to-Unix-socket-fu.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4314: kvm-qemu-ga-drop-temporary-extra-check-for-unix_listen-r.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4315: kvm-qemu-sockets-return-InetSocketAddress-from-inet_pars.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4316: kvm-qemu-sockets-add-socket_listen-socket_connect-socket.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4317: kvm-qemu-sockets-Fix-parsing-of-the-inet-option-to.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4318: kvm-qemu-socket-set-passed-fd-non-blocking-in-socket_con.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4319: kvm-qemu-char-ask-and-print-error-information-from-qemu-.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4320: kvm-vnc-avoid-Yoda-conditionals.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4321: kvm-vnc-introduce-a-single-label-for-error-returns.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4322: kvm-vnc-add-error-propagation-to-vnc_display_open.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4323: kvm-chardev-add-error-reporting-for-qemu_chr_new_from_op.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4324: kvm-chardev-fix-QemuOpts-lifecycle.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4325: kvm-chardev-reduce-chardev-ifdef-mess-a-bit.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4326: kvm-chardev-add-qmp-hotplug-commands-with-null-chardev-s.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4327: kvm-chardev-add-file-chardev-support-to-chardev-add-qmp.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4328: kvm-chardev-add-serial-chardev-support-to-chardev-add-qm.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4329: kvm-chardev-add-parallel-chardev-support-to-chardev-add-.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4330: kvm-chardev-add-socket-chardev-support-to-chardev-add-qm.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4331: kvm-chardev-add-pty-chardev-support-to-chardev-add-qmp.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4332: kvm-qemu-char-Avoid-unused-variable-warning-in-some-conf.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4333: kvm-qapi-Flatten-away-ChardevPort.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4334: kvm-qemu-char-make-char-drivers-dynamically-registerable.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4335: kvm-qemu-char-move-spice-registration-to-spice-qemu-char.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4336: kvm-qemu-char-move-baum-registration-to-baum.c.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4337: kvm-qemu-char-move-msmouse-registeration-to-msmouse.c.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4338: kvm-qemu-char-move-text-console-init-to-console.c.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4339: kvm-qemu-char.c-fix-waiting-for-telnet-connection-messag.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4340: kvm-chardev-add-support-for-qapi-based-chardev-initializ.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4341: kvm-chardev-add-mux-chardev-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4342: kvm-chardev-switch-null-init-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4343: kvm-chardev-add-msmouse-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4344: kvm-chardev-add-braille-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4345: kvm-chardev-switch-file-init-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4346: kvm-chardev-add-stdio-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4347: kvm-chardev-switch-serial-tty-init-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4348: kvm-chardev-switch-parallel-init-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4349: kvm-chardev-switch-pty-init-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4350: kvm-chardev-add-console-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4351: kvm-chardev-add-pipe-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4352: kvm-chardev-add-spice-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4353: kvm-create-TextConsole-together-with-the-CharDeviceState.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4354: kvm-remove-text_console_opts.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4355: kvm-chardev-add-vc-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4356: kvm-chardev-add-memory-ringbuf-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4357: kvm-chardev-add-udp-support-to-qapi.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4358: kvm-chardev-fix-info-chardev-output.patch
+# For bz#977767 - there is wrong backing file specified for making external snapshot with vmdk format disk
+Patch4359: kvm-vmdk-remove-wrong-calculation-of-relative-path.patch
+# For bz#888767 - "kvm: unhandled exit 80000021" when migrating to some hosts
+Patch4360: kvm-Fix-real-mode-guest-migration.patch
+# For bz#888767 - "kvm: unhandled exit 80000021" when migrating to some hosts
+Patch4361: kvm-Fix-real-mode-guest-segments-dpl-value-in-savevm.patch
+# For bz#987025 - enable MSI-X for virtio-scsi
+Patch4362: kvm-virtio-scsi-enable-MSI-X-support.patch
+# For bz#957319 - Guest w/ vhost=on over virtio-net-pci, under hmp, 'set_link $id_of_netdev off', then migrate, migrate failed, src qemu-kvm process core dumped
+Patch4363: kvm-virtio-net-properly-check-the-vhost-status-during-st.patch
+# For bz#975468 - RFE: Enable qemu IO throttling only in qemu-kvm-rhev
+Patch4364: kvm-configure-add-option-for-io-throttling-RHEL-6-only.patch
+# For bz#975468 - RFE: Enable qemu IO throttling only in qemu-kvm-rhev
+Patch4365: kvm-Only-enable-IO-throttling-for-RHEV.patch
+# For bz#990316 - QMP: possible memory leaks on commands failure
+Patch4366: kvm-qapi-qapi-commands-fix-possible-leaks-on-visitor-dea.patch
+# For bz#975468 - RFE: Enable qemu IO throttling only in qemu-kvm-rhev
+Patch4367: kvm-Fix-compilation-of-I-O-throttling.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4368: kvm-ccid-card-emul-do-not-crash-if-backend-is-not-provid.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4369: kvm-ccid-make-backend_enum_table-static-const-and-adjust.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4370: kvm-ccid-declare-DEFAULT_ATR-table-to-be-static-const.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4371: kvm-libcacard-vscclient-fix-error-paths-for-socket-creat.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4372: kvm-libcacard-Use-format-specifier-u-instead-of-d-for-un.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4373: kvm-Spelling-fixes-in-comments-it-s-its.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4374: kvm-libcacard-Fix-unchecked-strdup-by-converting-to-g_st.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4375: kvm-libcacard-split-vscclient-main-from-socket-reading.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4376: kvm-libcacard-vscclient-to-use-QemuThread-for-portabilit.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4377: kvm-libcacard-teach-vscclient-to-use-GMainLoop-for-porta.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4378: kvm-libcacard-use-system-config-directory-for-nss-db-on-.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4379: kvm-libcacard-remove-sql-prefix.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4380: kvm-libcacard-remove-default-libcoolkey-loading.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4381: kvm-dev-smartcard-reader-nicer-debug-messages.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4382: kvm-hw-usb-dev-smartcard-reader.c-remove-aborts-never-tr.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4383: kvm-hw-usb-dev-smartcard-reader-support-windows-guest.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4384: kvm-libcacard-change-default-ATR.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4385: kvm-hw-ccid-card-passthru.c-add-atr-check.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4386: kvm-ccid-card-passthru-dev-smartcard-reader-add-debug-en.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4387: kvm-usb-ccid-Drop-unused-CCIDCardInfo-callback-print.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4388: kvm-hw-usb-dev-smartcard-reader.c-define-structs-for-CCI.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4389: kvm-dev-smartcard-reader-change-default-protocol-to-T-0.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4390: kvm-dev-smartcard-reader-copy-atr-protocol-to-ccid-param.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4391: kvm-libcacard-vreader-add-debugging-messages-for-apdu.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4392: kvm-dev-smartcard-reader-empty-implementation-for-Mechan.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4393: kvm-libcacard-cac-change-big-switch-functions-to-single-.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4394: kvm-usb-smartcard-reader-Properly-NAK-interrupt-eps-when.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4395: kvm-uhci-Don-t-allow-the-guest-to-set-port-enabled-when-.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4396: kvm-usb-ccid-remote-wakeup-support.patch
+# For bz#917860 - Smartcard emulation with Windows guest fails
+Patch4397: kvm-uhci-egsm-fix.patch
+# For bz#990225 - [RHEV/RHEL] Integrate dynamic offloads into virtio-net device
+Patch4398: kvm-virtio-net-dynamic-network-offloads-configuration.patch
+# For bz#985334 - query mem info from monitor would cause qemu-kvm hang [RHEL-6.5]
+Patch4399: kvm-char-io_channel_send-don-t-lose-written-bytes.patch
+# For bz#985334 - query mem info from monitor would cause qemu-kvm hang [RHEL-6.5]
+Patch4400: kvm-monitor-maintain-at-most-one-G_IO_OUT-watch.patch
+# For bz#843797 - qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down
+Patch4401: kvm-register-exit-function-after-starting-timers.patch
+# For bz#956953 - insufficient address validation during config access of virtio device
+Patch4402: kvm-virtio-properly-validate-address-before-accessing-co.patch
+# For bz#994374 - boot up guest failed, hung in "booting from hard disk"
+Patch4403: kvm-block-fix-initialization-of-IO-limits-for-RHEL.patch
+# For bz#981235 - RFE: Request detail migration statistics output for live migration on RHEL6.5
+Patch4404: kvm-Add-spent-time-for-migration.patch
+# For bz#981235 - RFE: Request detail migration statistics output for live migration on RHEL6.5
+Patch4405: kvm-migration-print-total-downtime-for-final-phase-of-mi.patch
+# For bz#970159 - qemu-kvm-rhevm [race]: vm pauses with 'block I/O error in device '': No medium found (123)' when hounplug a disk and cannot be resumed
+Patch4406: kvm-blockdev-reset-werror-rerror-on-drive_del.patch
+# For bz#963151 - [FJ6.4 Bug] Once a guest OS issues READ_CAPACITY(10), it becomes unable to access beyond 2TB on the disk
+Patch4407: kvm-scsi-generic-fix-sign-extension-of-READ-CAPACITY-10-.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4408: kvm-vmdk-fix-comment-for-vmdk_co_write_zeroes.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4409: kvm-vmdk-Make-VMDK3Header-and-VmdkGrainMarker-QEMU_PACKE.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4410: kvm-vmdk-byteswap-VMDK4Header.desc_offset-field.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4411: kvm-vmdk-use-unsigned-values-for-on-disk-header-fields.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4412: kvm-vmdk-check-granularity-field-in-opening.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4413: kvm-vmdk-refuse-to-open-higher-version-than-supported.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4414: kvm-vmdk-check-l2-table-size-when-opening.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4415: kvm-vmdk-check-l1-size-before-opening-image.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4416: kvm-vmdk-use-heap-allocation-for-whole_grain.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4417: kvm-vmdk-rename-num_gtes_per_gte-to-num_gtes_per_gt.patch
+# For bz#994804 - qemu-kvm should verify image header fields before opening VMDK
+Patch4418: kvm-vmdk-Allow-reading-variable-size-descriptor-files.patch
+# For bz#994891 - duplicate chardev reported after chardev-remove
+Patch4419: kvm-qemu-char-Fix-ID-reuse-after-chardev-remove-for-qapi.patch
+# For bz#995530 - dataplane: refuse to start if device is already in use
+Patch4420: kvm-dataplane-refuse-to-start-if-device-is-already-in-us.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4421: kvm-qemu-socket-zero-initialize-SocketAddress.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4422: kvm-qemu-socket-drop-pointless-allocation.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4423: kvm-qemu-char-check-optional-fields-using-has_.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4424: kvm-qemu-char-use-more-specific-error_setg_-variants.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4425: kvm-qemu-char-print-notification-to-stderr.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4426: kvm-qemu-char-fix-documentation-for-telnet-wait-socket-f.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4427: kvm-qemu-char-don-t-leak-opts-on-error.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4428: kvm-qemu-char-use-ChardevBackendKind-in-CharDriver.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4429: kvm-qemu-char-minor-mux-chardev-fixes.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4430: kvm-qemu-char-add-chardev-mux-support.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4431: kvm-qemu-char-report-udp-backend-errors.patch
+# For bz#676568 - RFE: support hotplugging chardev & virtio-serial ports
+Patch4432: kvm-qemu-socket-don-t-leak-opts-on-error.patch
+# For bz#987745 - fail to do hotplug with qemu i/o throttling including iops,iops_wr,iops_rd,bps,bps_wr,bps_rd inofs
+Patch4433: kvm-block-Allow-IO-throttling-fields-in-__com.redhat_dri.patch
+# For bz#963420 - [RHEL-6.5] Backport support for vhd(x) image format
+Patch4434: kvm-qemu-add-castagnoli-crc32c-checksum-algorithm.patch
+# For bz#963420 - [RHEL-6.5] Backport support for vhd(x) image format
+Patch4435: kvm-block-vhdx-header-for-the-QEMU-support-of-VHDX-image.patch
+# For bz#963420 - [RHEL-6.5] Backport support for vhd(x) image format
+Patch4436: kvm-block-initial-VHDX-driver-support-framework-supports.patch
+# For bz#963420 - [RHEL-6.5] Backport support for vhd(x) image format
+Patch4437: kvm-block-add-read-only-support-to-VHDX-image-format.patch
+# For bz#990237 - qemu-kvm exits when hotplugging a cpu with --no-acpi
+Patch4438: kvm-Do-not-quit-QEMU-if-cpu-set-is-called-in-non-ACPI-mo.patch
+# For bz#889255 - Monitor command acl_remove messes up the ACL
+Patch4439: kvm-acl-Fix-acl_remove-not-to-mess-up-the-ACL.patch
+# For bz#970516 - Monitor command acl_add can't insert before last list element
+Patch4440: kvm-acl-acl_add-can-t-insert-before-last-list-element-fi.patch
+# For bz#991100 - pvpanic device triggers guest bugs when present by default
+Patch4441: kvm-hw-misc-don-t-create-pvpanic-device-by-default.patch
+# For bz#991100 - pvpanic device triggers guest bugs when present by default
+Patch4442: kvm-hw-misc-make-pvpanic-known-to-user.patch
+# For bz#903429 - [Fujitsu 6.5 FEAT]: QEMU: Add tracepoints in live migration processing.
+Patch4443: kvm-migration-add-migrate_set_state-tracepoint.patch
+# For bz#903429 - [Fujitsu 6.5 FEAT]: QEMU: Add tracepoints in live migration processing.
+Patch4444: kvm-vl-add-runstate_set-tracepoint.patch
+# For bz#903429 - [Fujitsu 6.5 FEAT]: QEMU: Add tracepoints in live migration processing.
+Patch4445: kvm-all-add-kvm_ioctl-kvm_vm_ioctl-kvm_vcpu_ioctl-tr.patch
+# For bz#903429 - [Fujitsu 6.5 FEAT]: QEMU: Add tracepoints in live migration processing.
+Patch4446: kvm-all-add-kvm_run_exit-tracepoint.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4447: kvm-aio-Fix-qemu_aio_wait-to-maintain-correct-walking_ha.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4448: kvm-aio-Another-fix-to-the-walking_handlers-logic.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4449: kvm-qemu-URI-parsing-library.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4450: kvm-qemu-tool-Add-dummy-qemu_mutex_lock_iothread-and-qem.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4451: kvm-block-Support-GlusterFS-as-a-QEMU-block-backend.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4452: kvm-configure-Add-a-config-option-for-GlusterFS-as-block.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4453: kvm-qcow2-Simplify-image-creation.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4454: kvm-block-Produce-zeros-when-protocols-reading-beyond-en.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4455: kvm-block-vdi-Fix-wrong-size-in-conditionally-used-memse.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4456: kvm-qcow2-Remove-old-image-creation-function.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4457: kvm-gluster-Add-image-resize-support.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4458: kvm-vdi-don-t-override-libuuid-symbols.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4459: kvm-gluster-Return-bdrv_has_zero_init-0.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4460: kvm-qcow2-Really-use-cache-unsafe-for-image-creation.patch
+# For bz#848070 - [RHEL 6.5] Add glusterfs support to qemu
+Patch4461: kvm-gluster-Handle-BDRV_O_CACHE_WB-in-gluster-driver.patch
+# For bz#988079 - [6.5 FEAT] qemu runtime support for librbd backend (ceph)
+Patch4462: kvm-ceph-rbd-block-driver-for-qemu-kvm.patch
+# For bz#988079 - [6.5 FEAT] qemu runtime support for librbd backend (ceph)
+Patch4463: kvm-rbd-link-and-load-librbd-dynamically.patch
+# For bz#988079 - [6.5 FEAT] qemu runtime support for librbd backend (ceph)
+Patch4464: kvm-rbd-Only-look-for-qemu-specific-copy-of-librbd.so.1.patch
+# For bz#988079 - [6.5 FEAT] qemu runtime support for librbd backend (ceph)
+Patch4465: kvm-Build-rbd-block-driver-only-for-qemu-kvm-rhev.patch
+# For bz#988079 - [6.5 FEAT] qemu runtime support for librbd backend (ceph)
+Patch4466: kvm-block-call-the-snapshot-handlers-of-the-protocol-dri.patch
+# For bz#906931 - [Hitachi 6.5 FEAT][QEMU]Add a time stamp to error message (*)
+Patch4467: kvm-add-timestamp-to-error_report.patch
+# For bz#906931 - [Hitachi 6.5 FEAT][QEMU]Add a time stamp to error message (*)
+Patch4468: kvm-Convert-stderr-message-calling-error_get_pretty-to-e.patch
+# For bz#989585 - crash command can not read the dump-guest-memory file when paging=false [RHEL-6]
+Patch4469: kvm-dump-clamp-guest-provided-mapping-lengths-to-rambloc.patch
+# For bz#989585 - crash command can not read the dump-guest-memory file when paging=false [RHEL-6]
+Patch4470: kvm-dump-introduce-GuestPhysBlockList.patch
+# For bz#989585 - crash command can not read the dump-guest-memory file when paging=false [RHEL-6]
+Patch4471: kvm-dump-populate-guest_phys_blocks.patch
+# For bz#989585 - crash command can not read the dump-guest-memory file when paging=false [RHEL-6]
+Patch4472: kvm-dump-rebase-from-host-private-RAMBlock-offsets-to-gu.patch
+# For bz#904927 - RFE: (qemu) Introduce a vq command to robust virtio net mac programming
+Patch4473: kvm-virtio-net-remove-layout-assumptions-for-ctrl-vq.patch
+# For bz#904927 - RFE: (qemu) Introduce a vq command to robust virtio net mac programming
+Patch4474: kvm-virtio-net-introduce-a-new-macaddr-control.patch
+# For bz#904927 - RFE: (qemu) Introduce a vq command to robust virtio net mac programming
+Patch4475: kvm-net-add-compat-property-to-disable-ctrl_mac_addr-fea.patch
+# For bz#904927 - RFE: (qemu) Introduce a vq command to robust virtio net mac programming
+Patch4476: kvm-virtio-net-rename-ctrl-rx-commands.patch
+# For bz#880990 - [coverity] suspicious use of sizeof, bad use of strncpy(), etc
+Patch4477: kvm-target-i386-fix-bits-39-32-of-the-final-physical-add.patch
+# For bz#880990 - [coverity] suspicious use of sizeof, bad use of strncpy(), etc
+Patch4478: kvm-qxl-Don-t-drop-client-capability-bits.patch
+# For bz#880990 - [coverity] suspicious use of sizeof, bad use of strncpy(), etc
+Patch4479: kvm-block-fix-null-pointer-bug-on-error-case-in-block-co.patch
+# For bz#856505 - Missing error message in bdrv_commit to read-only backing file
+Patch4480: kvm-block-Decouple-block-device-commit-all-from-DriveInf.patch
+# For bz#856505 - Missing error message in bdrv_commit to read-only backing file
+Patch4481: kvm-block-Monitor-command-commit-neglects-to-report-some.patch
+# For bz#856505 - Missing error message in bdrv_commit to read-only backing file
+Patch4482: kvm-block-for-HMP-commit-operations-on-all-skip-non-COW-.patch
+# For bz#987725 - Guest should failed to be booted if specifying iops,bps as negative value
+Patch4483: kvm-block-use-Error-in-do_check_io_limits.patch
+# For bz#987725 - Guest should failed to be booted if specifying iops,bps as negative value
+Patch4484: kvm-block-refuse-negative-iops-and-bps-values.patch
+# For bz#994813 - [FJ6.4 Bug] the guest doesn't operate normally after block live migration with out of disk space
+Patch4485: kvm-block-migration-propagate-return-value-when-bdrv_wri.patch
+# For bz#994813 - [FJ6.4 Bug] the guest doesn't operate normally after block live migration with out of disk space
+Patch4486: kvm-block-migration-actually-disable-dirty-tracking-on-c.patch
+# For bz#996791 - Off-by-one error in page_l1_map() can lead to out-of-bounds access
+Patch4487: kvm-Fix-off-by-one-error-in-page_l1_map.patch
+# For bz#995865 - fix vmdk support to ESX images
+Patch4488: kvm-vmdk-Move-l1_size-check-into-vmdk_add_extent.patch
+# For bz#995865 - fix vmdk support to ESX images
+Patch4489: kvm-vmdk-fix-L1-and-L2-table-size-in-vmdk3-open.patch
+# For bz#995865 - fix vmdk support to ESX images
+Patch4490: kvm-vmdk-support-vmfsSparse-files.patch
+# For bz#995865 - fix vmdk support to ESX images
+Patch4491: kvm-vmdk-support-vmfs-files.patch
+# For bz#1001436 - Qemu core dumped when set iops,bps... to a negative value var monitor
+Patch4492: kvm-block-initialize-do_check_io_limits-error-pointer-to.patch
+# For bz#997220 - Race in gluster_finish_aiocb
+Patch4493: kvm-gluster-Abort-on-AIO-completion-failure.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4494: kvm-block-vpc-Fix-conversion-from-size-to-disk-geometry.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4495: kvm-vpc-Read-write-multiple-sectors-at-once.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4496: kvm-vpc-Use-bdrv_-p-write_sync-for-metadata-writes.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4497: kvm-vpc-fix-a-file-descriptor-leak.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4498: kvm-vpc.c-Use-get_option_parameter-does-the-search.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4499: kvm-block-vpc.c-Detect-too-large-vpc-file.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4500: kvm-vpc-Add-missing-error-handling-in-alloc_block.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4501: kvm-vpc-Add-support-for-Fixed-Disk-type.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4502: kvm-vpc-Round-up-image-size-during-fixed-image-creation.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4503: kvm-block-vpc-initialize-the-uuid-footer-field.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4504: kvm-block-vpc-support-for-2-TB-disks.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4505: kvm-vpc-Fix-bdrv_open-error-handling.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4506: kvm-migrate-add-migration-blockers.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4507: kvm-qed-add-migration-blocker-v2.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4508: kvm-qed-remove-incoming-live-migration-blocker.patch
+# For bz#999779 - Add vpc file format support in qemu-kvm
+Patch4509: kvm-vpc-Add-migration-blocker.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -6435,21 +7639,19 @@ BuildRequires: ncurses-devel
 BuildRequires: libaio-devel
 %if %{with qemu_kvm}
 BuildRequires: usbredir-devel >= 0.5
+# For glusterfs support
+BuildRequires: glusterfs-devel glusterfs-api-devel
+# For uuid generation
+BuildRequires: libuuid-devel
 
 # seamless spice migration needs a recent spice server version
-BuildRequires: spice-server-devel >= 0.12.0
+BuildRequires: spice-server-devel >= 0.12.3
 %endif
 
 BuildRequires: systemtap-sdt-devel
 
 # 'stap' binary is required by configure detection of systemtap:
 BuildRequires: systemtap
-
-# If we are building the guest agent, we also are building it for
-# windows
-%if %{with guest_agent_win32}
-BuildRequires: mingw32-gcc mingw32-zlib mingw32-glib2
-%endif
 
 Requires(post): /usr/bin/getent
 Requires(post): /usr/sbin/groupadd
@@ -6474,6 +7676,8 @@ Requires: /usr/share/gpxe/pcnet32.rom
 Requires: /usr/share/gpxe/rtl8139.rom
 Requires: /usr/share/gpxe/virtio-net.rom
 Requires: /usr/share/sgabios/sgabios.bin
+# For glusterfs support
+Requires: glusterfs-api
 %endif
 
 # fix for CVE-2011-2527 requires newer glibc
@@ -6530,17 +7734,6 @@ Group: Development/Tools
 %description -n qemu-guest-agent%{?pkgsuffix}
 This package provides a qemu guest agent daemon to be running inside of
 linux guests to provide the guest information.
-
-%if %{with guest_agent_win32}
-%package -n qemu-guest-agent-win32%{?pkgsuffix}
-Summary: QEMU Guest Agent for Windows
-Group: Development/Tools
-%rhel_rhev_conflicts qemu-guest-agent-win32
-
-%description -n qemu-guest-agent-win32%{?pkgsuffix}
-This package provides a qemu guest agent daemon to be running inside of
-Windows guests to provide the guest information.
-%endif # with guest_agent_win32
 
 %endif # guest_agent
 
@@ -9453,6 +10646,630 @@ ApplyOptionalPatch()
 %patch3881 -p1
 %patch3882 -p1
 %patch3883 -p1
+%patch3884 -p1
+%patch3885 -p1
+%patch3886 -p1
+%patch3887 -p1
+%patch3888 -p1
+%patch3889 -p1
+%patch3890 -p1
+%patch3891 -p1
+%patch3892 -p1
+%patch3893 -p1
+%patch3894 -p1
+%patch3895 -p1
+%patch3896 -p1
+%patch3897 -p1
+%patch3898 -p1
+%patch3899 -p1
+%patch3900 -p1
+%patch3901 -p1
+%patch3902 -p1
+%patch3903 -p1
+%patch3904 -p1
+%patch3905 -p1
+%patch3906 -p1
+%patch3907 -p1
+%patch3908 -p1
+%patch3909 -p1
+%patch3910 -p1
+%patch3911 -p1
+%patch3912 -p1
+%patch3913 -p1
+%patch3914 -p1
+%patch3915 -p1
+%patch3916 -p1
+%patch3917 -p1
+%patch3918 -p1
+%patch3919 -p1
+%patch3920 -p1
+%patch3921 -p1
+%patch3922 -p1
+%patch3923 -p1
+%patch3924 -p1
+%patch3925 -p1
+%patch3926 -p1
+%patch3927 -p1
+%patch3928 -p1
+%patch3929 -p1
+%patch3930 -p1
+%patch3931 -p1
+%patch3932 -p1
+%patch3933 -p1
+%patch3934 -p1
+%patch3935 -p1
+%patch3936 -p1
+%patch3937 -p1
+%patch3938 -p1
+%patch3939 -p1
+%patch3940 -p1
+%patch3941 -p1
+%patch3942 -p1
+%patch3943 -p1
+%patch3944 -p1
+%patch3945 -p1
+%patch3946 -p1
+%patch3947 -p1
+%patch3948 -p1
+%patch3949 -p1
+%patch3950 -p1
+%patch3951 -p1
+%patch3952 -p1
+%patch3953 -p1
+%patch3954 -p1
+%patch3955 -p1
+%patch3956 -p1
+%patch3957 -p1
+%patch3958 -p1
+%patch3959 -p1
+%patch3960 -p1
+%patch3961 -p1
+%patch3963 -p1
+%patch3964 -p1
+%patch3965 -p1
+%patch3966 -p1
+%patch3967 -p1
+%patch3968 -p1
+%patch3969 -p1
+%patch3971 -p1
+%patch3972 -p1
+%patch3973 -p1
+%patch3974 -p1
+%patch3975 -p1
+%patch3976 -p1
+%patch3977 -p1
+%patch3978 -p1
+%patch3979 -p1
+%patch3980 -p1
+%patch3981 -p1
+%patch3982 -p1
+%patch3983 -p1
+%patch3984 -p1
+%patch3985 -p1
+%patch3986 -p1
+%patch3987 -p1
+%patch3988 -p1
+%patch3989 -p1
+%patch3990 -p1
+%patch3991 -p1
+%patch3992 -p1
+%patch3993 -p1
+%patch3994 -p1
+%patch3995 -p1
+%patch3996 -p1
+%patch3997 -p1
+%patch3998 -p1
+%patch3999 -p1
+%patch4000 -p1
+%patch4001 -p1
+%patch4002 -p1
+%patch4003 -p1
+%patch4004 -p1
+%patch4005 -p1
+%patch4006 -p1
+%patch4007 -p1
+%patch4008 -p1
+%patch4009 -p1
+%patch4010 -p1
+%patch4011 -p1
+%patch4012 -p1
+%patch4013 -p1
+%patch4014 -p1
+%patch4015 -p1
+%patch4016 -p1
+%patch4017 -p1
+%patch4018 -p1
+%patch4019 -p1
+%patch4020 -p1
+%patch4021 -p1
+%patch4022 -p1
+%patch4023 -p1
+%patch4024 -p1
+%patch4025 -p1
+%patch4026 -p1
+%patch4027 -p1
+%patch4028 -p1
+%patch4029 -p1
+%patch4030 -p1
+%patch4031 -p1
+%patch4032 -p1
+%patch4033 -p1
+%patch4034 -p1
+%patch4035 -p1
+%patch4036 -p1
+%patch4037 -p1
+%patch4038 -p1
+%patch4039 -p1
+%patch4040 -p1
+%patch4041 -p1
+%patch4042 -p1
+%patch4043 -p1
+%patch4044 -p1
+%patch4045 -p1
+%patch4046 -p1
+%patch4047 -p1
+%patch4048 -p1
+%patch4049 -p1
+%patch4050 -p1
+%patch4051 -p1
+%patch4052 -p1
+%patch4053 -p1
+%patch4054 -p1
+%patch4055 -p1
+%patch4056 -p1
+%patch4057 -p1
+%patch4058 -p1
+%patch4059 -p1
+%patch4060 -p1
+%patch4061 -p1
+%patch4062 -p1
+%patch4063 -p1
+%patch4064 -p1
+%patch4065 -p1
+%patch4066 -p1
+%patch4067 -p1
+%patch4068 -p1
+%patch4069 -p1
+%patch4070 -p1
+%patch4071 -p1
+%patch4072 -p1
+%patch4073 -p1
+%patch4074 -p1
+%patch4075 -p1
+%patch4076 -p1
+%patch4077 -p1
+%patch4078 -p1
+%patch4079 -p1
+%patch4080 -p1
+%patch4081 -p1
+%patch4082 -p1
+%patch4083 -p1
+%patch4084 -p1
+%patch4085 -p1
+%patch4086 -p1
+%patch4087 -p1
+%patch4088 -p1
+%patch4089 -p1
+%patch4090 -p1
+%patch4091 -p1
+%patch4092 -p1
+%patch4093 -p1
+%patch4094 -p1
+%patch4095 -p1
+%patch4096 -p1
+%patch4097 -p1
+%patch4098 -p1
+%patch4099 -p1
+%patch4100 -p1
+%patch4101 -p1
+%patch4102 -p1
+%patch4103 -p1
+%patch4104 -p1
+%patch4105 -p1
+%patch4106 -p1
+%patch4107 -p1
+%patch4108 -p1
+%patch4109 -p1
+%patch4110 -p1
+%patch4111 -p1
+%patch4112 -p1
+%patch4113 -p1
+%patch4114 -p1
+%patch4115 -p1
+%patch4116 -p1
+%patch4117 -p1
+%patch4118 -p1
+%patch4119 -p1
+%patch4120 -p1
+%patch4121 -p1
+%patch4122 -p1
+%patch4123 -p1
+%patch4124 -p1
+%patch4125 -p1
+%patch4126 -p1
+%patch4127 -p1
+%patch4128 -p1
+%patch4129 -p1
+%patch4130 -p1
+%patch4131 -p1
+%patch4132 -p1
+%patch4133 -p1
+%patch4134 -p1
+%patch4135 -p1
+%patch4136 -p1
+%patch4137 -p1
+%patch4138 -p1
+%patch4139 -p1
+%patch4140 -p1
+%patch4141 -p1
+%patch4142 -p1
+%patch4143 -p1
+%patch4144 -p1
+%patch4145 -p1
+%patch4146 -p1
+%patch4147 -p1
+%patch4148 -p1
+%patch4149 -p1
+%patch4150 -p1
+%patch4151 -p1
+%patch4152 -p1
+%patch4153 -p1
+%patch4154 -p1
+%patch4155 -p1
+%patch4156 -p1
+%patch4157 -p1
+%patch4158 -p1
+%patch4159 -p1
+%patch4160 -p1
+%patch4161 -p1
+%patch4162 -p1
+%patch4163 -p1
+%patch4164 -p1
+%patch4165 -p1
+%patch4166 -p1
+%patch4167 -p1
+%patch4168 -p1
+%patch4169 -p1
+%patch4170 -p1
+%patch4171 -p1
+%patch4172 -p1
+%patch4173 -p1
+%patch4174 -p1
+%patch4175 -p1
+%patch4176 -p1
+%patch4177 -p1
+%patch4178 -p1
+%patch4179 -p1
+%patch4180 -p1
+%patch4181 -p1
+%patch4182 -p1
+%patch4183 -p1
+%patch4184 -p1
+%patch4185 -p1
+%patch4186 -p1
+%patch4187 -p1
+%patch4188 -p1
+%patch4189 -p1
+%patch4190 -p1
+%patch4191 -p1
+%patch4192 -p1
+%patch4193 -p1
+%patch4194 -p1
+%patch4195 -p1
+%patch4196 -p1
+%patch4197 -p1
+%patch4198 -p1
+%patch4199 -p1
+%patch4200 -p1
+%patch4201 -p1
+%patch4202 -p1
+%patch4203 -p1
+%patch4204 -p1
+%patch4205 -p1
+%patch4206 -p1
+%patch4207 -p1
+%patch4208 -p1
+%patch4209 -p1
+%patch4210 -p1
+%patch4211 -p1
+%patch4212 -p1
+%patch4213 -p1
+%patch4214 -p1
+%patch4215 -p1
+%patch4216 -p1
+%patch4217 -p1
+%patch4218 -p1
+%patch4219 -p1
+%patch4220 -p1
+%patch4221 -p1
+%patch4222 -p1
+%patch4223 -p1
+%patch4224 -p1
+%patch4225 -p1
+%patch4226 -p1
+%patch4227 -p1
+%patch4228 -p1
+%patch4229 -p1
+%patch4230 -p1
+%patch4231 -p1
+%patch4232 -p1
+%patch4233 -p1
+%patch4234 -p1
+%patch4235 -p1
+%patch4236 -p1
+%patch4237 -p1
+%patch4238 -p1
+%patch4239 -p1
+%patch4240 -p1
+%patch4241 -p1
+%patch4242 -p1
+%patch4243 -p1
+%patch4244 -p1
+%patch4245 -p1
+%patch4246 -p1
+%patch4247 -p1
+%patch4248 -p1
+%patch4249 -p1
+%patch4250 -p1
+%patch4251 -p1
+%patch4252 -p1
+%patch4253 -p1
+%patch4254 -p1
+%patch4255 -p1
+%patch4256 -p1
+%patch4257 -p1
+%patch4258 -p1
+%patch4259 -p1
+%patch4260 -p1
+%patch4261 -p1
+%patch4262 -p1
+%patch4263 -p1
+%patch4264 -p1
+%patch4265 -p1
+%patch4266 -p1
+%patch4267 -p1
+%patch4268 -p1
+%patch4269 -p1
+%patch4270 -p1
+%patch4271 -p1
+%patch4272 -p1
+%patch4273 -p1
+%patch4274 -p1
+%patch4275 -p1
+%patch4276 -p1
+%patch4277 -p1
+%patch4278 -p1
+%patch4279 -p1
+%patch4280 -p1
+%patch4281 -p1
+%patch4282 -p1
+%patch4283 -p1
+%patch4284 -p1
+%patch4285 -p1
+%patch4286 -p1
+%patch4287 -p1
+%patch4288 -p1
+%patch4289 -p1
+%patch4290 -p1
+%patch4291 -p1
+%patch4292 -p1
+%patch4293 -p1
+%patch4294 -p1
+%patch4295 -p1
+%patch4296 -p1
+%patch4297 -p1
+%patch4298 -p1
+%patch4299 -p1
+%patch4300 -p1
+%patch4301 -p1
+%patch4302 -p1
+%patch4303 -p1
+%patch4304 -p1
+%patch4305 -p1
+%patch4306 -p1
+%patch4307 -p1
+%patch4308 -p1
+%patch4309 -p1
+%patch4310 -p1
+%patch4311 -p1
+%patch4312 -p1
+%patch4313 -p1
+%patch4314 -p1
+%patch4315 -p1
+%patch4316 -p1
+%patch4317 -p1
+%patch4318 -p1
+%patch4319 -p1
+%patch4320 -p1
+%patch4321 -p1
+%patch4322 -p1
+%patch4323 -p1
+%patch4324 -p1
+%patch4325 -p1
+%patch4326 -p1
+%patch4327 -p1
+%patch4328 -p1
+%patch4329 -p1
+%patch4330 -p1
+%patch4331 -p1
+%patch4332 -p1
+%patch4333 -p1
+%patch4334 -p1
+%patch4335 -p1
+%patch4336 -p1
+%patch4337 -p1
+%patch4338 -p1
+%patch4339 -p1
+%patch4340 -p1
+%patch4341 -p1
+%patch4342 -p1
+%patch4343 -p1
+%patch4344 -p1
+%patch4345 -p1
+%patch4346 -p1
+%patch4347 -p1
+%patch4348 -p1
+%patch4349 -p1
+%patch4350 -p1
+%patch4351 -p1
+%patch4352 -p1
+%patch4353 -p1
+%patch4354 -p1
+%patch4355 -p1
+%patch4356 -p1
+%patch4357 -p1
+%patch4358 -p1
+%patch4359 -p1
+%patch4360 -p1
+%patch4361 -p1
+%patch4362 -p1
+%patch4363 -p1
+%patch4364 -p1
+%patch4365 -p1
+%patch4366 -p1
+%patch4367 -p1
+%patch4368 -p1
+%patch4369 -p1
+%patch4370 -p1
+%patch4371 -p1
+%patch4372 -p1
+%patch4373 -p1
+%patch4374 -p1
+%patch4375 -p1
+%patch4376 -p1
+%patch4377 -p1
+%patch4378 -p1
+%patch4379 -p1
+%patch4380 -p1
+%patch4381 -p1
+%patch4382 -p1
+%patch4383 -p1
+%patch4384 -p1
+%patch4385 -p1
+%patch4386 -p1
+%patch4387 -p1
+%patch4388 -p1
+%patch4389 -p1
+%patch4390 -p1
+%patch4391 -p1
+%patch4392 -p1
+%patch4393 -p1
+%patch4394 -p1
+%patch4395 -p1
+%patch4396 -p1
+%patch4397 -p1
+%patch4398 -p1
+%patch4399 -p1
+%patch4400 -p1
+%patch4401 -p1
+%patch4402 -p1
+%patch4403 -p1
+%patch4404 -p1
+%patch4405 -p1
+%patch4406 -p1
+%patch4407 -p1
+%patch4408 -p1
+%patch4409 -p1
+%patch4410 -p1
+%patch4411 -p1
+%patch4412 -p1
+%patch4413 -p1
+%patch4414 -p1
+%patch4415 -p1
+%patch4416 -p1
+%patch4417 -p1
+%patch4418 -p1
+%patch4419 -p1
+%patch4420 -p1
+%patch4421 -p1
+%patch4422 -p1
+%patch4423 -p1
+%patch4424 -p1
+%patch4425 -p1
+%patch4426 -p1
+%patch4427 -p1
+%patch4428 -p1
+%patch4429 -p1
+%patch4430 -p1
+%patch4431 -p1
+%patch4432 -p1
+%patch4433 -p1
+%patch4434 -p1
+%patch4435 -p1
+%patch4436 -p1
+%patch4437 -p1
+%patch4438 -p1
+%patch4439 -p1
+%patch4440 -p1
+%patch4441 -p1
+%patch4442 -p1
+%patch4443 -p1
+%patch4444 -p1
+%patch4445 -p1
+%patch4446 -p1
+%patch4447 -p1
+%patch4448 -p1
+%patch4449 -p1
+%patch4450 -p1
+%patch4451 -p1
+%patch4452 -p1
+%patch4453 -p1
+%patch4454 -p1
+%patch4455 -p1
+%patch4456 -p1
+%patch4457 -p1
+%patch4458 -p1
+%patch4459 -p1
+%patch4460 -p1
+%patch4461 -p1
+%patch4462 -p1
+%patch4463 -p1
+%patch4464 -p1
+%patch4465 -p1
+%patch4466 -p1
+%patch4467 -p1
+%patch4468 -p1
+%patch4469 -p1
+%patch4470 -p1
+%patch4471 -p1
+%patch4472 -p1
+%patch4473 -p1
+%patch4474 -p1
+%patch4475 -p1
+%patch4476 -p1
+%patch4477 -p1
+%patch4478 -p1
+%patch4479 -p1
+%patch4480 -p1
+%patch4481 -p1
+%patch4482 -p1
+%patch4483 -p1
+%patch4484 -p1
+%patch4485 -p1
+%patch4486 -p1
+%patch4487 -p1
+%patch4488 -p1
+%patch4489 -p1
+%patch4490 -p1
+%patch4491 -p1
+%patch4492 -p1
+%patch4493 -p1
+%patch4494 -p1
+%patch4495 -p1
+%patch4496 -p1
+%patch4497 -p1
+%patch4498 -p1
+%patch4499 -p1
+%patch4500 -p1
+%patch4501 -p1
+%patch4502 -p1
+%patch4503 -p1
+%patch4504 -p1
+%patch4505 -p1
+%patch4506 -p1
+%patch4507 -p1
+%patch4508 -p1
+%patch4509 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -9478,7 +11295,8 @@ buildldflags="VL_LDFLAGS=-Wl,--build-id"
              --sysconfdir=%{_sysconfdir} \\\
              --disable-strip \\\
              --disable-xen \\\
-             --block-drv-whitelist=qcow2,raw,file,host_device,host_cdrom,qed \\\
+             --block-drv-rw-whitelist=qcow2,raw,file,host_device,host_cdrom,qed,gluster,rbd \\\
+             --block-drv-ro-whitelist=vmdk,vpc \\\
              --disable-debug-tcg \\\
              --disable-sparse \\\
              --disable-sdl \\\
@@ -9492,14 +11310,14 @@ buildldflags="VL_LDFLAGS=-Wl,--build-id"
              --disable-spice \\\
              --trace-backend=nop \\\
              --enable-smartcard \\\
-             --disable-smartcard-nss
+             --disable-smartcard-nss \\\
+             --enable-mixemu
 
 mkdir qemu-kvm-x86_64-build
 cd qemu-kvm-x86_64-build
 
 %if %{with qemu_kvm}
-# we are building in a separate build directory, so that we can build for both linux x86_64
-# and windows (for the guest agent).
+# we are building in a separate build directory.
 # sdl outputs to alsa or pulseaudio depending on system config, but it's broken (#495964)
 # alsa works, but causes huge CPU load due to bugs
 # oss works, but is very problematic because it grabs exclusive control of the device causing other apps to go haywire
@@ -9513,7 +11331,8 @@ cd qemu-kvm-x86_64-build
             --extra-ldflags="$extraldflags -pie -Wl,-z,relro -Wl,-z,now" \
             --extra-cflags="$RPM_OPT_FLAGS -fPIE -DPIE" \
             --disable-xen \
-            --block-drv-whitelist=qcow2,raw,file,host_device,host_cdrom,qed \
+            --block-drv-rw-whitelist=qcow2,raw,file,host_device,host_cdrom,qed,gluster,rbd \
+            --block-drv-ro-whitelist=vmdk,vhdx,vpc \
             --disable-debug-tcg \
             --disable-sparse \
             --enable-werror \
@@ -9536,6 +11355,8 @@ cd qemu-kvm-x86_64-build
             --enable-smartcard \
             --disable-smartcard-nss \
             --enable-usb-redir \
+            --enable-mixemu \
+            --enable-glusterfs \
             %{fake_machine_arg} \
             %{disable_rhev_features_arg}
 
@@ -9546,18 +11367,7 @@ echo "==="
 %endif # with qemu_kvm
 
 %if %{with guest_agent}
-# Now configure for the windows guest agent build, using mingw32-
 cd ..
-mkdir qemu-kvm-win32-build
-%if %{with guest_agent_win32}
-cd qemu-kvm-win32-build
-
-../configure --target-list=x86_64-softmmu \
-             --cross-prefix=i686-pc-mingw32- \
-             %{qemu_ga_build_flags}
-
-cd ..
-%endif # with guest_agent_win32
 # Now configure for the Linux guest agent build
 mkdir qemu-kvm-qemu-ga-build
 cd qemu-kvm-qemu-ga-build
@@ -9582,11 +11392,6 @@ make V=1 QEMU_PROG=%{progname} QEMU_BINDIR="%{_prefix}/libexec" \
 %endif # with qemu_kvm
 
 %if %{with guest_agent}
-%if %{with guest_agent_win32}
-# build the windows guest agent
-cd ../qemu-kvm-win32-build
-make V=1 %{?_smp_mflags} $buildldflags qemu-ga.exe
-%endif # with guest_agent_win32
 # build the linux guest agent
 cd ../qemu-kvm-qemu-ga-build
 make V=1 %{?_smp_mflags} $buildldflags qemu-ga
@@ -9631,6 +11436,18 @@ make DESTDIR="${RPM_BUILD_ROOT}" \
 install -D -p -m 0755 ../qemu-kvm-qemu-ga-build/qemu-ga $RPM_BUILD_ROOT%{_bindir}/qemu-ga
 install -D -p -m 0755 %{SOURCE10} $RPM_BUILD_ROOT%{_initddir}/qemu-ga
 install -D -p -m 0644 %{SOURCE11} $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/qemu-ga
+
+%define qga_src_stem ../scripts/qemu-guest-agent/fsfreeze-hook
+%define qga_libexec_stem $RPM_BUILD_ROOT%{_libexecdir}/qemu-ga/fsfreeze-hook
+%define qga_samples_stem $RPM_BUILD_ROOT%{_datadir}/%{confname}/qemu-ga/fsfreeze-hook
+
+# install fsfreeze hook script and directory for user scripts
+mkdir -p -v                              %{qga_libexec_stem}.d
+install -D -p -m 0755 -v %{qga_src_stem} %{qga_libexec_stem}
+
+# install fsfreeze script samples
+mkdir -p -v                                         %{qga_samples_stem}.d/
+install -D -p -m 0644 -v %{qga_src_stem}.d/*.sample %{qga_samples_stem}.d/
 %endif # guest_agent
 
 rm -rf ${RPM_BUILD_ROOT}%{_bindir}/qemu-nbd
@@ -9677,12 +11494,6 @@ ln -s ../seabios/bios.bin %{buildroot}/%{_datadir}/%{confname}/bios.bin
 ln -s ../sgabios/sgabios.bin %{buildroot}/%{_datadir}/%{confname}/sgabios.bin
 %endif # with qemu_kvm
 
-%if %{with guest_agent_win32}
-mkdir -p $RPM_BUILD_ROOT%{_datadir}/%{confname}/qemu-ga-win32/
-install -m 0755 ../qemu-kvm-win32-build/qemu-ga.exe $RPM_BUILD_ROOT%{_datadir}/%{confname}/qemu-ga-win32/
-install -D -p -m 0444 %{SOURCE12} $RPM_BUILD_ROOT%{_datadir}/%{confname}/qemu-ga-win32/README.txt
-%endif # with guest_agent_win32
-
 
 %if %{with qemu_kvm}
 cd %{buildroot}/usr/share/systemtap/tapset
@@ -9710,7 +11521,7 @@ sh %{_sysconfdir}/sysconfig/modules/kvm.modules
 %if %{with guest_agent}
 %post -n qemu-guest-agent%{?pkgsuffix}
 /sbin/chkconfig --add qemu-ga
-/sbin/chkconfig qemu-ga off
+/sbin/chkconfig qemu-ga on
 %endif # guest_agent
 
 %if %{with qemu_kvm}
@@ -9787,15 +11598,9 @@ fi
 %defattr(-,root,root,-)
 %{_bindir}/qemu-ga
 %{_initddir}/qemu-ga
+%{_libexecdir}/qemu-ga
+%{_datadir}/%{confname}/qemu-ga
 %config(noreplace) %{_sysconfdir}/sysconfig/qemu-ga
-
-%if %{with guest_agent_win32}
-%files -n qemu-guest-agent-win32%{?pkgsuffix}
-%defattr(-,root,root,-)
-%{_datadir}/%{confname}/qemu-ga-win32/
-%{_datadir}/%{confname}/qemu-ga-win32/qemu-ga.exe
-%{_datadir}/%{confname}/qemu-ga-win32/README.txt
-%endif # with guest_agent_win32
 %endif # guest_agent
 
 %if %{with qemu_kvm}
@@ -9811,35 +11616,971 @@ fi
 %endif # with qemu_kvm
 
 %changelog
-* Thu May 23 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.5
-- kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch [bz#907716]
-- kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch [bz#907716]
-- kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch [bz#957056]
-- kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch [bz#957056]
-- kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch [bz#957056]
-- kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch [bz#957056]
-- Resolves: bz#907716
-  (use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest)
-- Resolves: bz#957056
-  (CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z])
+* Thu Sep 12 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.402.el6
+- Move VPC from r/w whitelist to r/o whitelist [bz#999779]
+- kvm-migrate-add-migration-blockers.patch [bz#999779]
+- kvm-qed-add-migration-blocker-v2.patch [bz#999779]
+- kvm-qed-remove-incoming-live-migration-blocker.patch [bz#999779]
+- kvm-vpc-Add-migration-blocker.patch [bz#999779]
+- Resolves: bz#999779
+  (Add vpc file format support in qemu-kvm)
 
-* Fri May 03 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.4
-- kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch [bz#958750]
-- Resolves: bz#958750
+* Tue Sep 10 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.401.el6
+- Add block VHD/VPC format to block driver whitelist [bz#999779]
+- kvm-block-vpc-Fix-conversion-from-size-to-disk-geometry.patch [bz#999779]
+- kvm-vpc-Read-write-multiple-sectors-at-once.patch [bz#999779]
+- kvm-vpc-Use-bdrv_-p-write_sync-for-metadata-writes.patch [bz#999779]
+- kvm-vpc-fix-a-file-descriptor-leak.patch [bz#999779]
+- kvm-vpc.c-Use-get_option_parameter-does-the-search.patch [bz#999779]
+- kvm-block-vpc.c-Detect-too-large-vpc-file.patch [bz#999779]
+- kvm-vpc-Add-missing-error-handling-in-alloc_block.patch [bz#999779]
+- kvm-vpc-Add-support-for-Fixed-Disk-type.patch [bz#999779]
+- kvm-vpc-Round-up-image-size-during-fixed-image-creation.patch [bz#999779]
+- kvm-block-vpc-initialize-the-uuid-footer-field.patch [bz#999779]
+- kvm-block-vpc-support-for-2-TB-disks.patch [bz#999779]
+- kvm-vpc-Fix-bdrv_open-error-handling.patch [bz#999779]
+- Resolves: bz#999779
+  (Add vpc file format support in qemu-kvm)
+
+* Wed Sep 04 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.400.el6
+- kvm-vmdk-Move-l1_size-check-into-vmdk_add_extent.patch [bz#995865]
+- kvm-vmdk-fix-L1-and-L2-table-size-in-vmdk3-open.patch [bz#995865]
+- kvm-vmdk-support-vmfsSparse-files.patch [bz#995865]
+- kvm-vmdk-support-vmfs-files.patch [bz#995865]
+- kvm-block-initialize-do_check_io_limits-error-pointer-to.patch [bz#1001436]
+- kvm-gluster-Abort-on-AIO-completion-failure.patch [bz#997220]
+- Resolves: bz#1001436
+  (Qemu core dumped when set iops,bps... to a negative value var monitor)
+- Resolves: bz#995865
+  (fix vmdk support to ESX images)
+- Resolves: bz#997220
+  (Race in gluster_finish_aiocb)
+
+* Mon Sep 02 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.399.el6
+- kvm-block-migration-propagate-return-value-when-bdrv_wri.patch [bz#994813]
+- kvm-block-migration-actually-disable-dirty-tracking-on-c.patch [bz#994813]
+- kvm-Fix-off-by-one-error-in-page_l1_map.patch [bz#996791]
+- Resolves: bz#994813
+  ([FJ6.4 Bug] the guest doesn't operate normally after block live migration with out of disk space)
+- Resolves: bz#996791
+  (Off-by-one error in page_l1_map() can lead to out-of-bounds access)
+
+* Wed Aug 21 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.398.el6
+- kvm-block-use-Error-in-do_check_io_limits.patch [bz#987725]
+- kvm-block-refuse-negative-iops-and-bps-values.patch [bz#987725]
+- Resolves: bz#987725
+  (Guest should failed to be booted if specifying iops,bps as negative value)
+
+* Mon Aug 19 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.397.el6
+- kvm-block-Decouple-block-device-commit-all-from-DriveInf.patch [bz#856505]
+- kvm-block-Monitor-command-commit-neglects-to-report-some.patch [bz#856505]
+- kvm-block-for-HMP-commit-operations-on-all-skip-non-COW-.patch [bz#856505]
+- Resolves: bz#856505
+  (Missing error message in bdrv_commit to read-only backing file)
+
+* Mon Aug 19 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.396.el6
+- Fix glusterfs support in the qemu white-list
+- Related: bz#848070
+  ([RHEL 6.5] Add glusterfs support to qemu)
+
+* Thu Aug 15 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.394.el6
+- kvm-dump-clamp-guest-provided-mapping-lengths-to-rambloc.patch [bz#989585]
+- kvm-dump-introduce-GuestPhysBlockList.patch [bz#989585]
+- kvm-dump-populate-guest_phys_blocks.patch [bz#989585]
+- kvm-dump-rebase-from-host-private-RAMBlock-offsets-to-gu.patch [bz#989585]
+- kvm-virtio-net-remove-layout-assumptions-for-ctrl-vq.patch [bz#904927]
+- kvm-virtio-net-introduce-a-new-macaddr-control.patch [bz#904927]
+- kvm-net-add-compat-property-to-disable-ctrl_mac_addr-fea.patch [bz#904927]
+- kvm-virtio-net-rename-ctrl-rx-commands.patch [bz#904927]
+- kvm-target-i386-fix-bits-39-32-of-the-final-physical-add.patch [bz#880990]
+- kvm-qxl-Don-t-drop-client-capability-bits.patch [bz#880990]
+- kvm-block-fix-null-pointer-bug-on-error-case-in-block-co.patch [bz#880990]
+- Resolves: bz#880990
+  ([coverity] suspicious use of sizeof, bad use of strncpy(), etc)
+- Resolves: bz#904927
+  (RFE: (qemu) Introduce a vq command to robust virtio net mac programming)
+- Resolves: bz#989585
+  (crash command can not read the dump-guest-memory file when paging=false [RHEL-6])
+
+* Wed Aug 14 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.393.el6
+- kvm-add-timestamp-to-error_report.patch [bz#906931]
+- kvm-Convert-stderr-message-calling-error_get_pretty-to-e.patch [bz#906931]
+- Resolves: bz#906931
+  ([Hitachi 6.5 FEAT][QEMU]Add a time stamp to error message (*))
+
+* Wed Aug 14 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.392.el6
+- Whitelist rbd block driver [bz#988079]
+- kvm-ceph-rbd-block-driver-for-qemu-kvm.patch [bz#988079]
+- kvm-rbd-link-and-load-librbd-dynamically.patch [bz#988079]
+- kvm-rbd-Only-look-for-qemu-specific-copy-of-librbd.so.1.patch [bz#988079]
+- kvm-Build-rbd-block-driver-only-for-qemu-kvm-rhev.patch [bz#988079]
+- kvm-block-call-the-snapshot-handlers-of-the-protocol-dri.patch [bz#988079]
+- Resolves: bz#988079
+  ([6.5 FEAT] qemu runtime support for librbd backend (ceph))
+
+* Wed Aug 14 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.391.el6
+- Set qemu-guest-agent to be started automatically [bz#888297]
+- kvm-migration-add-migrate_set_state-tracepoint.patch [bz#903429]
+- kvm-vl-add-runstate_set-tracepoint.patch [bz#903429]
+- kvm-all-add-kvm_ioctl-kvm_vm_ioctl-kvm_vcpu_ioctl-tr.patch [bz#903429]
+- kvm-all-add-kvm_run_exit-tracepoint.patch [bz#903429]
+- kvm-aio-Fix-qemu_aio_wait-to-maintain-correct-walking_ha.patch [bz#848070]
+- kvm-aio-Another-fix-to-the-walking_handlers-logic.patch [bz#848070]
+- kvm-qemu-URI-parsing-library.patch [bz#848070]
+- kvm-qemu-tool-Add-dummy-qemu_mutex_lock_iothread-and-qem.patch [bz#848070]
+- kvm-block-Support-GlusterFS-as-a-QEMU-block-backend.patch [bz#848070]
+- kvm-configure-Add-a-config-option-for-GlusterFS-as-block.patch [bz#848070]
+- kvm-qcow2-Simplify-image-creation.patch [bz#848070]
+- kvm-block-Produce-zeros-when-protocols-reading-beyond-en.patch [bz#848070]
+- kvm-block-vdi-Fix-wrong-size-in-conditionally-used-memse.patch [bz#848070]
+- kvm-qcow2-Remove-old-image-creation-function.patch [bz#848070]
+- kvm-gluster-Add-image-resize-support.patch [bz#848070]
+- kvm-vdi-don-t-override-libuuid-symbols.patch [bz#848070]
+- kvm-gluster-Return-bdrv_has_zero_init-0.patch [bz#848070]
+- kvm-qcow2-Really-use-cache-unsafe-for-image-creation.patch [bz#848070]
+- kvm-gluster-Handle-BDRV_O_CACHE_WB-in-gluster-driver.patch [bz#848070]
+- Resolves: bz#848070
+  ([RHEL 6.5] Add glusterfs support to qemu)
+- Resolves: bz#888297
+  (qemu-ga should be enabled right after installation)
+- Resolves: bz#903429
+  ([Fujitsu 6.5 FEAT]: QEMU: Add tracepoints in live migration processing.)
+
+* Wed Aug 14 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.390.el6
+- Disable qemu-guest-agent for Win32 build [bz#996580]
+- kvm-Do-not-quit-QEMU-if-cpu-set-is-called-in-non-ACPI-mo.patch [bz#990237]
+- kvm-acl-Fix-acl_remove-not-to-mess-up-the-ACL.patch [bz#889255]
+- kvm-acl-acl_add-can-t-insert-before-last-list-element-fi.patch [bz#970516]
+- kvm-hw-misc-don-t-create-pvpanic-device-by-default.patch [bz#991100]
+- kvm-hw-misc-make-pvpanic-known-to-user.patch [bz#991100]
+- Resolves: bz#889255
+  (Monitor command acl_remove messes up the ACL)
+- Resolves: bz#970516
+  (Monitor command acl_add can't insert before last list element)
+- Resolves: bz#990237
+  (qemu-kvm exits when hotplugging a cpu with --no-acpi)
+- Resolves: bz#991100
+  (pvpanic device triggers guest bugs when present by default)
+- Resolves: bz#996580
+  (Remove qemu-ga-win32 from our rpm packages)
+
+* Tue Aug 13 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.389.el6
+- kvm-qemu-socket-zero-initialize-SocketAddress.patch [bz#676568]
+- kvm-qemu-socket-drop-pointless-allocation.patch [bz#676568]
+- kvm-qemu-char-check-optional-fields-using-has_.patch [bz#676568]
+- kvm-qemu-char-use-more-specific-error_setg_-variants.patch [bz#676568]
+- kvm-qemu-char-print-notification-to-stderr.patch [bz#676568]
+- kvm-qemu-char-fix-documentation-for-telnet-wait-socket-f.patch [bz#676568]
+- kvm-qemu-char-don-t-leak-opts-on-error.patch [bz#676568]
+- kvm-qemu-char-use-ChardevBackendKind-in-CharDriver.patch [bz#676568]
+- kvm-qemu-char-minor-mux-chardev-fixes.patch [bz#676568]
+- kvm-qemu-char-add-chardev-mux-support.patch [bz#676568]
+- kvm-qemu-char-report-udp-backend-errors.patch [bz#676568]
+- kvm-qemu-socket-don-t-leak-opts-on-error.patch [bz#676568]
+- kvm-block-Allow-IO-throttling-fields-in-__com.redhat_dri.patch [bz#987745]
+- kvm-qemu-add-castagnoli-crc32c-checksum-algorithm.patch [bz#963420]
+- kvm-block-vhdx-header-for-the-QEMU-support-of-VHDX-image.patch [bz#963420]
+- kvm-block-initial-VHDX-driver-support-framework-supports.patch [bz#963420]
+- kvm-block-add-read-only-support-to-VHDX-image-format.patch [bz#963420]
+- Resolves: bz#676568
+  (RFE: support hotplugging chardev & virtio-serial ports)
+- Resolves: bz#963420
+  ([RHEL-6.5] Backport support for vhd(x) image format)
+- Resolves: bz#987745
+  (fail to do hotplug with qemu i/o throttling including iops,iops_wr,iops_rd,bps,bps_wr,bps_rd inofs)
+
+* Tue Aug 13 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.388.el6
+- kvm-vmdk-fix-comment-for-vmdk_co_write_zeroes.patch [bz#994804]
+- kvm-vmdk-Make-VMDK3Header-and-VmdkGrainMarker-QEMU_PACKE.patch [bz#994804]
+- kvm-vmdk-byteswap-VMDK4Header.desc_offset-field.patch [bz#994804]
+- kvm-vmdk-use-unsigned-values-for-on-disk-header-fields.patch [bz#994804]
+- kvm-vmdk-check-granularity-field-in-opening.patch [bz#994804]
+- kvm-vmdk-refuse-to-open-higher-version-than-supported.patch [bz#994804]
+- kvm-vmdk-check-l2-table-size-when-opening.patch [bz#994804]
+- kvm-vmdk-check-l1-size-before-opening-image.patch [bz#994804]
+- kvm-vmdk-use-heap-allocation-for-whole_grain.patch [bz#994804]
+- kvm-vmdk-rename-num_gtes_per_gte-to-num_gtes_per_gt.patch [bz#994804]
+- kvm-vmdk-Allow-reading-variable-size-descriptor-files.patch [bz#994804]
+- kvm-qemu-char-Fix-ID-reuse-after-chardev-remove-for-qapi.patch [bz#994891]
+- kvm-dataplane-refuse-to-start-if-device-is-already-in-us.patch [bz#995530]
+- Resolves: bz#994804
+  (qemu-kvm should verify image header fields before opening VMDK)
+- Resolves: bz#994891
+  (duplicate chardev reported after chardev-remove)
+- Resolves: bz#995530
+  (dataplane: refuse to start if device is already in use)
+
+* Mon Aug 12 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.387.el6
+- kvm-Add-spent-time-for-migration.patch [bz#981235]
+- kvm-migration-print-total-downtime-for-final-phase-of-mi.patch [bz#981235]
+- kvm-blockdev-reset-werror-rerror-on-drive_del.patch [bz#970159]
+- kvm-scsi-generic-fix-sign-extension-of-READ-CAPACITY-10-.patch [bz#963151]
+- Resolves: bz#963151
+  ([FJ6.4 Bug] Once a guest OS issues READ_CAPACITY(10), it becomes unable to access beyond 2TB on the disk)
+- Resolves: bz#970159
+  (qemu-kvm-rhevm [race]: vm pauses with 'block I/O error in device '': No medium found (123)' when hounplug a disk and cannot be resumed)
+- Resolves: bz#981235
+  (RFE: Request detail migration statistics output for live migration on RHEL6.5)
+
+* Fri Aug 09 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.386.el6
+- kvm-block-fix-initialization-of-IO-limits-for-RHEL.patch [bz#994374]
+- Resolves: bz#994374
+  (boot up guest failed, hung in "booting from hard disk")
+
+* Thu Aug 08 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.385.el6
+- kvm-ccid-card-emul-do-not-crash-if-backend-is-not-provid.patch [bz#917860]
+- kvm-ccid-make-backend_enum_table-static-const-and-adjust.patch [bz#917860]
+- kvm-ccid-declare-DEFAULT_ATR-table-to-be-static-const.patch [bz#917860]
+- kvm-libcacard-vscclient-fix-error-paths-for-socket-creat.patch [bz#917860]
+- kvm-libcacard-Use-format-specifier-u-instead-of-d-for-un.patch [bz#917860]
+- kvm-Spelling-fixes-in-comments-it-s-its.patch [bz#917860]
+- kvm-libcacard-Fix-unchecked-strdup-by-converting-to-g_st.patch [bz#917860]
+- kvm-libcacard-split-vscclient-main-from-socket-reading.patch [bz#917860]
+- kvm-libcacard-vscclient-to-use-QemuThread-for-portabilit.patch [bz#917860]
+- kvm-libcacard-teach-vscclient-to-use-GMainLoop-for-porta.patch [bz#917860]
+- kvm-libcacard-use-system-config-directory-for-nss-db-on-.patch [bz#917860]
+- kvm-libcacard-remove-sql-prefix.patch [bz#917860]
+- kvm-libcacard-remove-default-libcoolkey-loading.patch [bz#917860]
+- kvm-dev-smartcard-reader-nicer-debug-messages.patch [bz#917860]
+- kvm-hw-usb-dev-smartcard-reader.c-remove-aborts-never-tr.patch [bz#917860]
+- kvm-hw-usb-dev-smartcard-reader-support-windows-guest.patch [bz#917860]
+- kvm-libcacard-change-default-ATR.patch [bz#917860]
+- kvm-hw-ccid-card-passthru.c-add-atr-check.patch [bz#917860]
+- kvm-ccid-card-passthru-dev-smartcard-reader-add-debug-en.patch [bz#917860]
+- kvm-usb-ccid-Drop-unused-CCIDCardInfo-callback-print.patch [bz#917860]
+- kvm-hw-usb-dev-smartcard-reader.c-define-structs-for-CCI.patch [bz#917860]
+- kvm-dev-smartcard-reader-change-default-protocol-to-T-0.patch [bz#917860]
+- kvm-dev-smartcard-reader-copy-atr-protocol-to-ccid-param.patch [bz#917860]
+- kvm-libcacard-vreader-add-debugging-messages-for-apdu.patch [bz#917860]
+- kvm-dev-smartcard-reader-empty-implementation-for-Mechan.patch [bz#917860]
+- kvm-libcacard-cac-change-big-switch-functions-to-single-.patch [bz#917860]
+- kvm-usb-smartcard-reader-Properly-NAK-interrupt-eps-when.patch [bz#917860]
+- kvm-uhci-Don-t-allow-the-guest-to-set-port-enabled-when-.patch [bz#917860]
+- kvm-usb-ccid-remote-wakeup-support.patch [bz#917860]
+- kvm-uhci-egsm-fix.patch [bz#917860]
+- kvm-virtio-net-dynamic-network-offloads-configuration.patch [bz#990225]
+- kvm-char-io_channel_send-don-t-lose-written-bytes.patch [bz#985334]
+- kvm-monitor-maintain-at-most-one-G_IO_OUT-watch.patch [bz#985334]
+- kvm-register-exit-function-after-starting-timers.patch [bz#843797]
+- kvm-virtio-properly-validate-address-before-accessing-co.patch [bz#956953]
+- Resolves: bz#843797
+  (qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down)
+- Resolves: bz#917860
+  (Smartcard emulation with Windows guest fails)
+- Resolves: bz#956953
+  (insufficient address validation during config access of virtio device)
+- Resolves: bz#985334
+  (query mem info from monitor would cause qemu-kvm hang [RHEL-6.5])
+- Resolves: bz#990225
+  ([RHEV/RHEL] Integrate dynamic offloads into virtio-net device)
+
+* Mon Aug 05 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.384.el6
+- kvm-Fix-compilation-of-I-O-throttling.patch [bz#975468]
+- Resolves: bz#975468
+  (RFE: Enable qemu IO throttling only in qemu-kvm-rhev)
+
+* Mon Aug 05 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.383.el6
+- kvm-virtio-net-properly-check-the-vhost-status-during-st.patch [bz#957319]
+- kvm-configure-add-option-for-io-throttling-RHEL-6-only.patch [bz#975468]
+- kvm-Only-enable-IO-throttling-for-RHEV.patch [bz#975468]
+- kvm-qapi-qapi-commands-fix-possible-leaks-on-visitor-dea.patch [bz#990316]
+- Resolves: bz#957319
+  (Guest w/ vhost=on over virtio-net-pci, under hmp, 'set_link $id_of_netdev off', then migrate, migrate failed, src qemu-kvm process core dumped)
+- Resolves: bz#975468
+  (RFE: Enable qemu IO throttling only in qemu-kvm-rhev)
+- Resolves: bz#990316
+  (QMP: possible memory leaks on commands failure)
+
+* Mon Jul 29 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.382.el6
+- kvm-vmdk-remove-wrong-calculation-of-relative-path.patch [bz#977767]
+- kvm-Fix-real-mode-guest-migration.patch [bz#888767]
+- kvm-Fix-real-mode-guest-segments-dpl-value-in-savevm.patch [bz#888767]
+- kvm-virtio-scsi-enable-MSI-X-support.patch [bz#987025]
+- Resolves: bz#888767
+  ("kvm: unhandled exit 80000021" when migrating to some hosts)
+- Resolves: bz#977767
+  (there is wrong backing file specified for making external snapshot with vmdk format disk)
+- Resolves: bz#987025
+  (enable MSI-X for virtio-scsi)
+
+* Thu Jul 25 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.381.el6
+- kvm-qemu-char-Set-foo_tag-0-when-returning-FALSE-from-ca.patch [bz#676568]
+- kvm-qapi-generate-correct-enum-names-for-camel-case-enum.patch [bz#676568]
+- kvm-qapi-don-t-convert-enum-strings-to-lowercase.patch [bz#676568]
+- kvm-qapi-avoid-reserved-keywords.patch [bz#676568]
+- kvm-qapi-do-not-protect-enum-values-from-namespace-pollu.patch [bz#676568]
+- kvm-qapi-add-unix-to-the-set-of-reserved-words.patch [bz#676568]
+- kvm-qapi-generate-C-types-for-fixed-width-integers.patch [bz#676568]
+- kvm-qapi-Add-Visitor-interfaces-for-uint-_t-and-int-_t.patch [bz#676568]
+- kvm-qapi-add-String.patch [bz#676568]
+- kvm-qapi-add-socket-address-types.patch [bz#676568]
+- kvm-qmp-add-and-use-q-type-specifier.patch [bz#676568]
+- kvm-qemu-Add-opt_set_bool-functionality.patch [bz#676568]
+- kvm-build-add-QAPI-files-to-the-tools.patch [bz#676568]
+- kvm-qemu-sockets-unix_listen-and-unix_connect-are-portab.patch [bz#676568]
+- kvm-qemu-sockets-add-nonblocking-connect-for-Unix-socket.patch [bz#676568]
+- kvm-qemu-sockets-include-strerror-or-gai_strerror-output.patch [bz#676568]
+- kvm-qemu-sockets-add-error-propagation-to-inet_connect_a.patch [bz#676568]
+- kvm-qemu-sockets-add-error-propagation-to-inet_dgram_opt.patch [bz#676568]
+- kvm-qemu-sockets-add-error-propagation-to-inet_parse.patch [bz#676568]
+- kvm-qemu-sockets-add-error-propagation-to-Unix-socket-fu.patch [bz#676568]
+- kvm-qemu-ga-drop-temporary-extra-check-for-unix_listen-r.patch [bz#676568]
+- kvm-qemu-sockets-return-InetSocketAddress-from-inet_pars.patch [bz#676568]
+- kvm-qemu-sockets-add-socket_listen-socket_connect-socket.patch [bz#676568]
+- kvm-qemu-sockets-Fix-parsing-of-the-inet-option-to.patch [bz#676568]
+- kvm-qemu-socket-set-passed-fd-non-blocking-in-socket_con.patch [bz#676568]
+- kvm-qemu-char-ask-and-print-error-information-from-qemu-.patch [bz#676568]
+- kvm-vnc-avoid-Yoda-conditionals.patch [bz#676568]
+- kvm-vnc-introduce-a-single-label-for-error-returns.patch [bz#676568]
+- kvm-vnc-add-error-propagation-to-vnc_display_open.patch [bz#676568]
+- kvm-chardev-add-error-reporting-for-qemu_chr_new_from_op.patch [bz#676568]
+- kvm-chardev-fix-QemuOpts-lifecycle.patch [bz#676568]
+- kvm-chardev-reduce-chardev-ifdef-mess-a-bit.patch [bz#676568]
+- kvm-chardev-add-qmp-hotplug-commands-with-null-chardev-s.patch [bz#676568]
+- kvm-chardev-add-file-chardev-support-to-chardev-add-qmp.patch [bz#676568]
+- kvm-chardev-add-serial-chardev-support-to-chardev-add-qm.patch [bz#676568]
+- kvm-chardev-add-parallel-chardev-support-to-chardev-add-.patch [bz#676568]
+- kvm-chardev-add-socket-chardev-support-to-chardev-add-qm.patch [bz#676568]
+- kvm-chardev-add-pty-chardev-support-to-chardev-add-qmp.patch [bz#676568]
+- kvm-qemu-char-Avoid-unused-variable-warning-in-some-conf.patch [bz#676568]
+- kvm-qapi-Flatten-away-ChardevPort.patch [bz#676568]
+- kvm-qemu-char-make-char-drivers-dynamically-registerable.patch [bz#676568]
+- kvm-qemu-char-move-spice-registration-to-spice-qemu-char.patch [bz#676568]
+- kvm-qemu-char-move-baum-registration-to-baum.c.patch [bz#676568]
+- kvm-qemu-char-move-msmouse-registeration-to-msmouse.c.patch [bz#676568]
+- kvm-qemu-char-move-text-console-init-to-console.c.patch [bz#676568]
+- kvm-qemu-char.c-fix-waiting-for-telnet-connection-messag.patch [bz#676568]
+- kvm-chardev-add-support-for-qapi-based-chardev-initializ.patch [bz#676568]
+- kvm-chardev-add-mux-chardev-support-to-qapi.patch [bz#676568]
+- kvm-chardev-switch-null-init-to-qapi.patch [bz#676568]
+- kvm-chardev-add-msmouse-support-to-qapi.patch [bz#676568]
+- kvm-chardev-add-braille-support-to-qapi.patch [bz#676568]
+- kvm-chardev-switch-file-init-to-qapi.patch [bz#676568]
+- kvm-chardev-add-stdio-support-to-qapi.patch [bz#676568]
+- kvm-chardev-switch-serial-tty-init-to-qapi.patch [bz#676568]
+- kvm-chardev-switch-parallel-init-to-qapi.patch [bz#676568]
+- kvm-chardev-switch-pty-init-to-qapi.patch [bz#676568]
+- kvm-chardev-add-console-support-to-qapi.patch [bz#676568]
+- kvm-chardev-add-pipe-support-to-qapi.patch [bz#676568]
+- kvm-chardev-add-spice-support-to-qapi.patch [bz#676568]
+- kvm-create-TextConsole-together-with-the-CharDeviceState.patch [bz#676568]
+- kvm-remove-text_console_opts.patch [bz#676568]
+- kvm-chardev-add-vc-support-to-qapi.patch [bz#676568]
+- kvm-chardev-add-memory-ringbuf-support-to-qapi.patch [bz#676568]
+- kvm-chardev-add-udp-support-to-qapi.patch [bz#676568]
+- kvm-chardev-fix-info-chardev-output.patch [bz#676568]
+- Resolves: bz#676568
+  (RFE: support hotplugging chardev & virtio-serial ports)
+
+* Thu Jul 25 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.380.el6
+- kvm-kvmclock-clock-should-count-only-if-vm-is-running.patch [bz#903454]
+- kvm-spice-Add-spice-disable-agent-file-transfer-cmdline-.patch [bz#961850]
+- Update spice-server requirement [bz#961850]
+- Resolves: bz#903454
+  (kvm guest crash after long stop/cont cycle)
+- Resolves: bz#961850
+  (RFE: add -spice disable-agent-file-transfer cmdline option)
+
+* Thu Jul 18 2013 Miroslav Rezanina <mrezanin@redhat.com> - qemu-kvm-0.12.1.2-2.379.el6
+- kvm-block-add-the-blockio-limits-command-line-support.patch [bz#956825]
+- kvm-CoQueue-introduce-qemu_co_queue_wait_insert_head.patch [bz#956825]
+- kvm-block-add-I-O-throttling-algorithm.patch [bz#956825]
+- kvm-hmp-qmp-add-block_set_io_throttle.patch [bz#956825]
+- kvm-block-disable-I-O-throttling-on-sync-api.patch [bz#956825]
+- kvm-block-add-the-support-to-drain-throttled-requests.patch [bz#956825]
+- kvm-block-Factor-bdrv_read_unthrottled-out-of-guess_disk.patch [bz#956825]
+- kvm-block-fix-initialization-in-bdrv_io_limits_enable.patch [bz#956825]
+- kvm-qapi-Introduce-blockdev-group-snapshot-sync-comman2.patch [bz#956825]
+- kvm-block-fix-I-O-throttling-accounting-blind-spot.patch [bz#956825]
+- kvm-block-keep-I-O-throttling-slice-time-constant.patch [bz#956825]
+- kvm-block-drop-duplicated-slice-extension-code.patch [bz#956825]
+- kvm-block-clean-up-I-O-throttling-wait_time-code.patch [bz#956825]
+- kvm-ide-convert-ide_sector_read-to-asynchronous-I-O.patch [bz#956825]
+- kvm-ide-convert-ide_sector_write-to-asynchronous-I-O.patch [bz#956825]
+- kvm-serial-add-pci-variant.patch [bz#872015]
+- kvm-serial-fix-error-handling.patch [bz#872015]
+- kvm-qapi-shortcut-visits-on-errors.patch [bz#983635]
+- kvm-qapi-allow-freeing-partially-allocated-objects.patch [bz#983635]
+- kvm-qapi-untangle-next_list.patch [bz#983635]
+- kvm-qapi-fix-error-propagation.patch [bz#983635]
+- Resolves: bz#872015
+  (A Windows VM can only see 2 of 4 assigned COM ports (Serial Devices))
+- Resolves: bz#956825
+  (Backport IO throttling into RHEL 6.x KVM)
+- Resolves: bz#983635
+  (QMP: bad input crashes QEMU)
+- Resolves: bz#977760
+  (fail to boot guest attaching with vmdk format data disk(virito/virtio-scsi interface))
+
+* Wed Jun 26 2013 Miroslav Rezanina <mrezanin@redhat.com> - qemu-kvm-0.12.1.2-2.378.el6
+- kvm-qga-diagnostic-output-should-go-to-stderr.patch [bz#976478]
+- kvm-qa_install_service-nest-error-paths-more-idiomatically.patch [bz#976478]
+- kvm-qga-escape-cmdline-args-when-registering-win32-service.patch [bz#976478]
+- Resolves: bz#976478
+  (CVE-2013-2231 qemu: qemu-ga win32 service unquoted search path [rhel-6.5])
+
+* Wed Jun 26 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.377.el6
+- ksm.init: Properly handle return value of init scripts [bz#972314]
+- kvm-osdep-add-qemu_get_local_state_pathname.patch [bz#962669]
+- kvm-qga-determine-default-state-dir-and-pidfile-dynamica.patch [bz#962669]
+- kvm-configure-don-t-save-any-fixed-local_statedir-for-wi.patch [bz#962669]
+- kvm-qga-create-state-directory-on-win32.patch [bz#962669]
+- kvm-qga-remove-undefined-behavior-in-ga_install_service.patch [bz#962669]
+- kvm-qga-save-state-directory-in-ga_install_service.patch [bz#962669]
+- kvm-Makefile-create-.-var-run-when-installing-the-POSIX-.patch [bz#962669]
+- kvm-scsi-change-removable-field-to-host-many-features.patch [bz#890011]
+- kvm-scsi-disk-scsi-block-device-for-scsi-pass-through-sh.patch [bz#890011]
+- kvm-use-atexit-for-quit_timers.patch [bz#843797]
+- Resolves: bz#843797
+  (qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down)
+- Resolves: bz#890011
+  (flooding with 'scsi-generic: execute_command: read failed !' error if eject the pass-through SCSI CD-ROM)
+- Resolves: bz#962669
+  (Windows guest agent service failed to be started)
+- Resolves: bz#972314
+  (Every upgrade starts 'ksmd' due to broken initscript 'status' function)
+
+* Thu Jun 20 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.376.el6
+- kvm-Add-option-to-mlock-qemu-and-guest-memory.patch [bz#826340]
+- kvm-pci-assign-Add-MSI-affinity-support.patch [bz#919761]
+- kvm-block-add-block-driver-read-only-whitelist.patch [bz#960685]
+- kvm-qcow2-Reinitialise-counter-when-restarting-allocatio.patch [bz#974617]
+- kvm-scsi-reset-cdrom-tray-statuses-on-scsi_disk_reset.patch [bz#963773]
+- Resolves: bz#826340
+  ([Hitachi 6.5 FEAT] Support mlock guest memory)
+- Resolves: bz#919761
+  (IRQs are not distributed on a KVM guest correctly.)
+- Resolves: bz#960685
+  ([RHEL-6.5] Backport support for vmdk image format)
+- Resolves: bz#963773
+  (scsi-cd: tray statuses (locked and open) are not reset on boot/reboot of guest)
+- Resolves: bz#974617
+  (qcow2 corruption bug in cluster allocation code)
+
+* Fri May 31 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.375.el6
+- kvm-vnc-Make-ledstate-comparison-before-modifiers-update.patch [bz#955302]
+- Resolves: bz#955302
+  ([6.5 FEAT] Support for LED state extension to Qemu VNC)
+
+* Thu May 30 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.374.el6
+- kvm-vnc-Add-SCROLL-lock-key-to-kbd_leds.patch [bz#955302]
+- kvm-vnc-Support-for-LED-state-extension.patch [bz#955302]
+- kvm-vnc-Adjust-lock-state-sync-logic-with-VNC_FEATURE_LE.patch [bz#955302]
+- kvm-doc-document-the-Pseudo-encoding-of-LED-state.patch [bz#955302]
+- kvm-block-fix-qcow2_co_flush-deadlock.patch [bz#962378]
+- kvm-add-a-new-runstate-RUN_STATE_GUEST_PANICKED.patch [bz#833530]
+- kvm-add-a-new-qevent-QEVENT_GUEST_PANICKED.patch [bz#833530]
+- kvm-introduce-a-new-qom-device-to-deal-with-panicked-eve.patch [bz#833530]
+- kvm-fw_cfg-add-required-header-files.patch [bz#833530]
+- kvm-generalize-rom_set_fw-RHEL-6-only.patch [bz#833530]
+- kvm-pvpanic-pass-configurable-ioport-to-seabios.patch [bz#833530]
+- kvm-pvpanic-add-document-of-pvpanic.patch [bz#833530]
+- kvm-pvpanic-create-pvpanic-by-default-for-machine-1.5.patch [bz#833530]
+- kvm-vl-new-runstate-transition-RUN_STATE_GUEST_PANICKED-.patch [bz#833530]
+- kvm-acpi-drop-debug-port.patch [bz#952240]
+- Resolves: bz#833530
+  ([Hitachi 6.5 FEAT] (qemu-kvm) "virsh dump" support for automatic capturing and automatic actions after capturing.)
+- Resolves: bz#952240
+  (hot-plugging multi-func devices caused: qemu: hardware error: register_ioport_write: invalid opaque)
+- Resolves: bz#955302
+  ([6.5 FEAT] Support for LED state extension to Qemu VNC)
+- Resolves: bz#962378
+  (I/O requests of RHEL6.3 KVM guest are hung indefinitely - suspected issue in qcow2_co_flush().)
+
+* Wed May 29 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.373.el6
+- kvm-atapi-reset-cdrom-tray-statuses-on-ide_reset.patch [bz#886878]
+- kvm-build-sys-add-guards-to-generated-headers.patch [bz#884253]
+- kvm-audio-allow-machine-to-specify-if-mixemu-is-disabled.patch [bz#884253]
+- kvm-pc-machine-rhel-6.4-do-not-have-mixemu.patch [bz#884253]
+- kvm-hda-audio-do-not-export-vmstate_hda_audio_v1.patch [bz#884253]
+- kvm-hda-audio-register-different-device-depending-on-mix.patch [bz#884253]
+- kvm-audio-split-sample-conversion-and-volume-mixing3.patch [bz#884253]
+- kvm-audio-add-VOICE_VOLUME-ctl3.patch [bz#884253]
+- kvm-audio-don-t-apply-volume-effect-if-backend-has-VOICE3.patch [bz#884253]
+- kvm-hw-ac97-remove-USE_MIXER-code3.patch [bz#884253]
+- kvm-hw-ac97-the-volume-mask-is-not-only-0x1f3.patch [bz#884253]
+- kvm-hw-ac97-add-support-for-volume-control3.patch [bz#884253]
+- kvm-audio-spice-add-support-for-volume-control3.patch [bz#884253]
+- Resolves: bz#884253
+  (Allow control of volume from within Windows Guests (Volume Mixture))
+- Resolves: bz#886878
+  (atapi: tray statuses (locked and open) are not reset on boot/reboot of guest)
+
+* Wed May 29 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.372.el6
+- kvm-usb-hub-limit-chain-length.patch [bz#905851]
+- kvm-usb-hub-report-status-changes-only-once.patch [bz#905851]
+- Resolves: bz#905851
+  (Fail to start  guest which contains more than 51 usbs disk with multifunction)
+
+* Mon May 27 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.371.el6
+- kvm-vmdk-Use-bdrv_-p-write_sync-for-metadata-writes.patch [bz#960685]
+- kvm-block-Remove-unused-s-hd-in-various-drivers3.patch [bz#960685]
+- kvm-vmdk-fix-endianness-bugs.patch [bz#960685]
+- kvm-VMDK-introduce-VmdkExtent.patch [bz#960685]
+- kvm-VMDK-bugfix-align-offset-to-cluster-in-get_whole_clu.patch [bz#960685]
+- kvm-VMDK-probe-for-monolithicFlat-images.patch [bz#960685]
+- kvm-VMDK-separate-vmdk_open-by-format-version.patch [bz#960685]
+- kvm-VMDK-add-field-BDRVVmdkState.desc_offset.patch [bz#960685]
+- kvm-VMDK-flush-multiple-extents.patch [bz#960685]
+- kvm-VMDK-move-static-cid_update-flag-to-bs-field.patch [bz#960685]
+- kvm-VMDK-change-get_cluster_offset-return-type.patch [bz#960685]
+- kvm-VMDK-open-read-write-for-monolithicFlat-image.patch [bz#960685]
+- kvm-VMDK-create-different-subformats.patch [bz#960685]
+- kvm-VMDK-fix-coding-style.patch [bz#960685]
+- kvm-block-add-bdrv_get_allocated_file_size-operation.patch [bz#960685]
+- kvm-Use-new-macro-QEMU_PACKED-for-packed-structures.patch [bz#960685]
+- kvm-VMDK-enable-twoGbMaxExtentFlat.patch [bz#960685]
+- kvm-VMDK-add-twoGbMaxExtentSparse-support.patch [bz#960685]
+- kvm-VMDK-separate-vmdk_read_extent-vmdk_write_extent.patch [bz#960685]
+- kvm-VMDK-Opening-compressed-extent.patch [bz#960685]
+- kvm-VMDK-read-write-compressed-extent.patch [bz#960685]
+- kvm-VMDK-creating-streamOptimized-subformat.patch [bz#960685]
+- kvm-VMDK-bugfix-open-Haiku-vmdk-image.patch [bz#960685]
+- kvm-VMDK-bugfix-opening-vSphere-4-exported-image.patch [bz#960685]
+- kvm-VMDK-fix-leak-of-extent_file.patch [bz#960685]
+- kvm-vmdk-fix-return-values-of-vmdk_parent_open.patch [bz#960685]
+- kvm-vmdk-clean-up-open.patch [bz#960685]
+- kvm-vmdk-remove-unneeded-variable-assignment.patch [bz#960685]
+- kvm-vmdk-vmdk_read_cid-returns-garbage-if-p_name-is-NULL.patch [bz#960685]
+- kvm-vmdk-Improve-error-handling.patch [bz#960685]
+- kvm-vmdk-Fix-possible-segfaults.patch [bz#960685]
+- kvm-Include-zlib.h-using-include.patch [bz#960685]
+- kvm-block-vmdk-Fix-warning-from-splint-comparision-of-un.patch [bz#960685]
+- kvm-vmdk-Fix-header-structure.patch [bz#960685]
+- kvm-vmdk-Read-footer-for-streamOptimized-images.patch [bz#960685]
+- kvm-block-vmdk-image-file-reopen.patch [bz#960685]
+- kvm-vmdk-relative_path-use-pstrcpy-in-place-of-strncpy.patch [bz#960685]
+- kvm-vmdk-Fix-data-corruption-bug-in-WRITE-and-READ-handl.patch [bz#960685]
+- kvm-block-Use-error-code-EMEDIUMTYPE-for-wrong-format-in.patch [bz#960685]
+- kvm-vmdk-Allow-selecting-SCSI-adapter-in-image-creation.patch [bz#960685]
+- kvm-vmdk-Allow-space-in-file-name.patch [bz#960685]
+- kvm-vmdk-named-return-code.patch [bz#960685]
+- kvm-vmdk-add-support-for-zeroed-grain-GTE.patch [bz#960685]
+- kvm-vmdk-Add-option-to-create-zeroed-grain-image.patch [bz#960685]
+- kvm-vmdk-change-magic-number-to-macro.patch [bz#960685]
+- kvm-vmdk-store-fields-of-VmdkMetaData-in-cpu-endian.patch [bz#960685]
+- kvm-vmdk-add-bdrv_co_write_zeroes.patch [bz#960685]
+- Resolves: bz#960685
+  ([RHEL-6.5] Backport support for vmdk image format)
+
+* Wed May 22 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.370.el6
+- kvm-virtio-blk-fix-unplug-virsh-reboot.patch [bz#869586]
+- kvm-target-i386-cpuid-check-cpuid_7_0_ebx-too-on-check-e.patch [bz#882834]
+- kvm-qdev-New-qdev_prop_set_string.patch [bz#947416]
+- kvm-constify-value-pointer-for-qdev_prop_set_string.patch [bz#947416]
+- kvm-usb-storage-Forward-serial-number-to-scsi-disk.patch [bz#947416]
+- kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch [bz#953932]
+- kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch [bz#953932]
+- kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch [bz#953932]
+- Resolves: bz#869586
+  (core dump happens when quitting qemu via monitor)
+- Resolves: bz#882834
+  (no warning while check the lacked cpuid_7_0_ebx_feature_name flag)
+- Resolves: bz#947416
+  (fail to specify the serial number for usb storage device)
+- Resolves: bz#953932
+  (CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.5])
+
+* Fri May 10 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.369.el6
+- kvm-qemu-img-allow-rebase-to-a-NULL-backing-file-when-un.patch [bz#670162]
+- kvm-qemu-img-rebase-use-empty-string-to-rebase-without-b.patch [bz#670162]
+- Spec file and qemu-ga files changes for qemu-ga [bz#911569]
+- Resolves: bz#670162
+  ([RFE] Removing the backing file using qemu-img re-base)
+- Resolves: bz#911569
+  ([Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests))
+
+* Thu May 09 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.368.el6
+- kvm-Revert-usb-redir-Add-flow-control-supportn.patch [bz#909059]
+- kvm-Revert-spice-qemu-char.c-remove-intermediate-buffern.patch [bz#909059]
+- kvm-Revert-spice-qemu-char.c-add-throttlingn.patch [bz#909059]
+- kvm-Revert-virtio-console-Enable-port-throttling-when-chn.patch [bz#909059]
+- kvm-Revert-char-Throttle-when-host-connection-is-downn.patch [bz#909059]
+- kvm-Revert-char-Equip-the-unix-tcp-backend-to-handle-nonn.patch [bz#909059]
+- kvm-Revert-char-Update-send_all-to-handle-nonblocking-chn.patch [bz#909059]
+- kvm-Revert-char-Disable-write-callback-if-throttled-charn.patch [bz#909059]
+- kvm-Revert-char-Add-framework-for-a-write-unblocked-calln.patch [bz#909059]
+- kvm-Revert-iohandlers-Add-enable-disable_write_fd_handlen.patch [bz#909059]
+- kvm-Revert-char-Add-a-QemuChrHandlers-struct-to-initialin.patch [bz#909059]
+- kvm-Revert-char-mark-socket-closed-if-write-fails-with-En.patch [bz#909059]
+- kvm-Revert-char-Split-out-tcp-socket-close-code-in-a-sepn.patch [bz#909059]
+- kvm-char-rename-qemu_chr_write-qemu_chr_fe_writen.patch [bz#909059]
+- kvm-char-rename-qemu_chr_printf-qemu_chr_fe_printfn.patch [bz#909059]
+- kvm-char-rename-qemu_chr_read-qemu_chr_be_writen.patch [bz#909059]
+- kvm-char-rename-qemu_chr_can_read-qemu_chr_be_can_readn.patch [bz#909059]
+- kvm-char-rename-qemu_chr_guest_open-qemu_chr_fe_openn.patch [bz#909059]
+- kvm-char-rename-qemu_chr_guest_close-qemu_chr_fe_closen.patch [bz#909059]
+- kvm-char-qemu_chr_ioctl-qemu_chr_fe_ioctln.patch [bz#909059]
+- kvm-char-rename-qemu_chr_set_echo-qemu_chr_fe_set_echon.patch [bz#909059]
+- kvm-char-rename-qemu_chr_open-qemu_chr_newn.patch [bz#909059]
+- kvm-char-qemu_chr_open_opts-qemu_chr_new_from_optsn.patch [bz#909059]
+- kvm-char-rename-qemu_chr_close-qemu_chr_deleten.patch [bz#909059]
+- kvm-char-rename-qemu_chr_get_msgfd-qemu_chr_fe_get_msgfdn.patch [bz#909059]
+- kvm-char-remove-qemu_chr_send_eventn.patch [bz#909059]
+- kvm-char-document-the-functions-that-will-be-the-publicn.patch [bz#909059]
+- kvm-qemu-char-rename-qemu_chr_event-to-qemu_chr_be_eventn.patch [bz#909059]
+- kvm-rename-IOCanRWHandler-to-IOCanReadHandlern.patch [bz#909059]
+- kvm-qemu-char-Plug-memory-leak-on-qemu_chr_open_pty-erron.patch [bz#909059]
+- kvm-char-socket-fix-error-reportingn.patch [bz#909059]
+- kvm-qemu-char-remove-dead-confusing-logic-with-nb_stdio_n.patch [bz#909059]
+- kvm-char-add-IOWatchPoll-supportn.patch [bz#909059]
+- kvm-qemu-char-convert-fd_chr-to-use-a-GIOChanneln.patch [bz#909059]
+- kvm-qemu-char-convert-pty-to-GIOChanneln.patch [bz#909059]
+- kvm-qemu-char-convert-pty-to-GIOChannelnn.patch [bz#909059]
+- kvm-qemu-char-tcp-make-use-GIOChanneln.patch [bz#909059]
+- kvm-qemu-char-add-watch-supportn.patch [bz#909059]
+- kvm-qemu-char-add-pty-watchn.patch [bz#909059]
+- kvm-char-add-gio-watch-fn-for-tcp-backendsn.patch [bz#909059]
+- kvm-qemu-char-use-a-glib-timeout-instead-of-qemu-timern.patch [bz#909059]
+- kvm-virtio-console-add-flow-controln.patch [bz#909059]
+- kvm-virtio-serial-make-flow-control-explicit-in-virtio-cn.patch [bz#909059]
+- kvm-Add-glib-support-to-main-loopn.patch [bz#909059]
+- kvm-virtio-console-Add-some-trace-eventsn.patch [bz#909059]
+- kvm-char-Fix-return-type-of-qemu_chr_fe_add_watchn.patch [bz#909059]
+- kvm-fix-monitorn.patch [bz#909059]
+- kvm-qemu-char-rewrite-io_channel_send_all-and-drop-the-n.patch [bz#909059]
+- kvm-qstring-add-qstring_get_lengthn.patch [bz#909059]
+- kvm-Monitor-Make-output-buffer-dynamicn.patch [bz#909059]
+- kvm-usb-redir-Add-flow-control-supportn.patch [bz#909059]
+- kvm-qemu-char-eliminate-busy-waiting-on-can_read-returnin.patch [bz#909059]
+- kvm-qemu-char-really-fix-behavior-on-can_read-0n.patch [bz#909059]
+- kvm-qemu-char-another-io_add_watch_poll-fixn.patch [bz#909059]
+- kvm-virtio-console-Also-throttle-when-less-was-written-tn.patch [bz#909059]
+- kvm-virtio-console-Remove-any-pending-watches-on-closen.patch [bz#909059]
+- kvm-spice-qemu-char-Remove-dead-debugging-coden.patch [bz#909059]
+- kvm-spice-qemu-char-Add-watch-supportn.patch [bz#909059]
+- kvm-spice-qemu-char-Remove-intermediate-buffern.patch [bz#909059]
+- kvm-qemu-char-use-consistent-idiom-for-removing-sourcesn.patch [bz#909059]
+- kvm-qemu-char-simplify-pty-pollingn.patch [bz#909059]
+- kvm-qemu-char-correct-return-value-from-chr_read-function.patch [bz#909059]
+- kvm-qemu-char-do-not-operate-on-sources-from-finalize-can.patch [bz#909059]
+- kvm-char-introduce-a-blocking-version-of-qemu_chr_fe_wrin.patch [bz#909059]
+- kvm-virtio-console-add-a-no-flow-control-mode-for-compatn.patch [bz#909059]
+- Resolves: bz#909059
+  (Switch to upstream solution for chardev flow control)
+
+* Thu May 09 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.367.el6
+- kvm-qcow2-Return-real-error-code-in-qcow2_read_snapshots2.patch [bz#796011]
+- kvm-qcow2-Return-real-error-code-in-qcow2_write_snapshot2.patch [bz#796011]
+- kvm-Add-new-macro-QEMU_PACKED-for-packed-C-structures2.patch [bz#796011]
+- kvm-qcow2-Update-snapshot-table-information-at-once2.patch [bz#796011]
+- kvm-qcow2-Cleanups-and-memleak-fix-in-qcow2_snapshot_cre2.patch [bz#796011]
+- kvm-qcow2-Rework-qcow2_snapshot_create-error-handling2.patch [bz#796011]
+- kvm-qcow2-Return-real-error-in-qcow2_snapshot_goto2.patch [bz#796011]
+- kvm-qcow2-refcount-remove-dead-assignment2.patch [bz#796011]
+- kvm-qcow2-Fix-order-of-refcount-updates-in-qcow2_snapsho2.patch [bz#796011]
+- kvm-qcow2-Fix-order-in-qcow2_snapshot_delete2.patch [bz#796011]
+- kvm-qcow2-Return-real-error-in-qcow2_update_snapshot_ref2.patch [bz#796011]
+- kvm-qcow2-Fix-L1-write-error-handling-in-qcow2_update_sn2.patch [bz#796011]
+- kvm-Documentation-Remove-outdated-host_device-note2.patch [bz#953108]
+- kvm-pci-assign-Convert-iommu-property-to-booleam2.patch [bz#925170]
+- kvm-pci-assign-Allow-to-disable-MSI-perference-for-host-.patch [bz#925170]
+- kvm-block-bdrv_img_create-add-Error-argument2.patch [bz#877240]
+- kvm-qemu-img-img_create-pass-Error-object-to-bdrv_img_cr.patch [bz#877240]
+- kvm-qemu-img-img_create-drop-unneeded-goto-and-ret-varia2.patch [bz#877240]
+- kvm-qmp-qmp_transaction-pass-Error-object-to-bdrv_img_cr2.patch [bz#877240]
+- kvm-block-bdrv_img_create-drop-unused-error-handling-cod2.patch [bz#877240]
+- kvm-pc-Add-a-new-machine-type-rhel6.5.0.patch [bz#821741]
+- kvm-target-i386-cpu-Enable-SEP-by-default-for-rhel6.5.0-.patch [bz#821741]
+- kvm-revert-disable-SEP-on-all-CPU-models-745717.patch [bz#821741]
+- kvm-target-i386-cpu-Enable-SEP-for-Haswell-models.patch [bz#821741]
+- Resolves: bz#796011
+  (Prompt error of trigger blkdebug: BLKDBG_CLUSTER_FREE event is not the same as expected)
+- Resolves: bz#821741
+  ((re-)enable SEP flag on CPU models)
+- Resolves: bz#877240
+  (QMP: improve error message for blockdev-snapshot-sync failure)
+- Resolves: bz#925170
+  (MSI routing for 1553 card to guest stops working)
+- Resolves: bz#953108
+  (qemu-img man page still mentions host_device)
+
+* Tue May 07 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.366.el6
+- kvm-Revert-redhat-updating-version-info-for-qemu-kvm-0.1.patch []
+- kvm-Revert-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-.patch []
+- kvm-Revert-qga-schema-mark-optional-GuestLogicalProcesso.patch []
+- kvm-Revert-qemu-ga-use-key-value-store-to-avoid-recyclin.patch []
+- kvm-Revert-qemu-ga-Plug-leaks-on-qmp_guest_network_get_i.patch []
+- kvm-Revert-Replace-non-portable-asprintf-by-g_strdup_pri.patch []
+- kvm-Revert-qemu-ga-qmp_guest_network_get_interfaces-get-.patch []
+- kvm-Revert-qemu-ga-qmp_guest_file_-improve-error-reporti.patch []
+- kvm-Revert-redhat-updating-version-info-for-qemu-kvm-0.1.patch []
+- kvm-Revert-qga-convert-qemu_mallocz-to-g_malloc0-and-qem.patch []
+- kvm-Revert-qga-schema-document-generic-QERR_UNSUPPORTED.patch []
+- kvm-Revert-qga-add-windows-implementation-for-guest-set-.patch []
+- kvm-Revert-qga-add-windows-implementation-for-guest-get-.patch []
+- kvm-Revert-Fix-typos-and-misspellings.patch []
+- kvm-Revert-qga-implement-qmp_guest_set_vcpus-for-Linux-w.patch []
+- kvm-Revert-qga-implement-qmp_guest_get_vcpus-for-Linux-w.patch []
+- kvm-Revert-qga-introduce-guest-get-vcpus-guest-set-vcpus.patch []
+- kvm-Revert-qga-add-guest-set-time-command.patch []
+- kvm-Revert-qga-add-guest-get-time-command.patch []
+- kvm-Revert-qemu-ga-make-guest-sync-delimited-available-d.patch []
+- kvm-Revert-qemu-ga-fix-confusing-GAChannelMethod-compari.patch []
+- kvm-Revert-qga-cast-to-int-for-DWORD-type.patch []
+- kvm-Revert-qemu-ga-Fix-unchecked-strdup-by-converting-to.patch []
+- kvm-Revert-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cl.patch []
+- kvm-Revert-qga-add-missing-commas-in-json-docs.patch []
+- kvm-Revert-qemu-ga-Handle-errors-uniformely-in-ga_channe.patch []
+- kvm-Revert-qemu-ga-Plug-fd-leak-on-ga_channel_open-error.patch []
+- kvm-Revert-qemu-ga-Plug-fd-leak-on-ga_channel_listen_acc.patch []
+- kvm-Revert-qemu-ga-Plug-file-descriptor-leak-on-ga_open_.patch []
+- kvm-Revert-qemu-ga-Drop-pointless-lseek-from-ga_open_pid.patch []
+- kvm-Revert-qemu-ga-Document-intentional-fall-through-in-.patch []
+- kvm-Revert-qemu-ga-add-ga_open_logfile.patch []
+- kvm-Revert-qemu-ga-ga_open_pidfile-use-qemu_open.patch []
+- kvm-Revert-qga-channel-posix.c-Explicitly-include-string.patch []
+- kvm-Revert-qemu-ga-sample-fsfreeze-hooks.patch []
+- kvm-Revert-qemu-ga-execute-hook-to-quiesce-the-guest-on-.patch []
+- kvm-Revert-qemu-ga-guest_suspend-improve-error-reporting.patch []
+- kvm-Revert-qemu-ga-bios_supports_mode-improve-error-repo.patch []
+- kvm-Revert-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-e.patch []
+- kvm-Revert-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprint.patch []
+- kvm-Revert-qemu-ga-build_fs_mount_list-take-an-Error-arg.patch []
+- kvm-Revert-qemu-ga-qmp_guest_shutdown-improve-error-repo.patch []
+- kvm-Revert-qemu-ga-qmp_guest_file_close-fix-fclose-error.patch []
+- kvm-Revert-qemu-ga-guest_file_handle_find-take-an-Error-.patch []
+- kvm-Revert-qga-channel-posix.c-Include-headers-it-needs.patch []
+- kvm-Revert-qemu-ga-ask-and-print-error-information-from-.patch []
+- kvm-Revert-qemu-sockets-add-Error-to-all-functions.patch []
+- kvm-Revert-reimplement-error_setg-and-error_setg_errno-f.patch []
+- kvm-Revert-cleanup-useless-return-sentence.patch []
+- kvm-Revert-qemu-ga-prefer-pstrcpy-consistently-NUL-termi.patch []
+- kvm-Revert-qemu-ga-Remove-unreachable-code-after-g_error.patch []
+- kvm-Revert-qapi-Fix-enumeration-typo-error.patch []
+- kvm-Revert-qemu-ga-Fix-null-pointer-passed-to-unlink-in-.patch []
+- kvm-Revert-qemu-ga-don-t-leak-a-file-descriptor-upon-fai.patch []
+- kvm-Revert-error-drop-error_get_qobject-error_set_qobjec.patch []
+- kvm-Revert-qemu-ga-add-guest-fstrim-command.patch []
+- kvm-Revert-qemu-ga-make-names-more-generic-for-mount-lis.patch []
+- kvm-Revert-qemu-ga-align-versioning-with-QEMU_VERSION.patch []
+- kvm-qga-convert-qemu_mallocz-to-g_malloc0-and-qemu_free-.patch [bz#952873]
+- kvm-qemu-ga-align-versioning-with-QEMU_VERSION.patch [bz#952873]
+- kvm-qemu-ga-make-names-more-generic-for-mount-list-funct.patch [bz#918311 bz#952873]
+- kvm-qemu-ga-add-guest-fstrim-command.patch [bz#918311 bz#952873]
+- kvm-error-drop-error_get_qobject-error_set_qobject.patch [bz#952873]
+- kvm-qemu-ga-don-t-leak-a-file-descriptor-upon-failed-loc.patch [bz#952873]
+- kvm-qemu-ga-Fix-null-pointer-passed-to-unlink-in-failure.patch [bz#952873]
+- kvm-qapi-Fix-enumeration-typo-error.patch [bz#952873]
+- kvm-qemu-ga-Remove-unreachable-code-after-g_error.patch [bz#952873]
+- kvm-qemu-ga-prefer-pstrcpy-consistently-NUL-terminate-if.patch [bz#952873]
+- kvm-cleanup-useless-return-sentence.patch [bz#952873]
+- kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch [bz#952873]
+- kvm-qemu-sockets-add-Error-to-all-functions.patch [bz#952873]
+- kvm-qemu-ga-ask-and-print-error-information-from-qemu-so.patch [bz#952873]
+- kvm-qga-channel-posix.c-Include-headers-it-needs.patch [bz#952873]
+- kvm-qemu-ga-guest_file_handle_find-take-an-Error-argumen.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_file_close-fix-fclose-error-check.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_file_-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_shutdown-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-build_fs_mount_list-take-an-Error-argument.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprintf-error.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-error_se.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_network_get_interfaces-get-rid-of-.patch [bz#952873]
+- kvm-qemu-ga-bios_supports_mode-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-guest_suspend-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-execute-hook-to-quiesce-the-guest-on-fsfreez.patch [bz#911569 bz#952873]
+- kvm-qemu-ga-sample-fsfreeze-hooks.patch [bz#911569 bz#952873]
+- kvm-qga-channel-posix.c-Explicitly-include-string.h.patch [bz#952873]
+- kvm-qemu-ga-ga_open_pidfile-use-qemu_open.patch [bz#892996 bz#952873]
+- kvm-qemu-ga-add-ga_open_logfile.patch [bz#892996 bz#952873]
+- kvm-qemu-ga-Document-intentional-fall-through-in-channel.patch [bz#952873]
+- kvm-qemu-ga-Drop-pointless-lseek-from-ga_open_pidfile.patch [bz#952873]
+- kvm-qemu-ga-Plug-file-descriptor-leak-on-ga_open_pidfile.patch [bz#952873]
+- kvm-qemu-ga-Plug-fd-leak-on-ga_channel_listen_accept-err.patch [bz#952873]
+- kvm-qemu-ga-Plug-fd-leak-on-ga_channel_open-error-paths.patch [bz#952873]
+- kvm-qemu-ga-Handle-errors-uniformely-in-ga_channel_open.patch [bz#952873]
+- kvm-qga-add-missing-commas-in-json-docs.patch [bz#952873]
+- kvm-Replace-non-portable-asprintf-by-g_strdup_printf.patch [bz#952873]
+- kvm-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cleanup.patch [bz#952873]
+- kvm-qemu-ga-Plug-leaks-on-qmp_guest_network_get_interfac.patch [bz#952873]
+- kvm-qemu-ga-Fix-unchecked-strdup-by-converting-to-g_strd.patch [bz#952873]
+- kvm-qga-cast-to-int-for-DWORD-type.patch [bz#952873]
+- kvm-qemu-ga-fix-confusing-GAChannelMethod-comparison.patch [bz#952873]
+- kvm-qemu-ga-make-guest-sync-delimited-available-during-f.patch [bz#952873]
+- kvm-qemu-ga-use-key-value-store-to-avoid-recycling-fd-ha.patch [bz#952873]
+- kvm-qga-add-guest-get-time-command.patch [bz#952873]
+- kvm-qga-add-guest-set-time-command.patch [bz#952873]
+- kvm-qga-introduce-guest-get-vcpus-guest-set-vcpus-with-s.patch [bz#924684 bz#952873]
+- kvm-qga-implement-qmp_guest_get_vcpus-for-Linux-with-sys.patch [bz#924684 bz#952873]
+- kvm-qga-implement-qmp_guest_set_vcpus-for-Linux-with-sys.patch [bz#924684 bz#952873]
+- kvm-Fix-typos-and-misspellings.patch [bz#952873]
+- kvm-qga-add-windows-implementation-for-guest-get-time.patch [bz#952873]
+- kvm-qga-add-windows-implementation-for-guest-set-time.patch [bz#952873]
+- kvm-qga-schema-mark-optional-GuestLogicalProcessor.can-o.patch [bz#924684 bz#952873]
+- kvm-qga-schema-document-generic-QERR_UNSUPPORTED.patch [bz#924684 bz#952873]
+- kvm-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-overflo.patch [bz#952873]
+- Resolves: bz#892996
+  (qemu-ga leaks fds to exec()ed processes [TestOnly])
+- Resolves: bz#911569
+  ([Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests))
+- Resolves: bz#918311
+  (Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly])
+- Resolves: bz#924684
+  ([FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly])
+- Resolves: bz#952873
+  ([RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream)
+
+* Tue May 07 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.365.el6
+- kvm-qemu-ga-qmp_guest_file_-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_network_get_interfaces-get-rid-of-.patch [bz#952873]
+- kvm-Replace-non-portable-asprintf-by-g_strdup_printf.patch [bz#952873]
+- kvm-qemu-ga-Plug-leaks-on-qmp_guest_network_get_interfac.patch [bz#952873]
+- kvm-qemu-ga-use-key-value-store-to-avoid-recycling-fd-ha.patch [bz#952873]
+- kvm-qga-schema-mark-optional-GuestLogicalProcessor.can-o.patch [bz#924684 bz#952873]
+- kvm-qemu-ga-ga_get_fd_handle-abort-if-fd_counter-overflo.patch [bz#952873]
+- Resolves: bz#924684
+  ([FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly])
+- Resolves: bz#952873
+  ([RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream)
+
+* Tue May 07 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.364.el6
+- kvm-qemu-ga-align-versioning-with-QEMU_VERSION.patch [bz#952873]
+- kvm-qemu-ga-make-names-more-generic-for-mount-list-funct.patch [bz#918311 bz#952873]
+- kvm-qemu-ga-add-guest-fstrim-command.patch [bz#918311 bz#952873]
+- kvm-error-drop-error_get_qobject-error_set_qobject.patch [bz#952873]
+- kvm-qemu-ga-don-t-leak-a-file-descriptor-upon-failed-loc.patch [bz#952873]
+- kvm-qemu-ga-Fix-null-pointer-passed-to-unlink-in-failure.patch [bz#952873]
+- kvm-qapi-Fix-enumeration-typo-error.patch [bz#952873]
+- kvm-qemu-ga-Remove-unreachable-code-after-g_error.patch [bz#952873]
+- kvm-qemu-ga-prefer-pstrcpy-consistently-NUL-terminate-if.patch [bz#952873]
+- kvm-cleanup-useless-return-sentence.patch [bz#952873]
+- kvm-reimplement-error_setg-and-error_setg_errno-for-RHEL.patch [bz#952873]
+- kvm-qemu-sockets-add-Error-to-all-functions.patch [bz#952873]
+- kvm-qemu-ga-ask-and-print-error-information-from-qemu-so.patch [bz#952873]
+- kvm-qga-channel-posix.c-Include-headers-it-needs.patch [bz#952873]
+- kvm-qemu-ga-guest_file_handle_find-take-an-Error-argumen.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_file_close-fix-fclose-error-check.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_shutdown-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-build_fs_mount_list-take-an-Error-argument.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_fsfreeze_-get-rid-of-sprintf-error.patch [bz#952873]
+- kvm-qemu-ga-qmp_guest_fstrim-get-rid-of-sprintf-error_se.patch [bz#952873]
+- kvm-qemu-ga-bios_supports_mode-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-guest_suspend-improve-error-reporting.patch [bz#952873]
+- kvm-qemu-ga-execute-hook-to-quiesce-the-guest-on-fsfreez.patch [bz#911569 bz#952873]
+- kvm-qemu-ga-sample-fsfreeze-hooks.patch [bz#911569 bz#952873]
+- kvm-qga-channel-posix.c-Explicitly-include-string.h.patch [bz#952873]
+- kvm-qemu-ga-ga_open_pidfile-use-qemu_open.patch [bz#892996 bz#952873]
+- kvm-qemu-ga-add-ga_open_logfile.patch [bz#892996 bz#952873]
+- kvm-qemu-ga-Document-intentional-fall-through-in-channel.patch [bz#952873]
+- kvm-qemu-ga-Drop-pointless-lseek-from-ga_open_pidfile.patch [bz#952873]
+- kvm-qemu-ga-Plug-file-descriptor-leak-on-ga_open_pidfile.patch [bz#952873]
+- kvm-qemu-ga-Plug-fd-leak-on-ga_channel_listen_accept-err.patch [bz#952873]
+- kvm-qemu-ga-Plug-fd-leak-on-ga_channel_open-error-paths.patch [bz#952873]
+- kvm-qemu-ga-Handle-errors-uniformely-in-ga_channel_open.patch [bz#952873]
+- kvm-qga-add-missing-commas-in-json-docs.patch [bz#952873]
+- kvm-qemu-ga-Plug-memory-leak-in-guest_fsfreeze_cleanup.patch [bz#952873]
+- kvm-qemu-ga-Fix-unchecked-strdup-by-converting-to-g_strd.patch [bz#952873]
+- kvm-qga-cast-to-int-for-DWORD-type.patch [bz#952873]
+- kvm-qemu-ga-fix-confusing-GAChannelMethod-comparison.patch [bz#952873]
+- kvm-qemu-ga-make-guest-sync-delimited-available-during-f.patch [bz#952873]
+- kvm-qga-add-guest-get-time-command.patch [bz#952873]
+- kvm-qga-add-guest-set-time-command.patch [bz#952873]
+- kvm-qga-introduce-guest-get-vcpus-guest-set-vcpus-with-s.patch [bz#924684 bz#952873]
+- kvm-qga-implement-qmp_guest_get_vcpus-for-Linux-with-sys.patch [bz#924684 bz#952873]
+- kvm-qga-implement-qmp_guest_set_vcpus-for-Linux-with-sys.patch [bz#924684 bz#952873]
+- kvm-Fix-typos-and-misspellings.patch [bz#952873]
+- kvm-qga-add-windows-implementation-for-guest-get-time.patch [bz#952873]
+- kvm-qga-add-windows-implementation-for-guest-set-time.patch [bz#952873]
+- kvm-qga-schema-document-generic-QERR_UNSUPPORTED.patch [bz#924684 bz#952873]
+- kvm-qga-convert-qemu_mallocz-to-g_malloc0-and-qemu_free-.patch [bz#952873]
+- Resolves: bz#892996
+  (qemu-ga leaks fds to exec()ed processes [TestOnly])
+- Resolves: bz#911569
+  ([Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests))
+- Resolves: bz#918311
+  (Backport qemu-ga guest-fstrim command to RHEL 6.x [TestOnly])
+- Resolves: bz#924684
+  ([FEAT] KVM guest agent vCPU plug/hot-unplug capability (RHEL 6) [TestOnly])
+- Resolves: bz#952873
+  ([RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream)
+
+* Tue May 07 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.363.el6
+- kvm-ksmtuned-more-flexible-process-name-search-pattern.patch [bz#902688]
+- Resolves: bz#902688
+  (incorrect committed_memory if set_process_name=1)
+
+* Tue Apr 30 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.362.el6
+- kvm-add-a-boot-option-to-do-strict-boot.patch [bz#903204]
+- kvm-qxl-set-revision-to-1-for-rhel6.0.0.patch [bz#893344]
+- kvm-usb-tag-usb-host-adapters-as-not-hotpluggable.patch [bz#879096]
+- kvm-virtio-balloon-fix-integer-overflow-in-BALLOON_CHANG.patch [bz#927336]
+- Resolves: bz#879096
+  (qemu should disable hot-unplug usb-ehci controller and give a prompt if not support)
+- Resolves: bz#893344
+  ("info qtree" output for qxl-vga does not match between rhel6.0 host and rhel6.4 host with -M rhel6.0.0)
+- Resolves: bz#903204
+  (don't boot from un-selected devices (add a boot option 'strict' to qemu))
+- Resolves: bz#927336
   (QMP event shows incorrect balloon value when balloon size is grater than or equal to 4G)
 
-* Wed Apr 10 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.3
-- kvm-Fix-regression-introduced-by-machine-accel.patch [bz#929105]
-- Resolves: bz#929105
+* Tue Apr 16 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.361.el6
+- kvm-vnc-disable-VNC-password-authentication-security-typ.patch [bz#817066]
+- kvm-vga-simplify-screendump.patch [bz#869496]
+- kvm-virtio-net-stop-start-bh-when-appropriate.patch [bz#843797]
+- kvm-net-clean-up-network-at-qemu-process-termination.patch [bz#884590]
+- kvm-qemu-img-add-image-fragmentation-statistics.patch [bz#888008]
+- kvm-qemu-img-check-r-for-repairing-images.patch [bz#888008]
+- kvm-qemu-img-check-Print-fixed-clusters-and-recheck.patch [bz#888008]
+- kvm-qcow2-Support-for-fixing-refcount-inconsistencies.patch [bz#888008]
+- kvm-qemu-img-find-the-image-end-offset-during-check.patch [bz#888008]
+- kvm-block-add-BLOCK_O_CHECK-for-qemu-img-check.patch [bz#888008]
+- kvm-qemu.img.c-Use-error_report-instead-of-own-error-imp.patch [bz#888008]
+- kvm-Remove-NULL-checks-for-bdrv_new-return-value.patch [bz#888008]
+- kvm-qemu-img-Improve-error-messages-for-failed-bdrv_open.patch [bz#888008]
+- kvm-Don-t-require-encryption-password-for-qemu-img-info-.patch [bz#888008]
+- kvm-block-Replace-bdrv_get_format-by-bdrv_get_format_nam.patch [bz#888008]
+- kvm-qemu-img-add-json-output-option-to-the-check-command.patch [bz#888008]
+- kvm-block-raw-posix-detect-readonly-Linux-block-devices-.patch [bz#901484]
+- kvm-qemu-img-convert-Remove-s-from-getopt-string.patch [bz#924165]
+- kvm-qemu-img-Fix-division-by-zero-for-zero-size-images.patch [bz#864378]
+- Resolves: bz#817066
+  (QEMU should disable VNC password auth when in FIPS 140-2 mode)
+- Resolves: bz#843797
+  (qemu-kvm core dumps when virtio-net(w/ tx=timer and vhost=on) RHEL.6(w/ msi-x enabled) guest shutting down)
+- Resolves: bz#864378
+  (qemu-img convert fails with Floating Point Exception with zero length source image)
+- Resolves: bz#869496
+  (screendump wont save PPM image file if qemu-kvm booted with '-S')
+- Resolves: bz#884590
+  (ovs-ifup affect but ovs-ifdown not affect when run a guest with a wrong netdriver(e.g. ... -device virtio-pci-net,...))
+- Resolves: bz#888008
+  (RFE: qemu-img should be able to report the amount of space used by a qcow2 image stored on a block device)
+- Resolves: bz#901484
+  (Read-only LVM volume can be opened r/w)
+- Resolves: bz#924165
+  (qemu-img convert -s is silently ignored)
+
+* Wed Apr 10 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.360.el6
+- kvm-Fix-regression-introduced-by-machine-accel.patch [bz#916020]
+- Resolves: bz#916020
   ([RHEL6.4] [regression] qemu-kvm does not enable ioeventfd)
 
-* Thu Feb 28 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.2
-- kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch [bz#910841]
-- kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch [bz#910841]
-- Resolves: bz#910841
-  (CVE-2012-6075  qemu (e1000 device driver): Buffer overflow when processing large packets when SBP and LPE flags are disabled [rhel-6.4.z])
+* Mon Apr 08 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.359.el6
+- kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch [bz#907716]
+- kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch [bz#907716]
+- Resolves: bz#907716
+  (use set_link  to change rtl8139 and e1000 network card's status but fail to make effectively after reboot guest)
 
-* Wed Feb 06 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.1
+* Fri Feb 22 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.358.el6
+- kvm-Revert-block-fix-block-tray-status.patch [bz#890012]
+- Related: bz#890012
+  (tray-open should be 1 after ejects the CD-ROM for virtio-scsi device)
+
+* Mon Feb 18 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.357.el6
+- kvm-block-fix-block-tray-status.patch [bz#890012]
+- kvm-qdev-add-blocksize-property-type.patch [bz#889135]
+- kvm-block-enforce-constraints-on-block-size-properties.patch [bz#889135]
+- kvm-e1000-Discard-packets-that-are-too-long-if-SBP-and-L.patch [bz#910842]
+- kvm-e1000-Discard-oversized-packets-based-on-SBP-LPE.patch [bz#910842]
+- Resolves: bz#889135
+  (core trace/dump if specify the value of physical_block_size/logical_block_size is not multiple of 512 bytes)
+- Resolves: bz#890012
+  (tray-open should be 1 after ejects the CD-ROM for virtio-scsi device)
+- Resolves: bz#910842
+  (CVE-2012-6075  qemu (e1000 device driver): Buffer overflow when processing large packets when SBP and LPE flags are disabled [rhel-6.5])
+
+* Wed Feb 06 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.356.el6
 - kvm-Revert-e1000-no-need-auto-negotiation-if-link-was-do.patch [bz#907397]
 - Resolves: bz#907397
   (Patch "e1000: no need auto-negotiation if link was down" may break e1000 guest)

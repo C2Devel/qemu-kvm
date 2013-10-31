@@ -1,6 +1,11 @@
 #ifndef FW_CFG_H
 #define FW_CFG_H
 
+#ifndef NO_QEMU_PROTOS
+#include <stdint.h>
+#include <stddef.h>
+#endif
+
 #define FW_CFG_SIGNATURE        0x00
 #define FW_CFG_ID               0x01
 #define FW_CFG_UUID             0x02
@@ -64,6 +69,9 @@ int fw_cfg_add_file(FWCfgState *s, const char *filename, uint8_t *data,
                     uint32_t len);
 FWCfgState *fw_cfg_init(uint32_t ctl_port, uint32_t data_port,
                         target_phys_addr_t crl_addr, target_phys_addr_t data_addr);
+
+void fw_set_global(FWCfgState *f);
+FWCfgState *fw_get_global(void);
 
 #endif /* NO_QEMU_PROTOS */
 

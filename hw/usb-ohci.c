@@ -1779,6 +1779,7 @@ static PCIDeviceInfo ohci_info = {
     .qdev.name    = "pci-ohci",
     .qdev.desc    = "Apple USB Controller",
     .qdev.size    = sizeof(OHCIPCIState),
+    .no_hotplug   = 1,
     .init         = usb_ohci_initfn_pci,
 };
 

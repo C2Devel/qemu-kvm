@@ -3,6 +3,7 @@
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdbool.h>
 #ifdef __OpenBSD__
 #include <sys/types.h>
 #include <sys/signal.h>
@@ -112,5 +113,19 @@ int qemu_gettimeofday(qemu_timeval *tp);
 typedef struct timeval qemu_timeval;
 #define qemu_gettimeofday(tp) gettimeofday(tp, NULL);
 #endif /* !_WIN32 */
+
+void fips_set_state(bool requested);
+bool fips_get_state(void);
+
+/* Return a dynamically allocated pathname denoting a file or directory that is
+ * appropriate for storing local state.
+ *
+ * @relative_pathname need not start with a directory separator; one will be
+ * added automatically.
+ *
+ * The caller is responsible for releasing the value returned with g_free()
+ * after use.
+ */
+char *qemu_get_local_state_pathname(const char *relative_pathname);
 
 #endif

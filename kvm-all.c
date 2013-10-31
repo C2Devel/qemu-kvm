@@ -25,6 +25,7 @@
 #include "hw/hw.h"
 #include "gdbstub.h"
 #include "kvm.h"
+#include "trace.h"
 
 /* This check must be after config-host.h is included */
 #ifdef CONFIG_EVENTFD
@@ -168,6 +169,7 @@ int kvm_ioctl(KVMState *s, int type, ...)
     arg = va_arg(ap, void *);
     va_end(ap);
 
+    trace_kvm_ioctl(type, arg);
     ret = ioctl(s->fd, type, arg);
     if (ret == -1)
         ret = -errno;
@@ -185,6 +187,7 @@ int kvm_vm_ioctl(KVMState *s, int type, ...)
     arg = va_arg(ap, void *);
     va_end(ap);
 
+    trace_kvm_vm_ioctl(type, arg);
     ret = ioctl(s->vmfd, type, arg);
     if (ret == -1)
         ret = -errno;
@@ -202,6 +205,7 @@ int kvm_vcpu_ioctl(CPUState *env, int type, ...)
     arg = va_arg(ap, void *);
     va_end(ap);
 
+    trace_kvm_vcpu_ioctl(env->cpu_index, type, arg);
     ret = ioctl(env->kvm_fd, type, arg);
     if (ret == -1)
         ret = -errno;

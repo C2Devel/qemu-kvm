@@ -130,11 +130,29 @@ def camel_case(name):
             new_name += ch.lower()
     return new_name
 
-def c_var(name):
+def c_var(name, protect=True):
+    # ANSI X3J11/88-090, 3.1.1
+    c89_words = set(['auto', 'break', 'case', 'char', 'const', 'continue',
+                     'default', 'do', 'double', 'else', 'enum', 'extern', 'float',
+                     'for', 'goto', 'if', 'int', 'long', 'register', 'return',
+                     'short', 'signed', 'sizeof', 'static', 'struct', 'switch',
+                     'typedef', 'union', 'unsigned', 'void', 'volatile', 'while'])
+    # ISO/IEC 9899:1999, 6.4.1
+    c99_words = set(['inline', 'restrict', '_Bool', '_Complex', '_Imaginary'])
+    # ISO/IEC 9899:2011, 6.4.1
+    c11_words = set(['_Alignas', '_Alignof', '_Atomic', '_Generic', '_Noreturn',
+                     '_Static_assert', '_Thread_local'])
+    # GCC http://gcc.gnu.org/onlinedocs/gcc-4.7.1/gcc/C-Extensions.html
+    # excluding _.*
+    gcc_words = set(['asm', 'typeof'])
+    # namespace pollution:
+    polluted_words = set(['unix'])
+    if protect and (name in c89_words | c99_words | c11_words | gcc_words | polluted_words):
+        return "q_" + name
     return name.replace('-', '_').lstrip("*")
 
-def c_fun(name):
-    return c_var(name).replace('.', '_')
+def c_fun(name, protect=True):
+    return c_var(name, protect).replace('.', '_')
 
 def c_list_type(name):
     return '%sList' % name
@@ -159,6 +177,10 @@ def c_type(name):
         return 'char *'
     elif name == 'int':
         return 'int64_t'
+    elif (name == 'int8' or name == 'int16' or name == 'int32' or
+          name == 'int64' or name == 'uint8' or name == 'uint16' or
+          name == 'uint32' or name == 'uint64'):
+        return name + '_t'
     elif name == 'bool':
         return 'bool'
     elif name == 'number':

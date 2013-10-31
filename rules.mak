@@ -45,7 +45,7 @@ cc-option = $(if $(shell $(CC) $1 $2 -S -o /dev/null -xc /dev/null \
 	@test -f $@ || cp $< $@
 
 %.h-timestamp: %.mak
-	$(call quiet-command, sh $(SRC_PATH)/create_config < $< > $@, "  GEN   $*.h")
+	$(call quiet-command, sh $(SRC_PATH)/create_config $*.h < $< > $@, "  GEN   $*.h")
 	@cmp $@ $*.h >/dev/null 2>&1 || cp $@ $*.h
 
 # will delete the target of a rule if commands exit with a nonzero exit status

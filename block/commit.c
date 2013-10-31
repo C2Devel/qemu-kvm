@@ -92,7 +92,7 @@ static void coroutine_fn commit_run(void *opaque)
     BlockDriverState *active = s->active;
     BlockDriverState *top = s->top;
     BlockDriverState *base = s->base;
-    BlockDriverState *overlay_bs = NULL;
+    BlockDriverState *overlay_bs;
     int64_t sector_num, end;
     int ret = 0;
     int n = 0;
@@ -118,8 +118,6 @@ static void coroutine_fn commit_run(void *opaque)
             goto exit_restore_reopen;
         }
     }
-
-    overlay_bs = bdrv_find_overlay(active, top);
 
     end = s->common.len >> BDRV_SECTOR_BITS;
     buf = qemu_blockalign(top, COMMIT_BUFFER_SIZE);
@@ -183,7 +181,8 @@ exit_restore_reopen:
     if (s->base_flags != bdrv_get_flags(base)) {
         bdrv_reopen(base, s->base_flags, NULL);
     }
-    if (s->orig_overlay_flags != bdrv_get_flags(overlay_bs)) {
+    overlay_bs = bdrv_find_overlay(active, top);
+    if (overlay_bs && s->orig_overlay_flags != bdrv_get_flags(overlay_bs)) {
         bdrv_reopen(overlay_bs, s->orig_overlay_flags, NULL);
     }
 

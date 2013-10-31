@@ -105,6 +105,7 @@ DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "       [,cache=writethrough|writeback|none|unsafe][,format=f]\n"
     "       [,serial=s][,addr=A][,id=name][,aio=threads|native]\n"
     "       [,readonly=on|off][,copy-on-read=on|off]\n"
+    "       [[,bps=b]|[[,bps_rd=r][,bps_wr=w]]][[,iops=i]|[[,iops_rd=r][,iops_wr=w]]\n"
     "                use 'file' as a drive image\n")
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
@@ -268,11 +269,11 @@ ETEXI
 
 DEF("boot", HAS_ARG, QEMU_OPTION_boot,
     "-boot [order=drives][,once=drives][,menu=on|off]\n"
-    "      [,reboot-timeout=rb_time]\n"
+    "      [,reboot-timeout=rb_time][,strict=on|off]\n"
     "                'drives': floppy (a), hard disk (c), CD-ROM (d), network (n)\n"
     "                'rb_timeout': the timeout before guest reboot when boot failed, unit is ms\n")
 STEXI
-@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off][,reboot-timeout=@var{rb_timeout}]
+@item -boot [order=@var{drives}][,once=@var{drives}][,menu=on|off][,reboot-timeout=@var{rb_timeout}][,strict=on|off]
 @findex -boot
 Specify boot order @var{drives} as a string of drive letters. Valid
 drive letters depend on the target achitecture. The x86 PC uses: a, b
@@ -288,6 +289,10 @@ A timeout could be passed to bios, guest will pause for @var{rb_timeout} ms
 when boot failed, then reboot. If @var{rb_timeout} is '-1', guest will not
 reboot, qemu passes '-1' to bios by default. Currently Seabios for X86
 system support it.
+
+Do strict boot via @option{strict=on} as far as firmware/BIOS
+supports it. This only effects when boot priority is changed by
+bootindex options. The default is non-strict boot.
 
 @example
 # try to boot from network first, then from hard disk
@@ -579,8 +584,8 @@ DEF("spice", HAS_ARG, QEMU_OPTION_spice,
     "       [,jpeg-wan-compression=[auto|never|always]]\n"
     "       [,zlib-glz-wan-compression=[auto|never|always]]\n"
     "       [,streaming-video=[off|all|filter]][,disable-copy-paste]\n"
-    "       [,agent-mouse=[on|off]][,playback-compression=[on|off]]\n"
-    "       [,seamless-migration=[on|off]]\n"
+    "       [,disable-agent-file-xfer][,agent-mouse=[on|off]]\n"
+    "       [,playback-compression=[on|off]][,seamless-migration=[on|off]]\n"
     "   enable spice\n"
     "   at least one of {port, tls-port} is mandatory\n")
 STEXI
@@ -608,6 +613,9 @@ Allow client connects without authentication.
 
 @item disable-copy-paste
 Disable copy paste between the client and the guest.
+
+@item disable-agent-file-xfer
+Disable spice-vdagent based file-xfer between the client and the guest.
 
 @item tls-port=<nr>
 Set the TCP port spice is listening on for encrypted channels.
@@ -1301,9 +1309,11 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
 #endif
 #if defined(__linux__) || defined(__sun__) || defined(__FreeBSD__) \
         || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+    "-chardev serial,id=id,path=path\n"
     "-chardev tty,id=id,path=path\n"
 #endif
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__)
+    "-chardev parallel,id=id,path=path\n"
     "-chardev parport,id=id,path=path\n"
 #endif
 #if defined(CONFIG_SPICE)
@@ -1332,7 +1342,8 @@ Backend is one of:
 @option{stdio},
 @option{braille},
 @option{tty},
-@option{parport}
+@option{parallel},
+@option{parport},
 @option{spicevmc}.
 The specific backend will determine the applicable options.
 
@@ -1462,8 +1473,8 @@ take any options.
 
 Send traffic from the guest to a serial device on the host.
 
-@option{serial} is
-only available on Windows hosts.
+On Unix hosts serial will actually accept any tty device,
+not only serial lines.
 
 @option{path} specifies the name of the serial device to open.
 
@@ -1485,16 +1496,15 @@ Connect to a local BrlAPI server. @option{braille} does not take any options.
 
 @item -chardev tty ,id=@var{id} ,path=@var{path}
 
-Connect to a local tty device.
-
 @option{tty} is only available on Linux, Sun, FreeBSD, NetBSD, OpenBSD and
-DragonFlyBSD hosts.
+DragonFlyBSD hosts.  It is an alias for -serial.
 
 @option{path} specifies the path to the tty. @option{path} is required.
 
+@item -chardev parallel ,id=@var{id} ,path=@var{path}
 @item -chardev parport ,id=@var{id} ,path=@var{path}
 
-@option{parport} is only available on Linux, FreeBSD and DragonFlyBSD hosts.
+@option{parallel} is only available on Linux, FreeBSD and DragonFlyBSD hosts.
 
 Connect to a local parallel port.
 
@@ -1829,6 +1839,18 @@ DEF("S", 0, QEMU_OPTION_S, \
 STEXI
 @item -S
 Do not start CPU at startup (you must type 'c' in the monitor).
+ETEXI
+
+DEF("realtime", HAS_ARG, QEMU_OPTION_realtime, \
+    "-realtime [mlock=on|off]\n" \
+    "                run qemu with realtime features\n" \
+    "                mlock=on|off controls mlock support (default: on)\n")
+STEXI
+@item -realtime mlock=on|off
+@findex -realtime
+Run qemu with realtime features.
+mlocking qemu and guest memory can be enabled via @option{mlock=on}
+(enabled by default).
 ETEXI
 
 DEF("gdb", HAS_ARG, QEMU_OPTION_gdb, \
@@ -2232,3 +2254,13 @@ DEF("fake-machine", 0, QEMU_OPTION_fake_machine,
     "-fake-machine        create a fake machine incapable of running guest code\n"
     "                     mimimal resource use, use for scalability testing")
 #endif
+
+DEF("msg", HAS_ARG, QEMU_OPTION_msg,
+    "-msg timestamp[=on|off]\n"
+    "                change the format of messages\n"
+    "                on|off controls leading timestamps (default:on)\n")
+STEXI
+@item -msg timestamp[=on|off]
+@findex -msg
+prepend a timestamp to each log message.(default:on)
+ETEXI

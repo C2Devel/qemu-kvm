@@ -79,6 +79,7 @@ QemuOptsList qemu_drive_opts = {
         },{
             .name = "readonly",
             .type = QEMU_OPT_BOOL,
+            .help = "open drive file as read-only",
         },{
             .name = "boot",
             .type = QEMU_OPT_BOOL,
@@ -87,6 +88,32 @@ QemuOptsList qemu_drive_opts = {
             .name = "copy-on-read",
             .type = QEMU_OPT_BOOL,
             .help = "copy read data from backing file into image file",
+#ifdef CONFIG_BLOCK_IO_THROTTLING
+        },{
+            .name = "iops",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit total I/O operations per second",
+        },{
+            .name = "iops_rd",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit read operations per second",
+        },{
+            .name = "iops_wr",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit write operations per second",
+        },{
+            .name = "bps",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit total bytes per second",
+        },{
+            .name = "bps_rd",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit read bytes per second",
+        },{
+            .name = "bps_wr",
+            .type = QEMU_OPT_NUMBER,
+            .help = "limit write bytes per second",
+#endif
         },
         { /* end if list */ }
     },
@@ -174,6 +201,9 @@ QemuOptsList qemu_chardev_opts = {
         },{
             .name = "debug",
             .type = QEMU_OPT_NUMBER,
+        },{
+            .name = "chardev",
+            .type = QEMU_OPT_STRING,
         },
         { /* end if list */ }
     },
@@ -351,6 +381,9 @@ QemuOptsList qemu_spice_opts = {
             .name = "disable-copy-paste",
             .type = QEMU_OPT_BOOL,
         },{
+            .name = "disable-agent-file-xfer",
+            .type = QEMU_OPT_BOOL,
+        },{
             .name = "x509-dir",
             .type = QEMU_OPT_STRING,
         },{
@@ -460,8 +493,35 @@ QemuOptsList qemu_boot_opts = {
         }, {
             .name = "reboot-timeout",
             .type = QEMU_OPT_STRING,
+        }, {
+            .name = "strict",
+            .type = QEMU_OPT_STRING,
         },
         { /*End of list */ }
+    },
+};
+
+QemuOptsList qemu_realtime_opts = {
+    .name = "realtime",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_realtime_opts.head),
+    .desc = {
+        {
+            .name = "mlock",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end of list */ }
+    },
+};
+
+static QemuOptsList qemu_msg_opts = {
+    .name = "msg",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_msg_opts.head),
+    .desc = {
+        {
+            .name = "timestamp",
+            .type = QEMU_OPT_BOOL,
+        },
+        { /* end of list */ }
     },
 };
 
@@ -480,6 +540,8 @@ static QemuOptsList *vm_config_groups[] = {
     &qemu_option_rom_opts,
     &qemu_machine_opts,
     &qemu_boot_opts,
+    &qemu_realtime_opts,
+    &qemu_msg_opts,
     NULL,
 };
 

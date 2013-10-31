@@ -937,7 +937,7 @@ static int assign_device(AssignedDevice *dev)
 
 #ifdef KVM_CAP_IOMMU
     /* We always enable the IOMMU unless disabled on the command line */
-    if (dev->use_iommu) {
+    if (dev->features & ASSIGNED_DEVICE_USE_IOMMU_MASK) {
         if (!kvm_check_extension(kvm_state, KVM_CAP_IOMMU)) {
             fprintf(stderr, "No IOMMU found.  Unable to assign device \"%s\"\n",
                     dev->dev.qdev.id);
@@ -946,7 +946,7 @@ static int assign_device(AssignedDevice *dev)
         assigned_dev_data.flags |= KVM_DEV_ASSIGN_ENABLE_IOMMU;
     }
 #else
-    dev->use_iommu = 0;
+    dev->features &= ~ASSIGNED_DEVICE_USE_IOMMU_MASK;
 #endif
 
     r = kvm_assign_pci_device(kvm_context, &assigned_dev_data);
@@ -990,7 +990,8 @@ static int assign_irq(AssignedDevice *dev)
     }
 
     assigned_irq_data.flags = KVM_DEV_IRQ_GUEST_INTX;
-    if (dev->cap.available & ASSIGNED_DEVICE_CAP_MSI)
+    if (dev->features & ASSIGNED_DEVICE_PREFER_MSI_MASK &&
+        dev->cap.available & ASSIGNED_DEVICE_CAP_MSI)
         assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_MSI;
     else
         assigned_irq_data.flags |= KVM_DEV_IRQ_HOST_INTX;
@@ -1129,6 +1130,53 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev, unsigned int ctrl_pos)
             perror("assigned_dev_enable_msi: assign irq");
 
         assigned_dev->irq_requested_type = assigned_irq_data.flags;
+    }
+}
+
+static void assigned_dev_update_msi_msg(PCIDevice *pci_dev,
+                                        unsigned int ctrl_pos)
+{
+    AssignedDevice *assigned_dev = container_of(pci_dev, AssignedDevice, dev);
+    uint8_t ctrl_byte = pci_dev->config[ctrl_pos];
+    struct kvm_irq_routing_entry *orig;
+    int pos, ret;
+
+    if (!(assigned_dev->irq_requested_type & KVM_DEV_IRQ_GUEST_MSI) ||
+        !(ctrl_byte & PCI_MSI_FLAGS_ENABLE)) {
+        return;
+    }
+
+    orig = assigned_dev->entry;
+    pos = ctrl_pos - PCI_MSI_FLAGS;
+
+    assigned_dev->entry = calloc(1, sizeof(struct kvm_irq_routing_entry));
+    if (!assigned_dev->entry) {
+        assigned_dev->entry = orig;
+        perror("assigned_dev_update_msi_msg: ");
+        return;
+    }
+
+    assigned_dev->entry->u.msi.address_lo =
+                    pci_get_long(pci_dev->config + pos + PCI_MSI_ADDRESS_LO);
+    assigned_dev->entry->u.msi.address_hi = 0;
+    assigned_dev->entry->u.msi.data =
+                    pci_get_word(pci_dev->config + pos + PCI_MSI_DATA_32);
+    assigned_dev->entry->type = KVM_IRQ_ROUTING_MSI;
+    assigned_dev->entry->gsi = orig->gsi;
+
+    ret = kvm_update_routing_entry(kvm_context, orig, assigned_dev->entry);
+    if (ret) {
+        fprintf(stderr, "Error updating MSI irq routing entry (%d)\n", ret);
+        free(assigned_dev->entry);
+        assigned_dev->entry = orig;
+        return;
+    }
+
+    free(orig);
+
+    ret = kvm_commit_irq_routes(kvm_context);
+    if (ret) {
+        fprintf(stderr, "Error committing MSI irq route (%d)\n", ret);
     }
 }
 #endif
@@ -1361,6 +1409,9 @@ static void assigned_device_pci_cap_write_config(PCIDevice *pci_dev,
             uint8_t cap = pci_find_capability(pci_dev, cap_id);
             if (ranges_overlap(address - cap, len, PCI_MSI_FLAGS, 1)) {
                 assigned_dev_update_msi(pci_dev, cap + PCI_MSI_FLAGS);
+            } else if (ranges_overlap(address - cap, len, /* 32bit MSI only */
+                                      PCI_MSI_ADDRESS_LO, 6)) {
+                assigned_dev_update_msi_msg(pci_dev, cap + PCI_MSI_FLAGS);
             }
         }
 #endif
@@ -2021,7 +2072,10 @@ static PCIDeviceInfo assign_info = {
     .config_write = assigned_dev_pci_write_config,
     .qdev.props   = (Property[]) {
         DEFINE_PROP("host", AssignedDevice, host, qdev_prop_hostaddr, PCIHostDevice),
-        DEFINE_PROP_UINT32("iommu", AssignedDevice, use_iommu, 1),
+        DEFINE_PROP_BIT("iommu", AssignedDevice, features,
+                        ASSIGNED_DEVICE_USE_IOMMU_BIT, true),
+        DEFINE_PROP_BIT("prefer_msi", AssignedDevice, features,
+                        ASSIGNED_DEVICE_PREFER_MSI_BIT, true),
         DEFINE_PROP_INT32("bootindex", AssignedDevice, bootindex, -1),
         DEFINE_PROP_STRING("configfd", AssignedDevice, configfd_name),
         DEFINE_PROP_END_OF_LIST(),

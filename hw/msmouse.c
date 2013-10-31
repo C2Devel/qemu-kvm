@@ -25,7 +25,9 @@
 #include "../qemu-common.h"
 #include "../qemu-char.h"
 #include "../console.h"
-#include "msmouse.h"
+
+#include "qapi-visit.h"
+#include "qemu-char-qapi.h"
 
 #define MSMOUSE_LO6(n) ((n) & 0x3f)
 #define MSMOUSE_HI2(n) (((n) & 0xc0) >> 6)
@@ -50,7 +52,7 @@ static void msmouse_event(void *opaque,
     /* We always send the packet of, so that we do not have to keep track
        of previous state of the middle button. This can potentially confuse
        some very old drivers for two button mice though. */
-    qemu_chr_read(chr, bytes, 4);
+    qemu_chr_be_write(chr, bytes, 4);
 }
 
 static int msmouse_chr_write (struct CharDriverState *s, const uint8_t *buf, int len)
@@ -64,7 +66,7 @@ static void msmouse_chr_close (struct CharDriverState *chr)
     qemu_free (chr);
 }
 
-CharDriverState *qemu_chr_open_msmouse(QemuOpts *opts)
+CharDriverState *qemu_chr_open_msmouse(void)
 {
     CharDriverState *chr;
 
@@ -76,3 +78,10 @@ CharDriverState *qemu_chr_open_msmouse(QemuOpts *opts)
 
     return chr;
 }
+
+static void register_types(void)
+{
+    register_char_driver_qapi("msmouse", CHARDEV_BACKEND_KIND_MSMOUSE, NULL);
+}
+
+machine_init(register_types);

@@ -1896,7 +1896,7 @@ static void pxa2xx_fir_write(void *opaque, target_phys_addr_t addr,
         else
             ch = ~value;
         if (s->chr && s->enable && (s->control[0] & (1 << 3)))	/* TXE */
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
         break;
     case ICSR0:
         s->status[0] &= ~(value & 0x66);
@@ -1992,12 +1992,6 @@ static int pxa2xx_fir_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static const QemuChrHandlers pxa2xx_handlers = {
-    .fd_can_read = pxa2xx_fir_is_empty,
-    .fd_read = pxa2xx_fir_rx,
-    .fd_event = pxa2xx_fir_event,
-};
-
 static PXA2xxFIrState *pxa2xx_fir_init(target_phys_addr_t base,
                 qemu_irq irq, PXA2xxDMAState *dma,
                 CharDriverState *chr)
@@ -2016,9 +2010,10 @@ static PXA2xxFIrState *pxa2xx_fir_init(target_phys_addr_t base,
                     pxa2xx_fir_writefn, s);
     cpu_register_physical_memory(base, 0x1000, iomemtype);
 
-    if (chr) {
-        qemu_chr_add_handlers(chr, &pxa2xx_handlers, s);
-    }
+    if (chr)
+        qemu_chr_add_handlers(chr, pxa2xx_fir_is_empty,
+                        pxa2xx_fir_rx, pxa2xx_fir_event, s);
+
     register_savevm(NULL, "pxa2xx_fir", 0, 0, pxa2xx_fir_save,
                     pxa2xx_fir_load, s);
 

@@ -250,6 +250,7 @@ enum {
 #define VNC_ENCODING_POINTER_TYPE_CHANGE  0XFFFFFEFF /* -257 */
 #define VNC_ENCODING_EXT_KEY_EVENT        0XFFFFFEFE /* -258 */
 #define VNC_ENCODING_AUDIO                0XFFFFFEFD /* -259 */
+#define VNC_ENCODING_LED_STATE            0XFFFFFEFB /* -261 */
 #define VNC_ENCODING_WMVi                 0x574D5669
 
 /*****************************************************************************
@@ -283,6 +284,7 @@ enum {
 #define VNC_FEATURE_TIGHT                    4
 #define VNC_FEATURE_ZLIB                     5
 #define VNC_FEATURE_COPYRECT                 6
+#define VNC_FEATURE_LED_STATE               11
 
 #define VNC_FEATURE_RESIZE_MASK              (1 << VNC_FEATURE_RESIZE)
 #define VNC_FEATURE_HEXTILE_MASK             (1 << VNC_FEATURE_HEXTILE)
@@ -291,6 +293,13 @@ enum {
 #define VNC_FEATURE_TIGHT_MASK               (1 << VNC_FEATURE_TIGHT)
 #define VNC_FEATURE_ZLIB_MASK                (1 << VNC_FEATURE_ZLIB)
 #define VNC_FEATURE_COPYRECT_MASK            (1 << VNC_FEATURE_COPYRECT)
+#define VNC_FEATURE_LED_STATE_MASK           (1 << VNC_FEATURE_LED_STATE)
+
+/* Server -> Client message IDs */
+#define VNC_MSG_SERVER_FRAMEBUFFER_UPDATE         0
+#define VNC_MSG_SERVER_SET_COLOUR_MAP_ENTRIES     1
+#define VNC_MSG_SERVER_BELL                       2
+#define VNC_MSG_SERVER_CUT_TEXT                   3
 
 
 /*****************************************************************************

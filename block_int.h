@@ -34,6 +34,13 @@
 #define BLOCK_FLAG_ENCRYPT	1
 #define BLOCK_FLAG_COMPAT6	4
 
+#define BLOCK_IO_LIMIT_READ     0
+#define BLOCK_IO_LIMIT_WRITE    1
+#define BLOCK_IO_LIMIT_TOTAL    2
+
+#define BLOCK_IO_SLICE_TIME     100000000
+#define NANOSECONDS_PER_SECOND  1000000000.0
+
 #define BLOCK_OPT_SIZE          "size"
 #define BLOCK_OPT_ENCRYPT       "encryption"
 #define BLOCK_OPT_COMPAT6       "compat6"
@@ -42,6 +49,8 @@
 #define BLOCK_OPT_CLUSTER_SIZE  "cluster_size"
 #define BLOCK_OPT_TABLE_SIZE    "table_size"
 #define BLOCK_OPT_PREALLOC      "preallocation"
+#define BLOCK_OPT_SUBFMT        "subformat"
+#define BLOCK_OPT_ADAPTER_TYPE  "adapter_type"
 
 typedef struct BdrvTrackedRequest BdrvTrackedRequest;
 
@@ -102,6 +111,15 @@ struct BlockJob {
     BlockDriverCompletionFunc *cb;
     void *opaque;
 };
+typedef struct BlockIOLimit {
+    int64_t bps[3];
+    int64_t iops[3];
+} BlockIOLimit;
+
+typedef struct BlockIOBaseValue {
+    uint64_t bytes[2];
+    uint64_t ios[2];
+} BlockIOBaseValue;
 
 struct BlockDriver {
     const char *format_name;
@@ -165,6 +183,7 @@ struct BlockDriver {
     const char *protocol_name;
     int (*bdrv_truncate)(BlockDriverState *bs, int64_t offset);
     int64_t (*bdrv_getlength)(BlockDriverState *bs);
+    int64_t (*bdrv_get_allocated_file_size)(BlockDriverState *bs);
     int (*bdrv_write_compressed)(BlockDriverState *bs, int64_t sector_num,
                                  const uint8_t *buf, int nb_sectors);
 
@@ -205,7 +224,8 @@ struct BlockDriver {
      * Returns 0 for completed check, -errno for internal errors.
      * The check results are stored in result.
      */
-    int (*bdrv_check)(BlockDriverState* bs, BdrvCheckResult *result);
+    int (*bdrv_check)(BlockDriverState* bs, BdrvCheckResult *result,
+        BdrvCheckMode fix);
 
     void (*bdrv_debug_event)(BlockDriverState *bs, BlkDebugEvent event);
 
@@ -259,6 +279,15 @@ struct BlockDriverState {
 
     void *sync_aiocb;
 
+    /* the time for latest disk I/O */
+    int64_t slice_start;
+    int64_t slice_end;
+    BlockIOLimit io_limits;
+    BlockIOBaseValue slice_submitted;
+    CoQueue      throttled_reqs;
+    QEMUTimer    *block_timer;
+    bool         io_limits_enabled;
+
     /* I/O stats (display with "info blockstats"). */
     uint64_t nr_bytes[BDRV_MAX_IOTYPE];
     uint64_t nr_ops[BDRV_MAX_IOTYPE];
@@ -308,6 +337,8 @@ void *qemu_aio_get(AIOPool *pool, BlockDriverState *bs,
 void qemu_aio_release(void *p);
 
 void *qemu_blockalign(BlockDriverState *bs, size_t size);
+void bdrv_set_io_limits(BlockDriverState *bs,
+                        BlockIOLimit *io_limits);
 
 #ifdef _WIN32
 int is_windows_drive(const char *filename);
@@ -359,10 +390,10 @@ static inline unsigned int get_physical_block_exp(BlockConf *conf)
 
 #define DEFINE_BLOCK_PROPERTIES(_state, _conf)                          \
     DEFINE_PROP_DRIVE("drive", _state, _conf.bs),                       \
-    DEFINE_PROP_UINT16("logical_block_size", _state,                    \
-                       _conf.logical_block_size, 512),                  \
-    DEFINE_PROP_UINT16("physical_block_size", _state,                   \
-                       _conf.physical_block_size, 512),                 \
+    DEFINE_PROP_BLOCKSIZE("logical_block_size", _state,                 \
+                          _conf.logical_block_size, 512),               \
+    DEFINE_PROP_BLOCKSIZE("physical_block_size", _state,                \
+                          _conf.physical_block_size, 512),              \
     DEFINE_PROP_UINT16("min_io_size", _state, _conf.min_io_size, 0),  \
     DEFINE_PROP_UINT32("opt_io_size", _state, _conf.opt_io_size, 0),    \
     DEFINE_PROP_INT32("bootindex", _state, _conf.bootindex, -1),        \

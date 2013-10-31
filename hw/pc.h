@@ -183,6 +183,7 @@ int cpu_is_bsp(CPUState *env);
 void set_pmu_passthrough(bool enable);
 void disable_kvm_pv_eoi(void);
 void disable_tsc_deadline(void);
+void disable_kvm_sep(void);
 void set_cpu_model_level(const char *name, int level);
 
 #endif

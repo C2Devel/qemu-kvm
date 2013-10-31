@@ -16,6 +16,7 @@
 #include "qemu-timer.h"
 #include "qemu-log.h"
 #include "sysemu.h"
+#include "migration.h"
 
 #include <sys/time.h>
 
@@ -35,6 +36,11 @@ void qemu_service_io(void)
 }
 
 Monitor *cur_mon;
+
+int monitor_get_fd(Monitor *mon, const char *name)
+{
+    return -1;
+}
 
 int monitor_cur_is_qmp(void)
 {
@@ -80,7 +86,7 @@ void qemu_mod_timer(QEMUTimer *ts, int64_t expire_time)
 }
 
 int qemu_set_fd_handler2(int fd,
-                         IOCanRWHandler *fd_read_poll,
+                         IOCanReadHandler *fd_read_poll,
                          IOHandler *fd_read,
                          IOHandler *fd_write,
                          void *opaque)
@@ -111,4 +117,20 @@ void qemu_notify_event(void)
 bool runstate_check(RunState state)
 {
     return state == RUN_STATE_RUNNING;
+}
+
+void qemu_mutex_lock_iothread(void)
+{
+}
+
+void qemu_mutex_unlock_iothread(void)
+{
+}
+
+void migrate_add_blocker(Error *reason)
+{
+}
+
+void migrate_del_blocker(Error *reason)
+{
 }

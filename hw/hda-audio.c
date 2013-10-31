@@ -883,57 +883,6 @@ static void hda_audio_stream(HDACodecDevice *hda, uint32_t stnr, bool running, b
     }
 }
 
-extern const VMStateDescription vmstate_hda_audio_v1;
-
-static int hda_audio_init(HDACodecDevice *hda, const struct desc_codec *desc)
-{
-    HDAAudioState *a = DO_UPCAST(HDAAudioState, hda, hda);
-    HDAAudioStream *st;
-    const desc_node *node;
-    const desc_param *param;
-    uint32_t i, type;
-
-    a->desc = desc;
-    a->name = a->hda.qdev.info->name;
-    dprint(a, 1, "%s: cad %d\n", __FUNCTION__, a->hda.cad);
-
-    if (a->mcompat) {
-        hda->qdev.info->vmsd = &vmstate_hda_audio_v1;
-    }
-
-    AUD_register_card("hda", &a->card);
-    for (i = 0; i < a->desc->nnodes; i++) {
-        node = a->desc->nodes + i;
-        param = hda_codec_find_param(node, AC_PAR_AUDIO_WIDGET_CAP);
-        if (NULL == param)
-            continue;
-        type = (param->val & AC_WCAP_TYPE) >> AC_WCAP_TYPE_SHIFT;
-        switch (type) {
-        case AC_WID_AUD_OUT:
-        case AC_WID_AUD_IN:
-            assert(node->stindex < ARRAY_SIZE(a->st));
-            st = a->st + node->stindex;
-            st->state = a;
-            st->node = node;
-            if (type == AC_WID_AUD_OUT) {
-                /* unmute output by default */
-                st->gain_left = QEMU_HDA_AMP_STEPS;
-                st->gain_right = QEMU_HDA_AMP_STEPS;
-                st->bpos = sizeof(st->buf);
-                st->output = true;
-            } else {
-                st->output = false;
-            }
-            st->format = AC_FMT_TYPE_PCM | AC_FMT_BITS_16 |
-                (1 << AC_FMT_CHAN_SHIFT);
-            hda_codec_parse_fmt(st->format, &st->as);
-            hda_audio_setup(st);
-            break;
-        }
-    }
-    return 0;
-}
-
 static int hda_audio_exit(HDACodecDevice *hda)
 {
     HDAAudioState *a = DO_UPCAST(HDAAudioState, hda, hda);
@@ -998,7 +947,7 @@ static const VMStateDescription vmstate_hda_audio_stream = {
     }
 };
 
-const VMStateDescription vmstate_hda_audio_v1 = {
+static const VMStateDescription vmstate_hda_audio_v1 = {
     .name = "hda-audio",
     .version_id = 1,
     .post_load = hda_audio_post_load,
@@ -1030,6 +979,55 @@ static Property hda_audio_properties[] = {
     DEFINE_PROP_UINT32("mcompat", HDAAudioState, mcompat, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
+
+static int hda_audio_init(HDACodecDevice *hda, const struct desc_codec *desc)
+{
+    HDAAudioState *a = DO_UPCAST(HDAAudioState, hda, hda);
+    HDAAudioStream *st;
+    const desc_node *node;
+    const desc_param *param;
+    uint32_t i, type;
+
+    a->desc = desc;
+    a->name = a->hda.qdev.info->name;
+    dprint(a, 1, "%s: cad %d\n", __FUNCTION__, a->hda.cad);
+
+    if (a->mcompat) {
+        hda->qdev.info->vmsd = &vmstate_hda_audio_v1;
+    }
+
+    AUD_register_card("hda", &a->card);
+    for (i = 0; i < a->desc->nnodes; i++) {
+        node = a->desc->nodes + i;
+        param = hda_codec_find_param(node, AC_PAR_AUDIO_WIDGET_CAP);
+        if (NULL == param)
+            continue;
+        type = (param->val & AC_WCAP_TYPE) >> AC_WCAP_TYPE_SHIFT;
+        switch (type) {
+        case AC_WID_AUD_OUT:
+        case AC_WID_AUD_IN:
+            assert(node->stindex < ARRAY_SIZE(a->st));
+            st = a->st + node->stindex;
+            st->state = a;
+            st->node = node;
+            if (type == AC_WID_AUD_OUT) {
+                /* unmute output by default */
+                st->gain_left = QEMU_HDA_AMP_STEPS;
+                st->gain_right = QEMU_HDA_AMP_STEPS;
+                st->bpos = sizeof(st->buf);
+                st->output = true;
+            } else {
+                st->output = false;
+            }
+            st->format = AC_FMT_TYPE_PCM | AC_FMT_BITS_16 |
+                (1 << AC_FMT_CHAN_SHIFT);
+            hda_codec_parse_fmt(st->format, &st->as);
+            hda_audio_setup(st);
+            break;
+        }
+    }
+    return 0;
+}
 
 static int hda_audio_init_output(HDACodecDevice *hda)
 {
@@ -1084,8 +1082,15 @@ static HDACodecDeviceInfo hda_audio_info_micro = {
 
 static void hda_audio_register(void)
 {
-    hda_codec_register(&hda_audio_info_output);
-    hda_codec_register(&hda_audio_info_duplex);
-    hda_codec_register(&hda_audio_info_micro);
+#ifdef CONFIG_MIXEMU
+    if (!get_mixemu_disabled())
+#else
+    if (get_mixemu_disabled())
+#endif
+    {
+        hda_codec_register(&hda_audio_info_output);
+        hda_codec_register(&hda_audio_info_duplex);
+        hda_codec_register(&hda_audio_info_micro);
+    }
 }
 device_init(hda_audio_register);

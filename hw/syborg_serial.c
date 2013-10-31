@@ -119,7 +119,7 @@ static void do_dma_tx(SyborgSerialState *s, uint32_t count)
         /* optimize later. Now, 1 byte per iteration */
         while (count--) {
             cpu_physical_memory_read(s->dma_tx_ptr, &ch, 1);
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
             s->dma_tx_ptr++;
         }
     } else {
@@ -203,7 +203,7 @@ static void syborg_serial_write(void *opaque, target_phys_addr_t offset,
     case SERIAL_DATA:
         ch = value;
         if (s->chr)
-            qemu_chr_write(s->chr, &ch, 1);
+            qemu_chr_fe_write(s->chr, &ch, 1);
         break;
     case SERIAL_INT_ENABLE:
         s->int_enable = value;
@@ -315,12 +315,6 @@ static int syborg_serial_load(QEMUFile *f, void *opaque, int version_id)
     return 0;
 }
 
-static const QemuChrHandlers syborg_serial_handlers = {
-    .fd_can_read = syborg_serial_can_receive,
-    .fd_read = syborg_serial_receive,
-    .fd_event = syborg_serial_event,
-};
-
 static int syborg_serial_init(SysBusDevice *dev)
 {
     SyborgSerialState *s = FROM_SYSBUS(SyborgSerialState, dev);
@@ -332,7 +326,8 @@ static int syborg_serial_init(SysBusDevice *dev)
     sysbus_init_mmio(dev, 0x1000, iomemtype);
     s->chr = qdev_init_chardev(&dev->qdev);
     if (s->chr) {
-        qemu_chr_add_handlers(s->chr, &syborg_serial_handlers, s);
+        qemu_chr_add_handlers(s->chr, syborg_serial_can_receive,
+                              syborg_serial_receive, syborg_serial_event, s);
     }
     if (s->fifo_size <= 0) {
         fprintf(stderr, "syborg_serial: fifo too small\n");

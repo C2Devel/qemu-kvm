@@ -104,7 +104,7 @@ static struct {
 
 static AudioState glob_audio_state;
 
-struct mixeng_volume nominal_volume = {
+const struct mixeng_volume nominal_volume = {
     .mute = 0,
 #ifdef FLOAT_MIXENG
     .r = 1.0,
@@ -693,13 +693,11 @@ void audio_pcm_info_clear_buf (struct audio_pcm_info *info, void *buf, int len)
 /*
  * Capture
  */
-static void noop_conv (struct st_sample *dst, const void *src,
-                       int samples, struct mixeng_volume *vol)
+static void noop_conv (struct st_sample *dst, const void *src, int samples)
 {
     (void) src;
     (void) dst;
     (void) samples;
-    (void) vol;
 }
 
 static CaptureVoiceOut *audio_pcm_capture_find_specific (
@@ -947,6 +945,10 @@ int audio_pcm_sw_read (SWVoiceIn *sw, void *buf, int size)
         total += isamp;
     }
 
+    if (!(hw->ctl_caps & VOICE_VOLUME_CAP)) {
+        mixeng_volume (sw->buf, ret, &sw->vol);
+    }
+
     sw->clip (buf, sw->buf, ret);
     sw->total_hw_samples_acquired += total;
     return ret << sw->info.shift;
@@ -1028,7 +1030,11 @@ int audio_pcm_sw_write (SWVoiceOut *sw, void *buf, int size)
     swlim = ((int64_t) dead << 32) / sw->ratio;
     swlim = audio_MIN (swlim, samples);
     if (swlim) {
-        sw->conv (sw->buf, buf, swlim, &sw->vol);
+        sw->conv (sw->buf, buf, swlim);
+
+        if (!(sw->hw->ctl_caps & VOICE_VOLUME_CAP)) {
+            mixeng_volume (sw->buf, swlim, &sw->vol);
+        }
     }
 
     while (swlim) {
@@ -2044,17 +2050,44 @@ void AUD_del_capture (CaptureVoiceOut *cap, void *cb_opaque)
 void AUD_set_volume_out (SWVoiceOut *sw, int mute, uint8_t lvol, uint8_t rvol)
 {
     if (sw) {
+        HWVoiceOut *hw = sw->hw;
+
         sw->vol.mute = mute;
         sw->vol.l = nominal_volume.l * lvol / 255;
         sw->vol.r = nominal_volume.r * rvol / 255;
+
+        if (hw->pcm_ops->ctl_out) {
+            hw->pcm_ops->ctl_out (hw, VOICE_VOLUME, sw);
+        }
     }
 }
 
 void AUD_set_volume_in (SWVoiceIn *sw, int mute, uint8_t lvol, uint8_t rvol)
 {
     if (sw) {
+        HWVoiceIn *hw = sw->hw;
+
         sw->vol.mute = mute;
         sw->vol.l = nominal_volume.l * lvol / 255;
         sw->vol.r = nominal_volume.r * rvol / 255;
+
+        if (hw->pcm_ops->ctl_in) {
+            hw->pcm_ops->ctl_in (hw, VOICE_VOLUME, sw);
+        }
     }
+}
+#ifdef CONFIG_MIXEMU
+static bool mixemu_disabled = false;
+#else
+static bool mixemu_disabled = true;
+#endif
+
+void disable_mixemu (void)
+{
+    mixemu_disabled = true;
+}
+
+bool get_mixemu_disabled (void)
+{
+    return mixemu_disabled;
 }

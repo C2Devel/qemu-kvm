@@ -51,7 +51,7 @@ static void debugcon_ioport_write(void *opaque, uint32_t addr, uint32_t val)
     printf("debugcon: write addr=0x%04x val=0x%02x\n", addr, val);
 #endif
 
-    qemu_chr_write(s->chr, &ch, 1);
+    qemu_chr_fe_write(s->chr, &ch, 1);
 }
 
 
@@ -66,9 +66,6 @@ static uint32_t debugcon_ioport_read(void *opaque, uint32_t addr)
     return s->readback;
 }
 
-static const QemuChrHandlers chr_handlers = {
-};
-
 static void debugcon_init_core(DebugconState *s)
 {
     if (!s->chr) {
@@ -76,7 +73,7 @@ static void debugcon_init_core(DebugconState *s)
         exit(1);
     }
 
-    qemu_chr_add_handlers(s->chr, &chr_handlers, s);
+    qemu_chr_add_handlers(s->chr, NULL, NULL, NULL, s);
 }
 
 static int debugcon_isa_initfn(ISADevice *dev)
