@@ -264,8 +264,8 @@ struct BlockDriverState {
     BlockDriverState *backing_hd;
     BlockDriverState *file;
 
-    /* number of in-flight copy-on-read requests */
-    unsigned int copy_on_read_in_flight;
+    /* number of in-flight serialising requests */
+    unsigned int serialising_in_flight;
 
     /* async read/write emulation */
 
