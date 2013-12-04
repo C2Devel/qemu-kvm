@@ -1662,7 +1662,11 @@ struct BdrvTrackedRequest {
     int64_t offset;
     unsigned int bytes;
     bool is_write;
+
     bool serialising;
+    int64_t overlap_offset;
+    unsigned int overlap_bytes;
+
     QLIST_ENTRY(BdrvTrackedRequest) list;
     Coroutine *co; /* owner, used for deadlock detection */
     CoQueue wait_queue; /* coroutines blocked on this request */
@@ -1698,6 +1702,8 @@ static void tracked_request_begin(BdrvTrackedRequest *req,
         .is_write       = is_write,
         .co             = qemu_coroutine_self(),
         .serialising    = false,
+        .overlap_offset = offset,
+        .overlap_bytes  = bytes,
     };
 
     qemu_co_queue_init(&req->wait_queue);
@@ -1705,12 +1711,19 @@ static void tracked_request_begin(BdrvTrackedRequest *req,
     QLIST_INSERT_HEAD(&bs->tracked_requests, req, list);
 }
 
-static void mark_request_serialising(BdrvTrackedRequest *req)
+static void mark_request_serialising(BdrvTrackedRequest *req, size_t align)
 {
+    int64_t overlap_offset = req->offset & ~(align - 1);
+    int overlap_bytes = ROUND_UP(req->offset + req->bytes, align)
+                      - overlap_offset;
+
     if (!req->serialising) {
         req->bs->serialising_in_flight++;
         req->serialising = true;
     }
+
+    req->overlap_offset = MIN(req->overlap_offset, overlap_offset);
+    req->overlap_bytes = MAX(req->overlap_bytes, overlap_bytes);
 }
 
 /**
@@ -1734,20 +1747,16 @@ static void round_to_clusters(BlockDriverState *bs,
     }
 }
 
-static void round_bytes_to_clusters(BlockDriverState *bs,
-                                    int64_t offset, unsigned int bytes,
-                                    int64_t *cluster_offset,
-                                    unsigned int *cluster_bytes)
+static int bdrv_get_cluster_size(BlockDriverState *bs)
 {
     BlockDriverInfo bdi;
+    int ret;
 
-    if (bdrv_get_info(bs, &bdi) < 0 || bdi.cluster_size == 0) {
-        *cluster_offset = offset;
-        *cluster_bytes = bytes;
+    ret = bdrv_get_info(bs, &bdi);
+    if (ret < 0 || bdi.cluster_size == 0) {
+        return bs->request_alignment;
     } else {
-        *cluster_offset = QEMU_ALIGN_DOWN(offset, bdi.cluster_size);
-        *cluster_bytes = QEMU_ALIGN_UP(offset - *cluster_offset + bytes,
-                                       bdi.cluster_size);
+        return bdi.cluster_size;
     }
 }
 
@@ -1755,11 +1764,11 @@ static bool tracked_request_overlaps(BdrvTrackedRequest *req,
                                      int64_t offset, unsigned int bytes)
 {
     /*        aaaa   bbbb */
-    if (offset >= req->offset + req->bytes) {
+    if (offset >= req->overlap_offset + req->overlap_bytes) {
         return false;
     }
     /* bbbb   aaaa        */
-    if (req->offset >= offset + bytes) {
+    if (req->overlap_offset >= offset + bytes) {
         return false;
     }
     return true;
@@ -1769,22 +1778,11 @@ static void coroutine_fn wait_serialising_requests(BdrvTrackedRequest *self)
 {
     BlockDriverState *bs = self->bs;
     BdrvTrackedRequest *req;
-    int64_t cluster_offset;
-    unsigned int cluster_bytes;
     bool retry;
 
     if (!bs->serialising_in_flight) {
         return;
     }
-
-    /* If we touch the same cluster it counts as an overlap.  This guarantees
-     * that allocating writes will be serialized and not race with each other
-     * for the same cluster.  For example, in copy-on-read it ensures that the
-     * CoR read and write operations are atomic and guest writes cannot
-     * interleave between them.
-     */
-    round_bytes_to_clusters(bs, self->offset, self->bytes,
-                            &cluster_offset, &cluster_bytes);
 
     do {
         retry = false;
@@ -1792,7 +1790,9 @@ static void coroutine_fn wait_serialising_requests(BdrvTrackedRequest *self)
             if (req == self || (!req->serialising && !self->serialising)) {
                 continue;
             }
-            if (tracked_request_overlaps(req, cluster_offset, cluster_bytes)) {
+            if (tracked_request_overlaps(req, self->overlap_offset,
+                                         self->overlap_bytes))
+            {
                 /* Hitting this means there was a reentrant request, for
                  * example, a block driver issuing nested requests.  This must
                  * never happen since it means deadlock.
@@ -2319,7 +2319,12 @@ static int coroutine_fn bdrv_aligned_preadv(BlockDriverState *bs,
 
     /* Handle Copy on Read and associated serialisation */
     if (flags & BDRV_REQ_COPY_ON_READ) {
-        mark_request_serialising(req);
+        /* If we touch the same cluster it counts as an overlap.  This
+         * guarantees that allocating writes will be serialized and not race
+         * with each other for the same cluster.  For example, in copy-on-read
+         * it ensures that the CoR read and write operations are atomic and
+         * guest writes cannot interleave between them. */
+        mark_request_serialising(req, bdrv_get_cluster_size(bs));
     }
 
     wait_serialising_requests(req);
