@@ -1670,6 +1670,8 @@ struct BdrvTrackedRequest {
     QLIST_ENTRY(BdrvTrackedRequest) list;
     Coroutine *co; /* owner, used for deadlock detection */
     CoQueue wait_queue; /* coroutines blocked on this request */
+
+    struct BdrvTrackedRequest *waiting_for;
 };
 
 /**
@@ -1799,9 +1801,16 @@ static void coroutine_fn wait_serialising_requests(BdrvTrackedRequest *self)
                  */
                 assert(qemu_coroutine_self() != req->co);
 
-                qemu_co_queue_wait(&req->wait_queue);
-                retry = true;
-                break;
+                /* If the request is already (indirectly) waiting for us, or
+                 * will wait for us as soon as it wakes up, then just go on
+                 * (instead of producing a deadlock in the former case). */
+                if (!req->waiting_for) {
+                    self->waiting_for = req;
+                    qemu_co_queue_wait(&req->wait_queue);
+                    self->waiting_for = NULL;
+                    retry = true;
+                    break;
+                }
             }
         }
     } while (retry);
