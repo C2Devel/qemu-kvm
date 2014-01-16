@@ -186,7 +186,7 @@ void bdrv_io_limits_enable(BlockDriverState *bs)
  * @is_write:   is the IO a write
  */
 static void bdrv_io_limits_intercept(BlockDriverState *bs,
-                                     int nb_sectors,
+                                     unsigned int bytes,
                                      bool is_write)
 {
     /* does this io must wait */
@@ -199,9 +199,8 @@ static void bdrv_io_limits_intercept(BlockDriverState *bs,
     }
 
     /* the IO will be executed, do the accounting */
-    throttle_account(&bs->throttle_state,
-                     is_write,
-                     nb_sectors * BDRV_SECTOR_SIZE);
+    throttle_account(&bs->throttle_state, is_write, bytes);
+
 
     /* if the next request must wait -> do nothing */
     if (throttle_schedule_timer(&bs->throttle_state, is_write)) {
@@ -2416,8 +2415,7 @@ static int coroutine_fn bdrv_co_do_preadv(BlockDriverState *bs,
 
     /* throttling disk I/O */
     if (bs->io_limits_enabled) {
-        /* TODO Switch to byte granularity */
-        bdrv_io_limits_intercept(bs, false, bytes >> BDRV_SECTOR_BITS);
+        bdrv_io_limits_intercept(bs, bytes, false);
     }
 
     /* Align read if necessary by padding qiov */
@@ -2674,8 +2672,7 @@ static int coroutine_fn bdrv_co_do_pwritev(BlockDriverState *bs,
 
     /* throttling disk I/O */
     if (bs->io_limits_enabled) {
-        /* TODO Switch to byte granularity */
-        bdrv_io_limits_intercept(bs, true, bytes >> BDRV_SECTOR_BITS);
+        bdrv_io_limits_intercept(bs, bytes, true);
     }
 
     /*
