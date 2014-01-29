@@ -57,8 +57,8 @@
 %define obsoletes_ver   10:0-0
 %define pkgsuffix       -rhev
 # conflict with RHEL packages:
-%define conflicts_suffix %{nil}
-# older RHEL packages didn't have the qemu-kvm/qemu-img provides:
+%define conflicts_suffix -rhel
+# older RHEL packages didn't have the qemu-kvm-rhel/qemu-img-rhel provides:
 %define old_conflict_ver 2:0.12.1.2-2.352.el6
 %else
 # RHEL package:
@@ -85,11 +85,12 @@
 
 %define buildid %{nil}
 
+%define zrelease 3
 %define sublevel 0.12.1.2
-%define pkgrelease 2.402
+%define pkgrelease 2.415
 
 %define rpmversion %{sublevel}
-%define full_release %{pkgrelease}%{?dist}%{?buildid}
+%define full_release %{pkgrelease}%{?dist}.%{zrelease}%{?buildid}
 
 # rhel_rhev_conflicts:
 # reusable macro for the many conflicts/provides/obsoletes settings
@@ -6696,7 +6697,7 @@ Patch4044: kvm-qemu-ga-guest_suspend-improve-error-reporting.patch
 Patch4045: kvm-qemu-ga-execute-hook-to-quiesce-the-guest-on-fsfreez.patch
 # For bz#911569 - [Hitachi 6.5 FEAT] Application-consistent online backup (qemu-ga freeze/thaw hooks for linux guests)
 # For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
-Patch4046: kvm-qemu-ga-sample-fsfreeze-hooks.patch
+Patch4046: kvm-qemu-ga-sample-fsfreeze-hooks2.patch
 # For bz#952873 - [RH Engineering 6.5 FEAT] Synchronize qemu guest agent with upstream
 Patch4047: kvm-qga-channel-posix.c-Explicitly-include-string.h.patch
 # For bz#892996 - qemu-ga leaks fds to exec()ed processes [TestOnly]
@@ -7629,6 +7630,111 @@ Patch4507: kvm-qed-add-migration-blocker-v2.patch
 Patch4508: kvm-qed-remove-incoming-live-migration-blocker.patch
 # For bz#999779 - Add vpc file format support in qemu-kvm
 Patch4509: kvm-vpc-Add-migration-blocker.patch
+Patch4510: kvm-block-Remove-semicolon-in-BDRV_SECTOR_MASK-macro.patch
+Patch4511: kvm-block-implement-is_allocated-for-raw.patch
+Patch4512: kvm-qemu-io-fix-the-alloc-command.patch
+Patch4513: kvm-stream-complete-early-if-end-of-backing-file-is-reac.patch
+Patch4514: kvm-block-cow-Return-real-error-code.patch
+Patch4515: kvm-cow-Use-bdrv_-p-write_sync-for-metadata-writes.patch
+Patch4516: kvm-cow-make-reads-go-at-a-decent-speed.patch
+Patch4517: kvm-cow-make-writes-go-at-a-less-indecent-speed.patch
+Patch4518: kvm-cow-do-not-call-bdrv_co_is_allocated.patch
+Patch4519: kvm-block-keep-bs-total_sectors-up-to-date-even-for-grow.patch
+Patch4520: kvm-block-make-bdrv_co_is_allocated-static.patch
+Patch4521: kvm-block-do-not-use-total_sectors-in-bdrv_co_is_allocat.patch
+Patch4522: kvm-block-remove-bdrv_is_allocated_above-bdrv_co_is_allo.patch
+Patch4523: kvm-block-expect-errors-from-bdrv_co_is_allocated.patch
+Patch4524: kvm-qemu-img-always-probe-the-input-image-for-allocated-.patch
+Patch4525: kvm-block-make-bdrv_has_zero_init-return-false-for-copy-.patch
+Patch4526: kvm-block-introduce-bdrv_get_block_status-API.patch
+Patch4527: kvm-block-define-get_block_status-return-value.patch
+Patch4528: kvm-block-return-get_block_status-data-and-flags-for-for.patch
+Patch4529: kvm-block-use-bdrv_has_zero_init-to-return-BDRV_BLOCK_ZE.patch
+Patch4530: kvm-block-return-BDRV_BLOCK_ZERO-past-end-of-backing-fil.patch
+Patch4531: kvm-qemu-img-add-a-map-subcommand.patch
+Patch4532: kvm-docs-qapi-document-qemu-img-map.patch
+Patch4533: kvm-block-add-default-get_block_status-implementation-fo.patch
+Patch4534: kvm-qemu-img-fix-invalid-JSON.patch
+Patch4535: kvm-target-i386-kvm-save-restore-steal-time-MSR.patch
+# For bz#1002888 - usb hub doesn't work properly (win2012 sees downstream port #1 only)
+Patch4536: kvm-Revert-usb-hub-report-status-changes-only-once.patch
+# For bz#890265 - change the mac of virtio_net device temporary but will effect forever after reboot guest
+Patch4537: kvm-virtio-net-revert-mac-on-reset.patch
+# For bz#890265 - change the mac of virtio_net device temporary but will effect forever after reboot guest
+Patch4538: kvm-virtio-net-fix-up-HMP-NIC-info-string-on-reset.patch
+# For bz#1003771 - warning msg not correct after hotplug invalid usb-host to guest
+Patch4539: kvm-usb-host-remove-message.patch
+# For bz#976706 - [HP BCS 6.5 Bug]Guest OS cannot boot after first reboot when enabling SR-IOV feature
+Patch4540: kvm-qemu-kvm-fix-reset-value-of-MSR_PAT.patch
+# For bz#1007224 - Introduce bs->zero_beyond_eof
+Patch4541: kvm-block-Introduce-bs-zero_beyond_eof.patch
+# For bz#867921 - [RFE] Nicer error report when qemu-kvm can't allocate guest RAM
+Patch4542: kvm-exec-Simplify-allocation-of-guest-RAM.patch
+# For bz#867921 - [RFE] Nicer error report when qemu-kvm can't allocate guest RAM
+Patch4543: kvm-exec-Don-t-abort-when-we-can-t-allocate-guest-memory.patch
+# For bz#999788 - qemu should give a more friendly prompt when didn't specify read-only for VMDK format disk
+Patch4544: kvm-block-better-error-message-for-read-only-format-name.patch
+# For bz#999358 - do live migration with used VMDK format disk should fail with a friendly message prompt
+Patch4545: kvm-vmdk-Add-migration-blocker.patch
+# For bz#1013478 - -device usb-storage,serial=... crashes with SCSI generic drive
+Patch4546: kvm-scsi-Fix-scsi_bus_legacy_add_drive-scsi-generic-with.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4547: kvm-Add-support-for-JSON-pretty-printing.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4548: kvm-qemu-img-add-dirty-flag-status.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4549: kvm-qemu-img-make-info-backing-file-output-correct-and-e2.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4550: kvm-qapi-Add-SnapshotInfo-and-ImageInfo.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4551: kvm-qemu-img-Add-json-output-option-to-the-info-command.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4552: kvm-qemu-img-Add-backing-chain-option-to-info-command.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4553: kvm-block-get_block_status-set-pnum-0-on-error.patch
+# For bz#1010610 - Backport  option "--output=json|human" to qemu-img info command
+Patch4554: kvm-block-get_block_status-avoid-segfault-if-there-is-no.patch
+# For bz#995341 - hot-unplug chardev with pty backend caused qemu Segmentation fault
+Patch4555: kvm-chardev-fix-pty_chr_timer.patch
+# For bz#1009370 - qemu-img refuses to open the vmdk format image its created
+Patch4556: kvm-block-don-t-lose-data-from-last-incomplete-sector.patch
+# For bz#1009370 - qemu-img refuses to open the vmdk format image its created
+Patch4557: kvm-vmdk-fix-cluster-size-check-for-flat-extents.patch
+# For bz#985205 - QEMU core dumped when do hot-unplug virtio serial port during transfer file between host to guest with virtio serial through TCP socket
+Patch4558: kvm-char-move-backends-io-watch-tag-to-CharDriverState.patch
+# For bz#985205 - QEMU core dumped when do hot-unplug virtio serial port during transfer file between host to guest with virtio serial through TCP socket
+Patch4559: kvm-char-use-common-function-to-disable-callbacks-on-cha.patch
+# For bz#985205 - QEMU core dumped when do hot-unplug virtio serial port during transfer file between host to guest with virtio serial through TCP socket
+Patch4560: kvm-char-remove-watch-callback-on-chardev-detach-from-fr.patch
+# For bz#996814 - boot image with gluster native mode cant work with attach another device from local file system
+Patch4561: kvm-os-posix-block-SIGUSR2-in-os_setup_early_signal_hand.patch
+# For bz#1007330 - CVE-2013-4344 qemu: buffer overflow in scsi_target_emulate_report_luns
+Patch4562: kvm-scsi-Allocate-SCSITargetReq-r-buf-dynamically-CVE-20.patch
+# For bz#956929 - /usr/libexec/qemu-kvm was killed by signal 6 (SIGABRT) when SCSI inquiry is sent to unsupported page inside the KVM guest
+Patch4563: kvm-scsi-Fix-data-length-SCSI_SENSE_BUF_SIZE.patch
+# For bz#1016736 - CPU migration data has version_id 12 but version 11 format
+Patch4564: kvm-vmstate-Add-max_version_id-field-to-VMStateDescripti.patch
+# For bz#1016736 - CPU migration data has version_id 12 but version 11 format
+Patch4565: kvm-savevm-Introduce-max_version_id-field-to-SaveStateEn.patch
+# For bz#1016736 - CPU migration data has version_id 12 but version 11 format
+Patch4566: kvm-i386-Set-cpu-section-version_id-to-11.patch
+# For bz#1015633 - qemu-guest-agent: "guest-fsfreeze-freeze" deadlocks if the guest have mounted disk images
+Patch4567: kvm-qemu-ga-execute-fsfreeze-freeze-in-reverse-order-of-.patch
+# For bz#1022821 - live-migration from RHEL6.5 to RHEL6.4.z fails with "error while loading state for instance 0x0 of device 'cpu'"
+Patch4568: kvm-target-i386-don-t-migrate-steal-time-MSR-on-older-ma.patch
+# For bz#1022548 - Read/Randread/Randrw performance regression
+Patch4569: kvm-block-Avoid-unecessary-drv-bdrv_getlength-calls.patch
+# For bz#1025596 - Read/Randread/Randrw performance regression
+Patch4570: kvm-block-Round-up-total_sectors.patch
+# For bz#1015979 - [FJ6.5 Bug]:[REG] live migration with "--copy-storage-{all,inc}" option fails
+# For bz#1029329 - [FJ6.5 Bug]:[REG] live migration with "--copy-storage-{all,inc}" option fails
+Patch4571: kvm-monitor-monitor_puts-bail-out-when-mon-NULL.patch
+# For bz#1029327 - 'qemu-img info' take too much time with 'cluster_size=512,preallocation=metadata' in the first time
+Patch4572: kvm-qcow2-Flush-image-after-creation.patch
+# For bz#1029331 - fix vmdk support to ESX images
+Patch4573: kvm-vmdk-Fix-vmdk_parse_extents.patch
+# For bz#1029331 - fix vmdk support to ESX images
+Patch4574: kvm-vmdk-fix-VMFS-extent-parsing.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -11270,6 +11376,71 @@ ApplyOptionalPatch()
 %patch4507 -p1
 %patch4508 -p1
 %patch4509 -p1
+%patch4510 -p1
+%patch4511 -p1
+%patch4512 -p1
+%patch4513 -p1
+%patch4514 -p1
+%patch4515 -p1
+%patch4516 -p1
+%patch4517 -p1
+%patch4518 -p1
+%patch4519 -p1
+%patch4520 -p1
+%patch4521 -p1
+%patch4522 -p1
+%patch4523 -p1
+%patch4524 -p1
+%patch4525 -p1
+%patch4526 -p1
+%patch4527 -p1
+%patch4528 -p1
+%patch4529 -p1
+%patch4530 -p1
+%patch4531 -p1
+%patch4532 -p1
+%patch4533 -p1
+%patch4534 -p1
+%patch4535 -p1
+%patch4536 -p1
+%patch4537 -p1
+%patch4538 -p1
+%patch4539 -p1
+%patch4540 -p1
+%patch4541 -p1
+%patch4542 -p1
+%patch4543 -p1
+%patch4544 -p1
+%patch4545 -p1
+%patch4546 -p1
+%patch4547 -p1
+%patch4548 -p1
+%patch4549 -p1
+%patch4550 -p1
+%patch4551 -p1
+%patch4552 -p1
+%patch4553 -p1
+%patch4554 -p1
+%patch4555 -p1
+%patch4556 -p1
+%patch4557 -p1
+%patch4558 -p1
+%patch4559 -p1
+%patch4560 -p1
+%patch4561 -p1
+%patch4562 -p1
+%patch4563 -p1
+%patch4564 -p1
+%patch4565 -p1
+%patch4566 -p1
+%patch4567 -p1
+%patch4568 -p1
+%patch4569 -p1
+%patch4570 -p1
+%patch4571 -p1
+%patch4572 -p1
+%patch4573 -p1
+%patch4574 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -11417,6 +11588,10 @@ mkdir -p $RPM_BUILD_ROOT%{_datadir}/%{confname}
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/udev/rules.d
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/modprobe.d
 
+%if 0%{?rhev}
+mkdir -p $RPM_BUILD_ROOT%{_libdir}/qemu
+%endif
+
 install -m 0755 %{SOURCE2} $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/modules/kvm.modules
 install -m 0755 ../kvm/kvm_stat $RPM_BUILD_ROOT%{_bindir}/
 install -m 0644 %{SOURCE3} $RPM_BUILD_ROOT%{_sysconfdir}/udev/rules.d
@@ -11448,6 +11623,9 @@ install -D -p -m 0755 -v %{qga_src_stem} %{qga_libexec_stem}
 # install fsfreeze script samples
 mkdir -p -v                                         %{qga_samples_stem}.d/
 install -D -p -m 0644 -v %{qga_src_stem}.d/*.sample %{qga_samples_stem}.d/
+
+# install dedicated log directory
+mkdir -p -v $RPM_BUILD_ROOT%{_localstatedir}/log/qemu-ga/
 %endif # guest_agent
 
 rm -rf ${RPM_BUILD_ROOT}%{_bindir}/qemu-nbd
@@ -11569,6 +11747,9 @@ fi
 %config(noreplace) %{_sysconfdir}/sysconfig/ksm
 %{_initddir}/ksmtuned
 %{_sbindir}/ksmtuned
+%if 0%{?rhev}
+%{_libdir}/qemu
+%endif
 %config(noreplace) %{_sysconfdir}/ksmtuned.conf
 %{_datadir}/%{confname}/bios.bin
 %{_datadir}/%{confname}/sgabios.bin
@@ -11601,6 +11782,7 @@ fi
 %{_libexecdir}/qemu-ga
 %{_datadir}/%{confname}/qemu-ga
 %config(noreplace) %{_sysconfdir}/sysconfig/qemu-ga
+%dir %{_localstatedir}/log/qemu-ga
 %endif # guest_agent
 
 %if %{with qemu_kvm}
@@ -11616,6 +11798,166 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Tue Nov 12 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.3
+- kvm-monitor-monitor_puts-bail-out-when-mon-NULL.patch [bz#1015979 bz#1029329]
+- kvm-qcow2-Flush-image-after-creation.patch [bz#1029327]
+- kvm-vmdk-Fix-vmdk_parse_extents.patch [bz#1029331]
+- kvm-vmdk-fix-VMFS-extent-parsing.patch [bz#1029331]
+- Resolves: bz#1015979
+  ([FJ6.5 Bug]:[REG] live migration with "--copy-storage-{all,inc}" option fails)
+- Resolves: bz#1029327
+  ('qemu-img info' take too much time with 'cluster_size=512,preallocation=metadata' in the first time)
+- Resolves: bz#1029329
+  ([FJ6.5 Bug]:[REG] live migration with "--copy-storage-{all,inc}" option fails)
+- Resolves: bz#1029331
+  (fix vmdk support to ESX images)
+
+* Mon Nov 11 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.2
+- kvm-block-Round-up-total_sectors.patch [bz#1025596]
+- Resolves: bz#1025596
+  (Read/Randread/Randrw performance regression)
+
+* Thu Nov 07 2013 Michal Novotny <minovotn@redhat.com> - 0.12.1.2-2.415.el6_5.1
+- kvm-block-Avoid-unecessary-drv-bdrv_getlength-calls.patch [bz#1022548]
+- Resolves: bz#1022548
+  (Read/Randread/Randrw performance regression)
+
+* Fri Oct 25 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.415.el6
+- kvm-target-i386-don-t-migrate-steal-time-MSR-on-older-ma.patch [bz#1022821]
+- Resolves: bz#1022821
+  (live-migration from RHEL6.5 to RHEL6.4.z fails with "error while loading state for instance 0x0 of device 'cpu'")
+
+* Wed Oct 16 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.414.el6
+- kvm-vmstate-Add-max_version_id-field-to-VMStateDescripti.patch [bz#1016736]
+- kvm-savevm-Introduce-max_version_id-field-to-SaveStateEn.patch [bz#1016736]
+- kvm-i386-Set-cpu-section-version_id-to-11.patch [bz#1016736]
+- kvm-qemu-ga-execute-fsfreeze-freeze-in-reverse-order-of-.patch [bz#1015633]
+- Resolves: bz#1015633
+  (qemu-guest-agent: "guest-fsfreeze-freeze" deadlocks if the guest have mounted disk images)
+- Resolves: bz#1016736
+  (CPU migration data has version_id 12 but version 11 format)
+
+* Tue Oct 15 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.413.el6
+- kvm-scsi-Allocate-SCSITargetReq-r-buf-dynamically-CVE-20.patch [bz#1007330]
+- kvm-scsi-Fix-data-length-SCSI_SENSE_BUF_SIZE.patch [bz#956929]
+- Resolves: bz#1007330
+  (CVE-2013-4344 qemu: buffer overflow in scsi_target_emulate_report_luns)
+- Resolves: bz#956929
+  (/usr/libexec/qemu-kvm was killed by signal 6 (SIGABRT) when SCSI inquiry is sent to unsupported page inside the KVM guest)
+
+* Wed Oct 09 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.412.el6
+- kvm-char-move-backends-io-watch-tag-to-CharDriverState.patch [bz#985205]
+- kvm-char-use-common-function-to-disable-callbacks-on-cha.patch [bz#985205]
+- kvm-char-remove-watch-callback-on-chardev-detach-from-fr.patch [bz#985205]
+- kvm-os-posix-block-SIGUSR2-in-os_setup_early_signal_hand.patch [bz#996814]
+- Resolves: bz#985205
+  (QEMU core dumped when do hot-unplug virtio serial port during transfer file between host to guest with virtio serial through TCP socket)
+- Resolves: bz#996814
+  (boot image with gluster native mode cant work with attach another device from local file system)
+
+* Tue Oct 08 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.411.el6
+- kvm-block-don-t-lose-data-from-last-incomplete-sector.patch [bz#1009370]
+- kvm-vmdk-fix-cluster-size-check-for-flat-extents.patch [bz#1009370]
+- Resolves: bz#1009370
+  (qemu-img refuses to open the vmdk format image its created)
+
+* Wed Oct 02 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.410.el6
+- kvm-chardev-fix-pty_chr_timer.patch [bz#995341]
+- Resolves: bz#995341
+  (hot-unplug chardev with pty backend caused qemu Segmentation fault)
+
+* Wed Oct 02 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.409.el6
+- kvm-exec-Simplify-allocation-of-guest-RAM.patch [bz#867921]
+- kvm-exec-Don-t-abort-when-we-can-t-allocate-guest-memory.patch [bz#867921]
+- kvm-block-better-error-message-for-read-only-format-name.patch [bz#999788]
+- kvm-vmdk-Add-migration-blocker.patch [bz#999358]
+- kvm-scsi-Fix-scsi_bus_legacy_add_drive-scsi-generic-with.patch [bz#1013478]
+- kvm-Add-support-for-JSON-pretty-printing.patch [bz#1010610]
+- kvm-qemu-img-add-dirty-flag-status.patch [bz#1010610]
+- kvm-qemu-img-make-info-backing-file-output-correct-and-e2.patch [bz#1010610]
+- kvm-qapi-Add-SnapshotInfo-and-ImageInfo.patch [bz#1010610]
+- kvm-qemu-img-Add-json-output-option-to-the-info-command.patch [bz#1010610]
+- kvm-qemu-img-Add-backing-chain-option-to-info-command.patch [bz#1010610]
+- kvm-block-get_block_status-set-pnum-0-on-error.patch [bz#1010610]
+- kvm-block-get_block_status-avoid-segfault-if-there-is-no.patch [bz#1010610]
+- Resolves: bz#1010610
+  (Backport  option "--output=json|human" to qemu-img info command)
+- Resolves: bz#1013478
+  (-device usb-storage,serial=... crashes with SCSI generic drive)
+- Resolves: bz#867921
+  ([RFE] Nicer error report when qemu-kvm can't allocate guest RAM)
+- Resolves: bz#999358
+  (do live migration with used VMDK format disk should fail with a friendly message prompt)
+- Resolves: bz#999788
+  (qemu should give a more friendly prompt when didn't specify read-only for VMDK format disk)
+
+* Mon Sep 30 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.408.el6
+- Fix Qemu guest agent - move logfiles to new directory for easier SELinux tagging [bz#1009431]
+- kvm-block-Introduce-bs-zero_beyond_eof.patch [bz#1007224]
+- Resolves: bz#1007224
+  (Introduce bs->zero_beyond_eof)
+- Resolves: bz#1009431
+  (move qga logfiles to new /var/log/qemu-ga/ directory)
+
+* Thu Sep 26 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.407.el6
+- kvm-usb-host-remove-message.patch [bz#1003771]
+- Qemu guest agent - move logfiles to new directory for easier SELinux tagging [bz#1009431]
+- kvm-qemu-kvm-fix-reset-value-of-MSR_PAT.patch [bz#976706]
+- Resolves: bz#1003771
+  (warning msg not correct after hotplug invalid usb-host to guest)
+- Resolves: bz#1009431
+  (move qga logfiles to new /var/log/qemu-ga/ directory)
+- Resolves: bz#976706
+  ([HP BCS 6.5 Bug]Guest OS cannot boot after first reboot when enabling SR-IOV feature)
+
+* Wed Sep 25 2013 Miroslav Rezanina <mrezanin@redhat.com> - qemu-kvm-0.12.1.2-2.406.el6
+- Reverted spurious fix for BZ 981623 [bz#1010930]
+- Resolves: bz#1010930
+  (Qemu-kvm-rhev build verifytest failed (rpm -V))
+
+* Tue Sep 24 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.405.el6
+- kvm-Revert-usb-hub-report-status-changes-only-once.patch [bz#1002888]
+- kvm-virtio-net-revert-mac-on-reset.patch [bz#890265]
+- kvm-virtio-net-fix-up-HMP-NIC-info-string-on-reset.patch [bz#890265]
+- Resolves: bz#1002888
+  (usb hub doesn't work properly (win2012 sees downstream port #1 only))
+- Resolves: bz#890265
+  (change the mac of virtio_net device temporary but will effect forever after reboot guest)
+
+* Tue Sep 17 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.404.el6
+- kvm-target-i386-kvm-save-restore-steal-time-MSR.patch [bz#903123]
+- Resolves: bz#903123
+  (The value of steal time in "top" command always is "0.0% st" after guest migration)
+
+* Tue Sep 17 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.403.el6
+- kvm-block-Remove-semicolon-in-BDRV_SECTOR_MASK-macro.patch [bz#914802]
+- kvm-block-implement-is_allocated-for-raw.patch [bz#914802]
+- kvm-qemu-io-fix-the-alloc-command.patch [bz#914802]
+- kvm-stream-complete-early-if-end-of-backing-file-is-reac.patch [bz#914802]
+- kvm-block-cow-Return-real-error-code.patch [bz#914802]
+- kvm-cow-Use-bdrv_-p-write_sync-for-metadata-writes.patch [bz#914802]
+- kvm-cow-make-reads-go-at-a-decent-speed.patch [bz#914802]
+- kvm-cow-make-writes-go-at-a-less-indecent-speed.patch [bz#914802]
+- kvm-cow-do-not-call-bdrv_co_is_allocated.patch [bz#914802]
+- kvm-block-keep-bs-total_sectors-up-to-date-even-for-grow.patch [bz#914802]
+- kvm-block-make-bdrv_co_is_allocated-static.patch [bz#914802]
+- kvm-block-do-not-use-total_sectors-in-bdrv_co_is_allocat.patch [bz#914802]
+- kvm-block-remove-bdrv_is_allocated_above-bdrv_co_is_allo.patch [bz#914802]
+- kvm-block-expect-errors-from-bdrv_co_is_allocated.patch [bz#914802]
+- kvm-qemu-img-always-probe-the-input-image-for-allocated-.patch [bz#914802]
+- kvm-block-make-bdrv_has_zero_init-return-false-for-copy-.patch [bz#914802]
+- kvm-block-introduce-bdrv_get_block_status-API.patch [bz#914802]
+- kvm-block-define-get_block_status-return-value.patch [bz#914802]
+- kvm-block-return-get_block_status-data-and-flags-for-for.patch [bz#914802]
+- kvm-block-use-bdrv_has_zero_init-to-return-BDRV_BLOCK_ZE.patch [bz#914802]
+- kvm-block-return-BDRV_BLOCK_ZERO-past-end-of-backing-fil.patch [bz#914802]
+- kvm-qemu-img-add-a-map-subcommand.patch [bz#914802]
+- kvm-docs-qapi-document-qemu-img-map.patch [bz#914802]
+- kvm-block-add-default-get_block_status-implementation-fo.patch [bz#914802]
+- kvm-qemu-img-fix-invalid-JSON.patch [bz#914802]
+- Resolves: bz#914802
+  (Support backup vendors in qemu to access qcow disk readonly (qemu-img metadata dump))
+
 * Thu Sep 12 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.402.el6
 - Move VPC from r/w whitelist to r/o whitelist [bz#999779]
 - kvm-migrate-add-migration-blockers.patch [bz#999779]

@@ -33,7 +33,6 @@ typedef struct USBHubPort {
     USBPort port;
     uint16_t wPortStatus;
     uint16_t wPortChange;
-    uint16_t wPortChange_reported;
 } USBHubPort;
 
 typedef struct USBHubState {
@@ -417,11 +416,8 @@ static int usb_hub_handle_data(USBDevice *dev, USBPacket *p)
             status = 0;
             for(i = 0; i < NUM_PORTS; i++) {
                 port = &s->ports[i];
-                if (port->wPortChange &&
-                    port->wPortChange_reported != port->wPortChange) {
+                if (port->wPortChange)
                     status |= (1 << (i + 1));
-                }
-                port->wPortChange_reported = port->wPortChange;
             }
             if (status != 0) {
                 for(i = 0; i < n; i++) {

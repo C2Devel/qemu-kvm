@@ -15,12 +15,14 @@
 #define KVM_FEATURE_CLOCKSOURCE		0
 #define KVM_FEATURE_NOP_IO_DELAY	1
 #define KVM_FEATURE_MMU_OP		2
+#define KVM_FEATURE_STEAL_TIME         5
 #define KVM_FEATURE_PV_EOI		6
 
 #define MSR_KVM_WALL_CLOCK  0x11
 #define MSR_KVM_SYSTEM_TIME 0x12
 
 /* Custom MSRs falls in the range 0x4b564d00-0x4b564dff */
+#define MSR_KVM_STEAL_TIME     0x4b564d03
 #define MSR_KVM_PV_EOI_EN      0x4b564d04
 
 #define KVM_MAX_MMU_OP_BATCH           32

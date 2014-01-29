@@ -265,6 +265,15 @@ int register_savevm_live(DeviceState *dev,
                          LoadStateHandler *load_state,
                          void *opaque);
 
+int register_savevm_max_version(DeviceState *dev,
+                                const char *idstr,
+                                int instance_id,
+                                int version_id,
+                                int max_version_id,
+                                SaveStateHandler *save_state,
+                                LoadStateHandler *load_state,
+                                void *opaque);
+
 void unregister_savevm(DeviceState *dev, const char *idstr, void *opaque);
 void register_device_unmigratable(DeviceState *dev, const char *idstr,
                                                                 void *opaque);
@@ -326,6 +335,12 @@ struct VMStateDescription {
     const char *name;
     int unmigratable;
     int version_id;
+    /* Maximum version_id we accept. Note that the existing code
+     * won't skip fields on vmstate_save_state() based on version_id,
+     * so no fields with field->version_id > vmsd->version_id are
+     * allowed.
+     */
+    int max_version_id;
     int minimum_version_id;
     int minimum_version_id_old;
     LoadStateHandler *load_state_old;

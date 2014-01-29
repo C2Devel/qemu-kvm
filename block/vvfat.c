@@ -2768,16 +2768,17 @@ static coroutine_fn int vvfat_co_write(BlockDriverState *bs, int64_t sector_num,
     return ret;
 }
 
-static int coroutine_fn vvfat_co_is_allocated(BlockDriverState *bs,
+static int64_t coroutine_fn vvfat_co_get_block_status(BlockDriverState *bs,
 	int64_t sector_num, int nb_sectors, int* n)
 {
     BDRVVVFATState* s = bs->opaque;
     *n = s->sector_count - sector_num;
-    if (*n > nb_sectors)
-	*n = nb_sectors;
-    else if (*n < 0)
-	return 0;
-    return 1;
+    if (*n > nb_sectors) {
+        *n = nb_sectors;
+    } else if (*n < 0) {
+        return 0;
+    }
+    return BDRV_BLOCK_DATA;
 }
 
 static int write_target_commit(BlockDriverState *bs, int64_t sector_num,
@@ -2865,7 +2866,7 @@ static BlockDriver bdrv_vvfat = {
     .bdrv_read          = vvfat_co_read,
     .bdrv_write         = vvfat_co_write,
     .bdrv_close		= vvfat_close,
-    .bdrv_co_is_allocated = vvfat_co_is_allocated,
+    .bdrv_co_get_block_status = vvfat_co_get_block_status,
     .protocol_name	= "fat",
 };
 

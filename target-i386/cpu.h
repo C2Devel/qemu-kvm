@@ -722,6 +722,7 @@ typedef struct CPUX86State {
     uint64_t system_time_msr;
     uint64_t wall_clock_msr;
     uint64_t pv_eoi_en_msr;
+    uint64_t steal_time_msr;
 
     uint64_t hyperv_guest_os_id;
     uint64_t hyperv_hypercall;
@@ -970,7 +971,8 @@ uint64_t cpu_get_tsc(CPUX86State *env);
 #define cpu_list_id x86_cpu_list
 #define cpudef_setup	x86_cpudef_setup
 
-#define CPU_SAVE_VERSION 12
+#define CPU_SAVE_VERSION     11
+#define CPU_SAVE_MAX_VERSION 12
 
 /* MMU modes definitions */
 #define MMU_MODE0_SUFFIX _kernel

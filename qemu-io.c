@@ -1278,7 +1278,7 @@ static const cmdinfo_t info_cmd = {
 
 static int alloc_f(int argc, char **argv)
 {
-    int64_t offset;
+    int64_t offset, sector_num;
     int nb_sectors, remaining;
     char s1[64];
     int num, sum_alloc;
@@ -1299,11 +1299,21 @@ static int alloc_f(int argc, char **argv)
 
     remaining = nb_sectors;
     sum_alloc = 0;
+    sector_num = offset >> 9;
     while (remaining) {
-        ret = bdrv_is_allocated(bs, offset >> 9, nb_sectors, &num);
+        ret = bdrv_is_allocated(bs, sector_num, remaining, &num);
+        if (ret < 0) {
+            printf("is_allocated failed: %s\n", strerror(-ret));
+            return 0;
+        }
+        sector_num += num;
         remaining -= num;
         if (ret) {
             sum_alloc += num;
+        }
+        if (num == 0) {
+            nb_sectors -= remaining;
+            remaining = 0;
         }
     }
 

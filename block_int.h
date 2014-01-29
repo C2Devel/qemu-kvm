@@ -171,7 +171,7 @@ struct BlockDriver {
         int64_t sector_num, int nb_sectors);
     int coroutine_fn (*bdrv_co_discard)(BlockDriverState *bs,
         int64_t sector_num, int nb_sectors);
-    int coroutine_fn (*bdrv_co_is_allocated)(BlockDriverState *bs,
+    int64_t coroutine_fn (*bdrv_co_get_block_status)(BlockDriverState *bs,
         int64_t sector_num, int nb_sectors, int *pnum);
 
     int (*bdrv_aio_multiwrite)(BlockDriverState *bs, BlockRequest *reqs,
@@ -182,8 +182,11 @@ struct BlockDriver {
 
     const char *protocol_name;
     int (*bdrv_truncate)(BlockDriverState *bs, int64_t offset);
+
     int64_t (*bdrv_getlength)(BlockDriverState *bs);
+    bool has_variable_length;
     int64_t (*bdrv_get_allocated_file_size)(BlockDriverState *bs);
+
     int (*bdrv_write_compressed)(BlockDriverState *bs, int64_t sector_num,
                                  const uint8_t *buf, int nb_sectors);
 
@@ -296,6 +299,9 @@ struct BlockDriverState {
 
     /* Whether the disk can expand beyond total_sectors */
     int growable;
+
+    /* Whether produces zeros when read beyond eof */
+    bool zero_beyond_eof;
 
     /* the memory alignment required for the buffers handled by this driver */
     int buffer_alignment;

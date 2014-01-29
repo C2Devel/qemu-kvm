@@ -36,6 +36,7 @@ static int has_msr_tsc_deadline;
 static int lm_capable_kernel;
 
 static bool has_msr_pv_eoi_en;
+static bool has_msr_kvm_steal_time;
 
 int kvm_set_tss_addr(kvm_context_t kvm, unsigned long addr)
 {
@@ -883,6 +884,9 @@ static int get_msr_entry(struct kvm_msr_entry *entry, CPUState *env)
         case MSR_KVM_WALL_CLOCK:
             env->wall_clock_msr = entry->data;
             break;
+        case MSR_KVM_STEAL_TIME:
+            env->steal_time_msr = entry->data;
+            break;
         case HV_X64_MSR_GUEST_OS_ID:
             env->hyperv_guest_os_id = entry->data;
             break;
@@ -1110,6 +1114,8 @@ void kvm_arch_load_regs(CPUState *env)
 #endif
     set_msr_entry(&msrs[n++], MSR_KVM_SYSTEM_TIME,  env->system_time_msr);
     set_msr_entry(&msrs[n++], MSR_KVM_WALL_CLOCK,  env->wall_clock_msr);
+    if (has_msr_kvm_steal_time)
+        set_msr_entry(&msrs[n++], MSR_KVM_STEAL_TIME,  env->steal_time_msr);
     if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
         set_msr_entry(&msrs[n++], HV_X64_MSR_GUEST_OS_ID, env->hyperv_guest_os_id);
         set_msr_entry(&msrs[n++], HV_X64_MSR_HYPERCALL, env->hyperv_hypercall);
@@ -1354,6 +1360,8 @@ void kvm_arch_save_regs(CPUState *env)
 #endif
     msrs[n++].index = MSR_KVM_SYSTEM_TIME;
     msrs[n++].index = MSR_KVM_WALL_CLOCK;
+    if (has_msr_kvm_steal_time)
+        msrs[n++].index = MSR_KVM_STEAL_TIME;
     if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
         msrs[n++].index = HV_X64_MSR_GUEST_OS_ID;
         msrs[n++].index = HV_X64_MSR_HYPERCALL;
@@ -1488,6 +1496,7 @@ int kvm_arch_init_vcpu(CPUState *cenv)
     copy = *cenv;
 
     has_msr_pv_eoi_en = pv_ent->eax & (1 << KVM_FEATURE_PV_EOI);
+    has_msr_kvm_steal_time = pv_ent->eax & (1 << KVM_FEATURE_STEAL_TIME);
 
     copy.regs[R_EAX] = 0;
     qemu_kvm_cpuid_on_env(&copy);
@@ -1644,6 +1653,10 @@ static int kvm_reset_msrs(CPUState *env)
     for (n = 0; n < kvm_msr_list->nmsrs; n++) {
         if (kvm_msr_list->indices[n] == MSR_IA32_TSC)
             continue;
+        if (kvm_msr_list->indices[n] == MSR_PAT) {
+            set_msr_entry(&msrs[n_msrs++], kvm_msr_list->indices[n], 0x0007040600070406ULL);
+            continue;
+        }
         set_msr_entry(&msrs[n_msrs++], kvm_msr_list->indices[n], 0);
     }
 

@@ -48,6 +48,7 @@
 #if defined(CONFIG_USER_ONLY)
 #include <qemu.h>
 #endif
+#include "trace.h"
 
 //#define DEBUG_TB_INVALIDATE
 //#define DEBUG_FLUSH
@@ -600,8 +601,8 @@ void cpu_exec_init(CPUState *env)
 #endif
 #if defined(CPU_SAVE_VERSION) && !defined(CONFIG_USER_ONLY)
     vmstate_register(NULL, cpu_index, &vmstate_cpu_common, env);
-    register_savevm(NULL, "cpu", cpu_index, CPU_SAVE_VERSION,
-                    cpu_save, cpu_load, env);
+    register_savevm_max_version(NULL, "cpu", cpu_index, CPU_SAVE_VERSION,
+                                CPU_SAVE_MAX_VERSION, cpu_save, cpu_load, env);
 #endif
 }
 
@@ -2764,15 +2765,21 @@ ram_addr_t qemu_ram_alloc_from_ptr(DeviceState *dev, const char *name,
                                    PROT_EXEC|PROT_READ|PROT_WRITE,
                                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 #else
+            size_t align = getpagesize();
+            void *ptr;
+            int ret;
 #ifdef PREFERRED_RAM_ALIGN
-	    if (size >= PREFERRED_RAM_ALIGN)
-                if (running_on_valgrind)
-		    new_block->host = qemu_vmalloc(size);
-                else
-		    new_block->host = qemu_memalign(PREFERRED_RAM_ALIGN, size);
-	    else
-#endif 
-		    new_block->host = qemu_vmalloc(size);
+            if (size >= PREFERRED_RAM_ALIGN && !running_on_valgrind)
+                align = PREFERRED_RAM_ALIGN;
+#endif
+            ret = posix_memalign(&ptr, align, size);
+            trace_qemu_memalign(align, size, ptr);
+            if (ret) {
+                fprintf(stderr, "Cannot set up guest memory '%s': %s\n",
+                        new_block->idstr, strerror(ret));
+                exit(1);
+            }
+            new_block->host = ptr;
 #endif
 #ifdef MADV_MERGEABLE
             if (!disable_KSM)

@@ -1787,7 +1787,6 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
     FILE *f = NULL;
     DIR *dir = NULL;
     int ret = 0;
-    const char *fs_type[] = {"unknown", "proc", "dev", "sys"};
     char devpath[PATH_MAX];
 
     /* only check the host once */
@@ -1834,9 +1833,6 @@ static int usb_host_scan(void *opaque, USBScanFunc *func)
         /* the module setting (used later for opening devices) */
         usb_host_device_path = qemu_mallocz(strlen(devpath)+1);
         strcpy(usb_host_device_path, devpath);
-        if (mon)
-            monitor_printf(mon, "husb: using %s file-system with %s\n",
-                           fs_type[usb_fs_type], usb_host_device_path);
     }
 
     switch (usb_fs_type) {

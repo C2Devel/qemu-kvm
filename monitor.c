@@ -280,10 +280,14 @@ void monitor_flush(Monitor *mon)
     size_t len;
     const char *buf;
 
+    if (!mon) {
+        return;
+    }
+
     buf = qstring_get_str(mon->outbuf);
     len = qstring_get_length(mon->outbuf);
 
-    if (mon && len && !mon->mux_out) {
+    if (len && !mon->mux_out) {
         rc = qemu_chr_fe_write(mon->chr, (const uint8_t *) buf, len);
         if (rc == len) {
             /* all flushed */

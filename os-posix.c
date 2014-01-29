@@ -35,10 +35,20 @@
 void os_setup_early_signal_handling(void)
 {
     struct sigaction act;
+    sigset_t mask;
+
     sigfillset(&act.sa_mask);
     act.sa_flags = 0;
     act.sa_handler = SIG_IGN;
     sigaction(SIGPIPE, &act, NULL);
+
+    /* posix-aio-compat.c uses SIGUSR2 with signalfd(2) and must therefore
+     * block the signal.  Do that right away so all threads inherit the blocked
+     * signal mask.
+     */
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGUSR2);
+    sigprocmask(SIG_BLOCK, &mask, NULL);
 }
 
 int os_mlock(void)

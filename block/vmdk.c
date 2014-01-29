@@ -26,6 +26,7 @@
 #include "qemu-common.h"
 #include "block_int.h"
 #include "module.h"
+#include "migration.h"
 #include <zlib.h>
 #include "qerror.h"
 
@@ -105,7 +106,7 @@ typedef struct VmdkExtent {
     uint32_t l2_cache_offsets[L2_CACHE_SIZE];
     uint32_t l2_cache_counts[L2_CACHE_SIZE];
 
-    unsigned int cluster_sectors;
+    int64_t cluster_sectors;
 } VmdkExtent;
 
 typedef struct BDRVVmdkState {
@@ -116,6 +117,7 @@ typedef struct BDRVVmdkState {
     int num_extents;
     /* Extent array with num_extents entries, ascend ordered by address */
     VmdkExtent *extents;
+    Error *migration_blocker;
 } BDRVVmdkState;
 
 typedef struct VmdkMetaData {
@@ -422,7 +424,7 @@ static int vmdk_add_extent(BlockDriverState *bs,
     extent->l1_size = l1_size;
     extent->l1_entry_sectors = l2_size * cluster_sectors;
     extent->l2_size = l2_size;
-    extent->cluster_sectors = cluster_sectors;
+    extent->cluster_sectors = flat ? sectors : cluster_sectors;
 
     if (s->num_extents > 1) {
         extent->end_sector = (*(extent - 1)).end_sector + extent->sectors;
@@ -711,6 +713,8 @@ static int vmdk_parse_extents(const char *desc, BlockDriverState *bs,
             if (ret != 5 || flat_offset < 0) {
                 return -EINVAL;
             }
+        } else if (!strcmp(type, "VMFS")) {
+            flat_offset = 0;
         } else if (ret != 4) {
             return -EINVAL;
         }
@@ -735,7 +739,7 @@ static int vmdk_parse_extents(const char *desc, BlockDriverState *bs,
             VmdkExtent *extent;
 
             ret = vmdk_add_extent(bs, extent_file, true, sectors,
-                            0, 0, 0, 0, sectors, &extent);
+                            0, 0, 0, 0, 0, &extent);
             if (ret < 0) {
                 return ret;
             }
@@ -754,10 +758,13 @@ static int vmdk_parse_extents(const char *desc, BlockDriverState *bs,
         }
 next_line:
         /* move to next line */
-        while (*p && *p != '\n') {
+        while (*p) {
+            if (*p == '\n') {
+                p++;
+                break;
+            }
             p++;
         }
-        p++;
     }
     return 0;
 }
@@ -824,7 +831,14 @@ static int vmdk_open(BlockDriverState *bs, int flags)
     }
     s->parent_cid = vmdk_read_cid(bs, 1);
     qemu_co_mutex_init(&s->lock);
-    return ret;
+
+    /* Disable migration when VMDK images are used */
+    error_set(&s->migration_blocker,
+              QERR_BLOCK_FORMAT_FEATURE_NOT_SUPPORTED,
+              "vmdk", bs->device_name, "live migration");
+    migrate_add_blocker(s->migration_blocker);
+
+    return 0;
 
 fail:
     vmdk_free_extents(bs);
@@ -1033,7 +1047,7 @@ static VmdkExtent *find_extent(BDRVVmdkState *s,
     return NULL;
 }
 
-static int coroutine_fn vmdk_co_is_allocated(BlockDriverState *bs,
+static int64_t coroutine_fn vmdk_co_get_block_status(BlockDriverState *bs,
         int64_t sector_num, int nb_sectors, int *pnum)
 {
     BDRVVmdkState *s = bs->opaque;
@@ -1050,7 +1064,24 @@ static int coroutine_fn vmdk_co_is_allocated(BlockDriverState *bs,
                             sector_num * 512, 0, &offset);
     qemu_co_mutex_unlock(&s->lock);
 
-    ret = (ret == VMDK_OK || ret == VMDK_ZEROED);
+    switch (ret) {
+    case VMDK_ERROR:
+        ret = -EIO;
+        break;
+    case VMDK_UNALLOC:
+        ret = 0;
+        break;
+    case VMDK_ZEROED:
+        ret = BDRV_BLOCK_ZERO;
+        break;
+    case VMDK_OK:
+        ret = BDRV_BLOCK_DATA;
+        if (extent->file == bs->file) {
+            ret |= BDRV_BLOCK_OFFSET_VALID | offset;
+        }
+
+        break;
+    }
 
     index_in_cluster = sector_num % extent->cluster_sectors;
     n = extent->cluster_sectors - index_in_cluster;
@@ -1718,7 +1749,12 @@ exit:
 
 static void vmdk_close(BlockDriverState *bs)
 {
+    BDRVVmdkState *s = bs->opaque;
+
     vmdk_free_extents(bs);
+
+    migrate_del_blocker(s->migration_blocker);
+    error_free(s->migration_blocker);
 }
 
 static coroutine_fn int vmdk_co_flush(BlockDriverState *bs)
@@ -1809,7 +1845,7 @@ static BlockDriver bdrv_vmdk = {
     .bdrv_close     = vmdk_close,
     .bdrv_create    = vmdk_create,
     .bdrv_co_flush  = vmdk_co_flush,
-    .bdrv_co_is_allocated   = vmdk_co_is_allocated,
+    .bdrv_co_get_block_status     = vmdk_co_get_block_status,
     .bdrv_get_allocated_file_size  = vmdk_get_allocated_file_size,
 
     .create_options = vmdk_create_options,

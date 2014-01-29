@@ -262,6 +262,15 @@ void path_combine(char *dest, int dest_size,
     }
 }
 
+void bdrv_get_full_backing_filename(BlockDriverState *bs, char *dest, size_t sz)
+{
+    if (bs->backing_file[0] == '\0' || path_has_protocol(bs->backing_file)) {
+        pstrcpy(dest, sz, bs->backing_file);
+    } else {
+        path_combine(dest, sz, bs->filename, bs->backing_file);
+    }
+}
+
 void bdrv_register(BlockDriver *bdrv)
 {
     /* Block drivers without coroutine functions need emulation */
@@ -523,7 +532,7 @@ static int refresh_total_sectors(BlockDriverState *bs, int64_t hint)
         if (length < 0) {
             return length;
         }
-        hint = length >> BDRV_SECTOR_BITS;
+        hint = DIV_ROUND_UP(length, BDRV_SECTOR_SIZE);
     }
 
     bs->total_sectors = hint;
@@ -563,6 +572,7 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     bs->open_flags = flags;
     /* buffer_alignment defaulted to 512, drivers can change this value */
     bs->buffer_alignment = 512;
+    bs->zero_beyond_eof = true;
 
     open_flags = flags;
     /*
@@ -752,14 +762,8 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
         BlockDriver *back_drv = NULL;
 
         bs->backing_hd = bdrv_new("");
-
-        if (path_has_protocol(bs->backing_file)) {
-            pstrcpy(backing_filename, sizeof(backing_filename),
-                    bs->backing_file);
-        } else {
-            path_combine(backing_filename, sizeof(backing_filename),
-                         filename, bs->backing_file);
-        }
+        bdrv_get_full_backing_filename(bs, backing_filename,
+                                       sizeof(backing_filename));
 
         if (bs->backing_format[0] != '\0') {
             back_drv = bdrv_find_format(bs->backing_format);
@@ -1052,6 +1056,7 @@ void bdrv_close(BlockDriverState *bs)
         bs->copy_on_read = 0;
         bs->backing_file[0] = '\0';
         bs->backing_format[0] = '\0';
+        bs->zero_beyond_eof = false;
 
         if (bs->file != NULL) {
             bdrv_close(bs->file);
@@ -1477,8 +1482,11 @@ int bdrv_commit(BlockDriverState *bs)
     buf = g_malloc(COMMIT_BUF_SECTORS * BDRV_SECTOR_SIZE);
 
     for (sector = 0; sector < total_sectors; sector += n) {
-        if (bdrv_is_allocated(bs, sector, COMMIT_BUF_SECTORS, &n)) {
-
+        ret = bdrv_is_allocated(bs, sector, COMMIT_BUF_SECTORS, &n);
+        if (ret < 0) {
+            goto ro_cleanup;
+        }
+        if (ret) {
             if (bdrv_read(bs, sector, buf, n) != 0) {
                 ret = -EIO;
                 goto ro_cleanup;
@@ -2167,7 +2175,7 @@ static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
     if (flags & BDRV_REQ_COPY_ON_READ) {
         int pnum;
 
-        ret = bdrv_co_is_allocated(bs, sector_num, nb_sectors, &pnum);
+        ret = bdrv_is_allocated(bs, sector_num, nb_sectors, &pnum);
         if (ret < 0) {
             goto out;
         }
@@ -2178,7 +2186,7 @@ static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
         }
     }
 
-    if (!bs->growable) {
+    if (!(bs->zero_beyond_eof && bs->growable)) {
         ret = drv->bdrv_co_readv(bs, sector_num, nb_sectors, qiov);
     } else {
         /* Read zeros after EOF of growable BDSes */
@@ -2190,7 +2198,7 @@ static int coroutine_fn bdrv_co_do_readv(BlockDriverState *bs,
             goto out;
         }
 
-        total_sectors = len >> BDRV_SECTOR_BITS;
+        total_sectors = (len + BDRV_SECTOR_SIZE - 1) >> BDRV_SECTOR_BITS;
         max_nb_sectors = MAX(0, total_sectors - sector_num);
         if (max_nb_sectors > 0) {
             ret = drv->bdrv_co_readv(bs, sector_num,
@@ -2305,6 +2313,9 @@ static int coroutine_fn bdrv_co_do_writev(BlockDriverState *bs,
     if (bs->wr_highest_sector < sector_num + nb_sectors - 1) {
         bs->wr_highest_sector = sector_num + nb_sectors - 1;
     }
+    if (bs->growable && ret >= 0) {
+        bs->total_sectors = MAX(bs->total_sectors, sector_num + nb_sectors);
+    }
 
     tracked_request_end(&req);
 
@@ -2379,9 +2390,10 @@ int64_t bdrv_getlength(BlockDriverState *bs)
     if (!drv)
         return -ENOMEDIUM;
 
-    if (bs->growable || bdrv_dev_has_removable_media(bs)) {
-        if (drv->bdrv_getlength) {
-            return drv->bdrv_getlength(bs);
+    if (drv->has_variable_length) {
+        int ret = refresh_total_sectors(bs, bs->total_sectors);
+        if (ret < 0) {
+            return ret;
         }
     }
     return bs->total_sectors * BDRV_SECTOR_SIZE;
@@ -2702,6 +2714,11 @@ int bdrv_has_zero_init(BlockDriverState *bs)
 {
     assert(bs->drv);
 
+    /* If BS is a copy on write image, it is initialized to
+       the contents of the base image, which may not be zeroes.  */
+    if (bs->backing_hd) {
+        return 0;
+    }
     if (bs->drv->bdrv_has_zero_init) {
         return bs->drv->bdrv_has_zero_init(bs);
     }
@@ -2709,14 +2726,14 @@ int bdrv_has_zero_init(BlockDriverState *bs)
     return 1;
 }
 
-typedef struct BdrvCoIsAllocatedData {
+typedef struct BdrvCoGetBlockStatusData {
     BlockDriverState *bs;
     int64_t sector_num;
     int nb_sectors;
     int *pnum;
-    int ret;
+    int64_t ret;
     bool done;
-} BdrvCoIsAllocatedData;
+} BdrvCoGetBlockStatusData;
 
 /*
  * Returns true iff the specified sector is present in the disk image. Drivers
@@ -2733,12 +2750,20 @@ typedef struct BdrvCoIsAllocatedData {
  * 'nb_sectors' is the max value 'pnum' should be set to.  If nb_sectors goes
  * beyond the end of the disk image it will be clamped.
  */
-int coroutine_fn bdrv_co_is_allocated(BlockDriverState *bs, int64_t sector_num,
-                                      int nb_sectors, int *pnum)
+static int64_t coroutine_fn bdrv_co_get_block_status(BlockDriverState *bs,
+                                                     int64_t sector_num,
+                                                     int nb_sectors, int *pnum)
 {
+    int64_t length;
     int64_t n;
+    int64_t ret;
 
-    if (sector_num >= bs->total_sectors) {
+    length = bdrv_getlength(bs);
+    if (length < 0) {
+        return length;
+    }
+
+    if (sector_num >= (length >> BDRV_SECTOR_BITS)) {
         *pnum = 0;
         return 0;
     }
@@ -2748,35 +2773,56 @@ int coroutine_fn bdrv_co_is_allocated(BlockDriverState *bs, int64_t sector_num,
         nb_sectors = n;
     }
 
-    if (!bs->drv->bdrv_co_is_allocated) {
+    if (!bs->drv->bdrv_co_get_block_status) {
         *pnum = nb_sectors;
-        return 1;
+        ret = BDRV_BLOCK_DATA;
+        if (bs->drv->protocol_name) {
+            ret |= BDRV_BLOCK_OFFSET_VALID | (sector_num * BDRV_SECTOR_SIZE);
+        }
+        return ret;
     }
 
-    return bs->drv->bdrv_co_is_allocated(bs, sector_num, nb_sectors, pnum);
+    ret = bs->drv->bdrv_co_get_block_status(bs, sector_num, nb_sectors, pnum);
+    if (ret < 0) {
+        *pnum = 0;
+        return ret;
+    }
+
+    if (!(ret & BDRV_BLOCK_DATA)) {
+        if (bdrv_has_zero_init(bs)) {
+            ret |= BDRV_BLOCK_ZERO;
+        } else if (bs->backing_hd) {
+            BlockDriverState *bs2 = bs->backing_hd;
+            int64_t length2 = bdrv_getlength(bs2);
+            if (length2 >= 0 && sector_num >= (length2 >> BDRV_SECTOR_BITS)) {
+                ret |= BDRV_BLOCK_ZERO;
+            }
+        }
+    }
+    return ret;
 }
 
-/* Coroutine wrapper for bdrv_is_allocated() */
-static void coroutine_fn bdrv_is_allocated_co_entry(void *opaque)
+/* Coroutine wrapper for bdrv_get_block_status() */
+static void coroutine_fn bdrv_get_block_status_co_entry(void *opaque)
 {
-    BdrvCoIsAllocatedData *data = opaque;
+    BdrvCoGetBlockStatusData *data = opaque;
     BlockDriverState *bs = data->bs;
 
-    data->ret = bdrv_co_is_allocated(bs, data->sector_num, data->nb_sectors,
-                                     data->pnum);
+    data->ret = bdrv_co_get_block_status(bs, data->sector_num, data->nb_sectors,
+                                         data->pnum);
     data->done = true;
 }
 
 /*
- * Synchronous wrapper around bdrv_co_is_allocated().
+ * Synchronous wrapper around bdrv_co_get_block_status().
  *
- * See bdrv_co_is_allocated() for details.
+ * See bdrv_co_get_block_status() for details.
  */
-int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
-                      int *pnum)
+int64_t bdrv_get_block_status(BlockDriverState *bs, int64_t sector_num,
+                              int nb_sectors, int *pnum)
 {
     Coroutine *co;
-    BdrvCoIsAllocatedData data = {
+    BdrvCoGetBlockStatusData data = {
         .bs = bs,
         .sector_num = sector_num,
         .nb_sectors = nb_sectors,
@@ -2784,12 +2830,29 @@ int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
         .done = false,
     };
 
-    co = qemu_coroutine_create(bdrv_is_allocated_co_entry);
-    qemu_coroutine_enter(co, &data);
-    while (!data.done) {
-        qemu_aio_wait();
+    if (qemu_in_coroutine()) {
+        /* Fast-path if already in coroutine context */
+        bdrv_get_block_status_co_entry(&data);
+    } else {
+        co = qemu_coroutine_create(bdrv_get_block_status_co_entry);
+        qemu_coroutine_enter(co, &data);
+        while (!data.done) {
+            qemu_aio_wait();
+        }
     }
     return data.ret;
+}
+
+int coroutine_fn bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num,
+                                   int nb_sectors, int *pnum)
+{
+    int64_t ret = bdrv_get_block_status(bs, sector_num, nb_sectors, pnum);
+    if (ret < 0) {
+        return ret;
+    }
+    return
+        (ret & BDRV_BLOCK_DATA) ||
+        ((ret & BDRV_BLOCK_ZERO) && !bdrv_has_zero_init(bs));
 }
 
 /*
@@ -2804,10 +2867,10 @@ int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
  *  allocated/unallocated state.
  *
  */
-int coroutine_fn bdrv_co_is_allocated_above(BlockDriverState *top,
-                                            BlockDriverState *base,
-                                            int64_t sector_num,
-                                            int nb_sectors, int *pnum)
+int bdrv_is_allocated_above(BlockDriverState *top,
+                            BlockDriverState *base,
+                            int64_t sector_num,
+                            int nb_sectors, int *pnum)
 {
     BlockDriverState *intermediate;
     int ret, n = nb_sectors;
@@ -2815,8 +2878,8 @@ int coroutine_fn bdrv_co_is_allocated_above(BlockDriverState *top,
     intermediate = top;
     while (intermediate && intermediate != base) {
         int pnum_inter;
-        ret = bdrv_co_is_allocated(intermediate, sector_num, nb_sectors,
-                                   &pnum_inter);
+        ret = bdrv_is_allocated(intermediate, sector_num, nb_sectors,
+                                &pnum_inter);
         if (ret < 0) {
             return ret;
         } else if (ret) {

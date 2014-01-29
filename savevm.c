@@ -1092,6 +1092,7 @@ typedef struct SaveStateEntry {
     char idstr[256];
     int instance_id;
     int version_id;
+    int max_version_id;
     int section_id;
     SaveSetParamsHandler *set_params;
     SaveLiveStateHandler *save_live_state;
@@ -1143,20 +1144,22 @@ static int calculate_compat_instance_id(const char *idstr)
    of the system, so instance_id should be removed/replaced.
    Meanwhile pass -1 as instance_id if you do not already have a clearly
    distinguishing id for all instances of your device class. */
-int register_savevm_live(DeviceState *dev,
-                         const char *idstr,
-                         int instance_id,
-                         int version_id,
-                         SaveSetParamsHandler *set_params,
-                         SaveLiveStateHandler *save_live_state,
-                         SaveStateHandler *save_state,
-                         LoadStateHandler *load_state,
-                         void *opaque)
+static int register_savevm_full(DeviceState *dev,
+                                const char *idstr,
+                                int instance_id,
+                                int version_id,
+                                int max_version_id,
+                                SaveSetParamsHandler *set_params,
+                                SaveLiveStateHandler *save_live_state,
+                                SaveStateHandler *save_state,
+                                LoadStateHandler *load_state,
+                                void *opaque)
 {
     SaveStateEntry *se;
 
     se = qemu_mallocz(sizeof(SaveStateEntry));
     se->version_id = version_id;
+    se->max_version_id = max_version_id;
     se->section_id = global_section_id++;
     se->set_params = set_params;
     se->save_live_state = save_live_state;
@@ -1193,6 +1196,21 @@ int register_savevm_live(DeviceState *dev,
     return 0;
 }
 
+int register_savevm_live(DeviceState *dev,
+                         const char *idstr,
+                         int instance_id,
+                         int version_id,
+                         SaveSetParamsHandler *set_params,
+                         SaveLiveStateHandler *save_live_state,
+                         SaveStateHandler *save_state,
+                         LoadStateHandler *load_state,
+                         void *opaque)
+{
+    return register_savevm_full(dev, idstr, instance_id, version_id, version_id,
+                                set_params, save_live_state, save_state,
+                                load_state, opaque);
+}
+
 int register_savevm(DeviceState *dev,
                     const char *idstr,
                     int instance_id,
@@ -1203,6 +1221,20 @@ int register_savevm(DeviceState *dev,
 {
     return register_savevm_live(dev, idstr, instance_id, version_id,
                                 NULL, NULL, save_state, load_state, opaque);
+}
+
+int register_savevm_max_version(DeviceState *dev,
+                                const char *idstr,
+                                int instance_id,
+                                int version_id,
+                                int max_version_id,
+                                SaveStateHandler *save_state,
+                                LoadStateHandler *load_state,
+                                void *opaque)
+{
+    return register_savevm_full(dev, idstr, instance_id,
+                                version_id, max_version_id, NULL, NULL,
+                                save_state, load_state, opaque);
 }
 
 void unregister_savevm(DeviceState *dev, const char *idstr, void *opaque)
@@ -1325,7 +1357,7 @@ int vmstate_load_state(QEMUFile *f, const VMStateDescription *vmsd,
     VMStateField *field = vmsd->fields;
     int ret;
 
-    if (version_id > vmsd->version_id) {
+    if (version_id > MAX(vmsd->version_id, vmsd->max_version_id)) {
         return -EINVAL;
     }
     if (version_id < vmsd->minimum_version_id_old) {
@@ -1817,7 +1849,7 @@ int qemu_loadvm_state(QEMUFile *f)
             }
 
             /* Validate version */
-            if (version_id > se->version_id) {
+            if (version_id > MAX(se->version_id, se->max_version_id)) {
                 fprintf(stderr, "savevm: unsupported version %d for '%s' v%d\n",
                         version_id, idstr, se->version_id);
                 ret = -EINVAL;

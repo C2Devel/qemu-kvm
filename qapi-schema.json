@@ -269,6 +269,35 @@
            '*total-clusters': 'int', '*allocated-clusters': 'int',
            '*fragmented-clusters': 'int' } }
 
+##
+# @BlockDeviceMapEntry:
+#
+# Entry in the metadata map of the device (returned by "qemu-img map")
+#
+# @start: Offset in the image of the first byte described by this entry
+#         (in bytes)
+#
+# @length: Length of the range described by this entry (in bytes)
+#
+# @depth: Number of layers (0 = top image, 1 = top image's backing file, etc.)
+#         before reaching one for which the range is allocated.  The value is
+#         in the range 0 to the depth of the image chain - 1.
+#
+# @zero: the sectors in this range read as zeros
+#
+# @data: reading the image will actually read data from a file (in particular,
+#        if @offset is present this means that the sectors are not simply
+#        preallocated, but contain actual data in raw format)
+#
+# @offset: if present, the image file stores the data for this range in
+#          raw format at the given offset.
+#
+# Since 1.7
+##
+{ 'type': 'BlockDeviceMapEntry',
+  'data': { 'start': 'int', 'length': 'int', 'depth': 'int', 'zero': 'bool',
+            'data': 'bool', '*offset': 'int' } }
+
 
 ##
 # @EventInfo:
@@ -608,3 +637,66 @@
 ##
 { 'command': 'chardev-remove', 'data': {'id': 'str'} }
 
+##
+# @SnapshotInfo
+#
+# @id: unique snapshot id
+#
+# @name: user chosen name
+#
+# @vm-state-size: size of the VM state
+#
+# @date-sec: UTC date of the snapshot in seconds
+#
+# @date-nsec: fractional part in nano seconds to be used with date-sec
+#
+# @vm-clock-sec: VM clock relative to boot in seconds
+#
+# @vm-clock-nsec: fractional part in nano seconds to be used with vm-clock-sec
+#
+# Since: 1.3
+#
+##
+
+{ 'type': 'SnapshotInfo',
+  'data': { 'id': 'str', 'name': 'str', 'vm-state-size': 'int',
+            'date-sec': 'int', 'date-nsec': 'int',
+            'vm-clock-sec': 'int', 'vm-clock-nsec': 'int' } }
+
+##
+# @ImageInfo:
+#
+# Information about a QEMU image file
+#
+# @filename: name of the image file
+#
+# @format: format of the image file
+#
+# @virtual-size: maximum capacity in bytes of the image
+#
+# @actual-size: #optional actual size on disk in bytes of the image
+#
+# @dirty-flag: #optional true if image is not cleanly closed
+#
+# @cluster-size: #optional size of a cluster in bytes
+#
+# @encrypted: #optional true if the image is encrypted
+#
+# @backing-filename: #optional name of the backing file
+#
+# @full-backing-filename: #optional full path of the backing file
+#
+# @backing-filename-format: #optional the format of the backing file
+#
+# @snapshots: #optional list of VM snapshots
+#
+# Since: 1.3
+#
+##
+
+{ 'type': 'ImageInfo',
+  'data': {'filename': 'str', 'format': 'str', '*dirty-flag': 'bool',
+           '*actual-size': 'int', 'virtual-size': 'int',
+           '*cluster-size': 'int', '*encrypted': 'bool',
+           '*backing-filename': 'str', '*full-backing-filename': 'str',
+           '*backing-filename-format': 'str', '*snapshots': ['SnapshotInfo'] } }

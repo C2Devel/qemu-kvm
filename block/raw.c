@@ -38,6 +38,13 @@ static int coroutine_fn raw_co_flush(BlockDriverState *bs)
     return bdrv_co_flush(bs->file);
 }
 
+static int64_t coroutine_fn raw_co_get_block_status(BlockDriverState *bs,
+                                            int64_t sector_num,
+                                            int nb_sectors, int *pnum)
+{
+    return bdrv_get_block_status(bs->file, sector_num, nb_sectors, pnum);
+}
+
 static int64_t raw_getlength(BlockDriverState *bs)
 {
     return bdrv_getlength(bs->file);
@@ -123,10 +130,12 @@ static BlockDriver bdrv_raw = {
     .bdrv_co_readv      = raw_co_readv,
     .bdrv_co_writev     = raw_co_writev,
     .bdrv_co_flush      = raw_co_flush,
+    .bdrv_co_get_block_status   = raw_co_get_block_status,
     .bdrv_co_discard    = raw_co_discard,
 
     .bdrv_probe         = raw_probe,
     .bdrv_getlength     = raw_getlength,
+    .has_variable_length = true,
     .bdrv_truncate      = raw_truncate,
 
     .bdrv_is_inserted   = raw_is_inserted,

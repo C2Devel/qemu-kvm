@@ -1117,7 +1117,8 @@ static BlockDriver bdrv_host_floppy = {
     .bdrv_aio_flush	= raw_aio_flush,
 
     .bdrv_truncate      = raw_truncate,
-    .bdrv_getlength	= raw_getlength,
+    .bdrv_getlength      = raw_getlength,
+    .has_variable_length = true,
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
 
@@ -1216,7 +1217,8 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_aio_flush	= raw_aio_flush,
 
     .bdrv_truncate      = raw_truncate,
-    .bdrv_getlength     = raw_getlength,
+    .bdrv_getlength      = raw_getlength,
+    .has_variable_length = true,
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
 
@@ -1338,7 +1340,8 @@ static BlockDriver bdrv_host_cdrom = {
     .bdrv_aio_flush	= raw_aio_flush,
 
     .bdrv_truncate      = raw_truncate,
-    .bdrv_getlength     = raw_getlength,
+    .bdrv_getlength      = raw_getlength,
+    .has_variable_length = true,
     .bdrv_get_allocated_file_size
                         = raw_get_allocated_file_size,
 

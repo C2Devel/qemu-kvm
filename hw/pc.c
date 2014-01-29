@@ -1750,9 +1750,12 @@ static void rhel_common_init(const char *type1_version,
             .value    = stringify(1),\
         }
 
+bool migrate_steal_time_msr = true;
+
 static void pc_rhel640_compat(void)
 {
     disable_kvm_sep();
+    migrate_steal_time_msr = false;
 }
 
 static void pc_rhel630_compat(void)

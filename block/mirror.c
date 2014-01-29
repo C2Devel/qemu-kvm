@@ -85,8 +85,7 @@ static int is_any_allocated(BlockDriverState *bs, int64_t sector_num,
 
     intermediate = bs;
     while (intermediate) {
-        ret = bdrv_co_is_allocated(intermediate, sector_num, nb_sectors,
-                                   &n);
+        ret = bdrv_is_allocated(intermediate, sector_num, nb_sectors, &n);
         if (ret < 0) {
             return ret;
         } else if (ret) {
@@ -133,7 +132,7 @@ static void coroutine_fn mirror_run(void *opaque)
         if (s->full) {
             ret = is_any_allocated(bs, sector_num, next - sector_num, &n);
         } else {
-            ret = bdrv_co_is_allocated(bs, sector_num, next - sector_num, &n);
+            ret = bdrv_is_allocated(bs, sector_num, next - sector_num, &n);
         }
         if (ret < 0) {
             break;

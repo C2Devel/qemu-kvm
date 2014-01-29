@@ -377,24 +377,29 @@ static int qcow2_reopen_prepare(BDRVReopenState *state,
     return 0;
 }
 
-static int coroutine_fn qcow2_co_is_allocated(BlockDriverState *bs,
+static int64_t coroutine_fn qcow2_co_get_block_status(BlockDriverState *bs,
         int64_t sector_num, int nb_sectors, int *pnum)
 {
     BDRVQcowState *s = bs->opaque;
     uint64_t cluster_offset;
-    int ret;
+    int index_in_cluster, ret;
 
     *pnum = nb_sectors;
-    /* FIXME We can get errors here, but the bdrv_co_is_allocated interface
-     * can't pass them on today */
     qemu_co_mutex_lock(&s->lock);
     ret = qcow2_get_cluster_offset(bs, sector_num << 9, pnum, &cluster_offset);
     qemu_co_mutex_unlock(&s->lock);
     if (ret < 0) {
-        *pnum = 0;
+        return ret;
     }
-
-    return (cluster_offset != 0);
+    if (!cluster_offset) {
+        return 0;
+    }
+    if ((cluster_offset & QCOW_OFLAG_COMPRESSED) || s->crypt_method) {
+        return BDRV_BLOCK_DATA;
+    }
+    index_in_cluster = sector_num & (s->cluster_sectors - 1);
+    cluster_offset |= (index_in_cluster << BDRV_SECTOR_BITS);
+    return BDRV_BLOCK_DATA | BDRV_BLOCK_OFFSET_VALID | cluster_offset;
 }
 
 /* handle reading after the end of the backing file */
@@ -1055,6 +1060,14 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         }
     }
 
+    bdrv_close(bs);
+
+    /* Reopen the image without BDRV_O_NO_FLUSH to flush it before returning */
+    ret = bdrv_open(bs, filename, BDRV_O_RDWR | BDRV_O_CACHE_WB, drv);
+    if (ret < 0) {
+        goto out;
+    }
+
     ret = 0;
 out:
     bdrv_delete(bs);
@@ -1303,12 +1316,15 @@ static int qcow2_load_vmstate(BlockDriverState *bs, uint8_t *buf,
 {
     BDRVQcowState *s = bs->opaque;
     int growable = bs->growable;
+    bool zero_beyond_eof = bs->zero_beyond_eof;
     int ret;
 
     BLKDBG_EVENT(bs->file, BLKDBG_VMSTATE_LOAD);
     bs->growable = 1;
+    bs->zero_beyond_eof = false;
     ret = bdrv_pread(bs, qcow2_vm_state_offset(s) + pos, buf, size);
     bs->growable = growable;
+    bs->zero_beyond_eof = zero_beyond_eof;
 
     return ret;
 }
@@ -1356,7 +1372,7 @@ static BlockDriver bdrv_qcow2 = {
     .bdrv_close         = qcow2_close,
     .bdrv_reopen_prepare  = qcow2_reopen_prepare,
     .bdrv_create        = qcow2_create,
-    .bdrv_co_is_allocated = qcow2_co_is_allocated,
+    .bdrv_co_get_block_status = qcow2_co_get_block_status,
     .bdrv_set_key       = qcow2_set_key,
     .bdrv_make_empty    = qcow2_make_empty,
 

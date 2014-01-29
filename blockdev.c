@@ -490,7 +490,11 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
         }
         drv = bdrv_find_whitelisted_format(buf, ro);
         if (!drv) {
-            error_report("'%s' invalid format", buf);
+            if (!ro && bdrv_find_whitelisted_format(buf, !ro)) {
+                error_report("'%s' can be only used as read-only device.", buf);
+            } else {
+                error_report("'%s' invalid format", buf);
+            }
             return NULL;
         }
     }

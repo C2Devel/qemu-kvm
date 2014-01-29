@@ -14,6 +14,7 @@ typedef struct BlockDriverInfo {
     int cluster_size;
     /* offset at which the VM state can be saved (0 if not possible) */
     int64_t vm_state_offset;
+    bool is_dirty;
 } BlockDriverInfo;
 
 typedef struct BlockFragInfo {
@@ -85,7 +86,33 @@ typedef struct BlockDevOps {
 
 #define BDRV_SECTOR_BITS   9
 #define BDRV_SECTOR_SIZE   (1 << BDRV_SECTOR_BITS)
-#define BDRV_SECTOR_MASK   ~(BDRV_SECTOR_SIZE - 1);
+#define BDRV_SECTOR_MASK   ~(BDRV_SECTOR_SIZE - 1)
+
+/* BDRV_BLOCK_DATA: data is read from bs->file or another file
+ * BDRV_BLOCK_ZERO: sectors read as zero
+ * BDRV_BLOCK_OFFSET_VALID: sector stored in bs->file as raw data
+ *
+ * If BDRV_BLOCK_OFFSET_VALID is set, bits 9-62 represent the offset in
+ * bs->file where sector data can be read from as raw data.
+ *
+ * DATA == 0 && ZERO == 0 means that data is read from backing_hd if present.
+ *
+ * DATA ZERO OFFSET_VALID
+ *  t    t        t       sectors read as zero, bs->file is zero at offset
+ *  t    f        t       sectors read as valid from bs->file at offset
+ *  f    t        t       sectors preallocated, read as zero, bs->file not
+ *                        necessarily zero at offset
+ *  f    f        t       sectors preallocated but read from backing_hd,
+ *                        bs->file contains garbage at offset
+ *  t    t        f       sectors preallocated, read as zero, unknown offset
+ *  t    f        f       sectors read from unknown file or offset
+ *  f    t        f       not allocated or unknown offset, read as zero
+ *  f    f        f       not allocated or unknown offset, read from backing_hd
+ */
+#define BDRV_BLOCK_DATA         1
+#define BDRV_BLOCK_ZERO         2
+#define BDRV_BLOCK_OFFSET_VALID 4
+#define BDRV_BLOCK_OFFSET_MASK  BDRV_SECTOR_MASK
 
 typedef enum {
     BLOCK_ERR_REPORT, BLOCK_ERR_IGNORE, BLOCK_ERR_STOP_ENOSPC,
@@ -192,12 +219,10 @@ int coroutine_fn bdrv_co_writev(BlockDriverState *bs, int64_t sector_num,
  */
 int coroutine_fn bdrv_co_write_zeroes(BlockDriverState *bs, int64_t sector_num,
     int nb_sectors);
-int coroutine_fn bdrv_co_is_allocated(BlockDriverState *bs, int64_t sector_num,
-    int nb_sectors, int *pnum);
-int coroutine_fn bdrv_co_is_allocated_above(BlockDriverState *top,
-                                            BlockDriverState *base,
-                                            int64_t sector_num,
-                                            int nb_sectors, int *pnum);
+int coroutine_fn bdrv_is_allocated_above(BlockDriverState *top,
+                                         BlockDriverState *base,
+                                         int64_t sector_num,
+                                         int nb_sectors, int *pnum);
 BlockDriverState *bdrv_find_backing_image(BlockDriverState *bs,
     const char *backing_file);
 int bdrv_truncate(BlockDriverState *bs, int64_t offset);
@@ -284,6 +309,8 @@ void bdrv_drain_all(void);
 int bdrv_discard(BlockDriverState *bs, int64_t sector_num, int nb_sectors);
 int bdrv_co_discard(BlockDriverState *bs, int64_t sector_num, int nb_sectors);
 int bdrv_has_zero_init(BlockDriverState *bs);
+int64_t bdrv_get_block_status(BlockDriverState *bs, int64_t sector_num,
+                              int nb_sectors, int *pnum);
 int bdrv_is_allocated(BlockDriverState *bs, int64_t sector_num, int nb_sectors,
 	int *pnum);
 
@@ -334,6 +361,8 @@ int bdrv_get_info(BlockDriverState *bs, BlockDriverInfo *bdi);
 const char *bdrv_get_encrypted_filename(BlockDriverState *bs);
 void bdrv_get_backing_filename(BlockDriverState *bs,
                                char *filename, int filename_size);
+void bdrv_get_full_backing_filename(BlockDriverState *bs,
+                                    char *dest, size_t sz);
 int bdrv_can_snapshot(BlockDriverState *bs);
 int bdrv_is_snapshot(BlockDriverState *bs);
 BlockDriverState *bdrv_snapshots(void);
