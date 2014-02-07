@@ -2671,9 +2671,9 @@ fail:
 
     if (use_local_qiov) {
         qemu_iovec_destroy(&local_qiov);
-        qemu_vfree(head_buf);
-        qemu_vfree(tail_buf);
     }
+    qemu_vfree(head_buf);
+    qemu_vfree(tail_buf);
 
     return ret;
 }
