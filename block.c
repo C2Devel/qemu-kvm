@@ -2522,6 +2522,8 @@ static int coroutine_fn bdrv_aligned_pwritev(BlockDriverState *bs,
 
     waited = wait_serialising_requests(req);
     assert(!waited || !req->serialising);
+    assert(req->overlap_offset <= offset);
+    assert(offset + bytes <= req->overlap_offset + req->overlap_bytes);
 
     if (flags & BDRV_REQ_ZERO_WRITE) {
         ret = bdrv_co_do_write_zeroes(bs, sector_num, nb_sectors);
