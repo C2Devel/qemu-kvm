@@ -317,4 +317,9 @@ static inline uint8_t from_bcd(uint8_t val)
 
 #endif /* dyngen-exec.h hack */
 
+/*
+ * helper to parse debug environment variables
+ */
+int parse_debug_env(const char *name, int max, int initial);
+
 #endif

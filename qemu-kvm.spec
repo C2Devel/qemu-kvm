@@ -88,7 +88,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define zrelease 5
+%define zrelease 9
 %define buildid %{nil}
 
 %define sublevel 0.12.1.2
@@ -6425,6 +6425,76 @@ Patch3881: kvm-qga-set-umask-0077-when-daemonizing-CVE-2013-2007.patch
 Patch3882: kvm-qga-distinguish-binary-modes-in-guest_file_open_mode.patch
 # For bz#957056 - CVE-2013-2007 qemu: guest agent creates files with insecure permissions in deamon mode [rhel-6.4.z]
 Patch3883: kvm-qga-unlink-just-created-guest-file-if-fchmod-or-fdop.patch
+# For bz#980758 - CVE-2013-2231 qemu: qemu-ga win32 service unquoted search path [rhel-6.4.z]
+Patch3884: kvm-qga-cast-to-int-for-DWORD-type.patch
+Patch3885: kvm-qga-remove-undefined-behavior-in-ga_install_service.patch
+Patch3886: kvm-qga-diagnostic-output-should-go-to-stderr.patch
+Patch3887: kvm-qa_install_service-nest-error-paths-more-idiomatically.patch
+Patch3888: kvm-qga-escape-cmdline-args-when-registering-win32-service.patch
+# For bz#996151 - qcow2 corruption bug in cluster allocation code
+Patch3889: kvm-qcow2-Reinitialise-counter-when-restarting-alloc-r64.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3890: kvm-ccid-card-emul-do-not-crash-if-backend-is-not-provid.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3891: kvm-ccid-make-backend_enum_table-static-const-and-adjust.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3892: kvm-ccid-declare-DEFAULT_ATR-table-to-be-static-const.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3893: kvm-libcacard-vscclient-fix-error-paths-for-socket-creat.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3894: kvm-libcacard-Use-format-specifier-u-instead-of-d-for-un.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3895: kvm-Spelling-fixes-in-comments-it-s-its.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3896: kvm-libcacard-Fix-unchecked-strdup-by-converting-to-g_st.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3897: kvm-libcacard-split-vscclient-main-from-socket-reading.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3898: kvm-libcacard-vscclient-to-use-QemuThread-for-portabilit.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3899: kvm-libcacard-teach-vscclient-to-use-GMainLoop-for-porta.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3900: kvm-libcacard-use-system-config-directory-for-nss-db-on-.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3901: kvm-libcacard-remove-sql-prefix.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3902: kvm-libcacard-remove-default-libcoolkey-loading.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3903: kvm-dev-smartcard-reader-nicer-debug-messages.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3904: kvm-hw-usb-dev-smartcard-reader.c-remove-aborts-never-tr.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3905: kvm-hw-usb-dev-smartcard-reader-support-windows-guest.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3906: kvm-libcacard-change-default-ATR.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3907: kvm-hw-ccid-card-passthru.c-add-atr-check.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3908: kvm-ccid-card-passthru-dev-smartcard-reader-add-debug-en.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3909: kvm-usb-ccid-Drop-unused-CCIDCardInfo-callback-print.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3910: kvm-hw-usb-dev-smartcard-reader.c-define-structs-for-CCI.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3911: kvm-dev-smartcard-reader-change-default-protocol-to-T-0.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3912: kvm-dev-smartcard-reader-copy-atr-protocol-to-ccid-param.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3913: kvm-libcacard-vreader-add-debugging-messages-for-apdu.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3914: kvm-dev-smartcard-reader-empty-implementation-for-Mechan.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3915: kvm-libcacard-cac-change-big-switch-functions-to-single-.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3916: kvm-usb-smartcard-reader-Properly-NAK-interrupt-eps-when.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3917: kvm-uhci-Don-t-allow-the-guest-to-set-port-enabled-when-.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3918: kvm-usb-ccid-remote-wakeup-support.patch
+# For bz#965152 - Smartcard emulation with Windows guest fails
+Patch3919: kvm-uhci-egsm-fix.patch
+# For bz#996791 - Off-by-one error in page_l1_map() can lead to out-of-bounds access
+Patch3920: kvm-Fix-off-by-one-error-in-page_l1_map.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -9453,6 +9523,43 @@ ApplyOptionalPatch()
 %patch3881 -p1
 %patch3882 -p1
 %patch3883 -p1
+%patch3884 -p1
+%patch3885 -p1
+%patch3886 -p1
+%patch3887 -p1
+%patch3888 -p1
+%patch3889 -p1
+%patch3890 -p1
+%patch3891 -p1
+%patch3892 -p1
+%patch3893 -p1
+%patch3894 -p1
+%patch3895 -p1
+%patch3896 -p1
+%patch3897 -p1
+%patch3898 -p1
+%patch3899 -p1
+%patch3900 -p1
+%patch3901 -p1
+%patch3902 -p1
+%patch3903 -p1
+%patch3904 -p1
+%patch3905 -p1
+%patch3906 -p1
+%patch3907 -p1
+%patch3908 -p1
+%patch3909 -p1
+%patch3910 -p1
+%patch3911 -p1
+%patch3912 -p1
+%patch3913 -p1
+%patch3914 -p1
+%patch3915 -p1
+%patch3916 -p1
+%patch3917 -p1
+%patch3918 -p1
+%patch3919 -p1
+%patch3920 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -9811,6 +9918,59 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Mon Sep 16 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.9
+- kvm-Fix-off-by-one-error-in-page_l1_map.patch [bz#996791]
+- Resolves: bz#996791
+  (Off-by-one error in page_l1_map() can lead to out-of-bounds access)
+
+* Wed Aug 28 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.8
+- kvm-ccid-card-emul-do-not-crash-if-backend-is-not-provid.patch [bz#965152]
+- kvm-ccid-make-backend_enum_table-static-const-and-adjust.patch [bz#965152]
+- kvm-ccid-declare-DEFAULT_ATR-table-to-be-static-const.patch [bz#965152]
+- kvm-libcacard-vscclient-fix-error-paths-for-socket-creat.patch [bz#965152]
+- kvm-libcacard-Use-format-specifier-u-instead-of-d-for-un.patch [bz#965152]
+- kvm-Spelling-fixes-in-comments-it-s-its.patch [bz#965152]
+- kvm-libcacard-Fix-unchecked-strdup-by-converting-to-g_st.patch [bz#965152]
+- kvm-libcacard-split-vscclient-main-from-socket-reading.patch [bz#965152]
+- kvm-libcacard-vscclient-to-use-QemuThread-for-portabilit.patch [bz#965152]
+- kvm-libcacard-teach-vscclient-to-use-GMainLoop-for-porta.patch [bz#965152]
+- kvm-libcacard-use-system-config-directory-for-nss-db-on-.patch [bz#965152]
+- kvm-libcacard-remove-sql-prefix.patch [bz#965152]
+- kvm-libcacard-remove-default-libcoolkey-loading.patch [bz#965152]
+- kvm-dev-smartcard-reader-nicer-debug-messages.patch [bz#965152]
+- kvm-hw-usb-dev-smartcard-reader.c-remove-aborts-never-tr.patch [bz#965152]
+- kvm-hw-usb-dev-smartcard-reader-support-windows-guest.patch [bz#965152]
+- kvm-libcacard-change-default-ATR.patch [bz#965152]
+- kvm-hw-ccid-card-passthru.c-add-atr-check.patch [bz#965152]
+- kvm-ccid-card-passthru-dev-smartcard-reader-add-debug-en.patch [bz#965152]
+- kvm-usb-ccid-Drop-unused-CCIDCardInfo-callback-print.patch [bz#965152]
+- kvm-hw-usb-dev-smartcard-reader.c-define-structs-for-CCI.patch [bz#965152]
+- kvm-dev-smartcard-reader-change-default-protocol-to-T-0.patch [bz#965152]
+- kvm-dev-smartcard-reader-copy-atr-protocol-to-ccid-param.patch [bz#965152]
+- kvm-libcacard-vreader-add-debugging-messages-for-apdu.patch [bz#965152]
+- kvm-dev-smartcard-reader-empty-implementation-for-Mechan.patch [bz#965152]
+- kvm-libcacard-cac-change-big-switch-functions-to-single-.patch [bz#965152]
+- kvm-usb-smartcard-reader-Properly-NAK-interrupt-eps-when.patch [bz#965152]
+- kvm-uhci-Don-t-allow-the-guest-to-set-port-enabled-when-.patch [bz#965152]
+- kvm-usb-ccid-remote-wakeup-support.patch [bz#965152]
+- kvm-uhci-egsm-fix.patch [bz#965152]
+- Resolves: bz#965152
+  (Smartcard emulation with Windows guest fails)
+
+* Mon Aug 12 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.385.el6_4.7
+- kvm-qcow2-Reinitialise-counter-when-restarting-alloc-r64.patch [bz#996151]
+- Resolves: bz#996151
+  (qcow2 corruption bug in cluster allocation code)
+
+* Wed Jul 10 2013 Miroslav Rezanina <mrezanin@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.6
+- kvm-qga-cast-to-int-for-DWORD-type.patch [bz#980758]
+- kvm-qga-remove-undefined-behavior-in-ga_install_service.patch [bz#980758]
+- kvm-qga-diagnostic-output-should-go-to-stderr.patch [bz#980758]
+- kvm-qa_install_service-nest-error-paths-more-idiomatically.patch [bz#980758]
+- kvm-qga-escape-cmdline-args-when-registering-win32-service.patch [bz#980758]
+- Resolves: bz#980758
+  (qemu-kvm: CVE-2013-2231 qemu: qemu-ga win32 service unquoted search path [rhel-6.4.z])
+
 * Thu May 23 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6_4.5
 - kvm-e1000-fix-link-down-handling-with-auto-negotiation.patch [bz#907716]
 - kvm-e1000-unbreak-the-guest-network-when-migration-to-RH.patch [bz#907716]

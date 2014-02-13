@@ -335,7 +335,7 @@ vreader_emul_new(PK11SlotInfo *slot, VCardEmulType type, const char *params)
 
     new_reader_emul->slot = PK11_ReferenceSlot(slot);
     new_reader_emul->default_type = type;
-    new_reader_emul->type_params = strdup(params);
+    new_reader_emul->type_params = g_strdup(params);
     new_reader_emul->present = PR_FALSE;
     new_reader_emul->series = 0;
     new_reader_emul->saved_vcard = NULL;
@@ -352,7 +352,7 @@ vreader_emul_delete(VReaderEmul *vreader_emul)
         PK11_FreeSlot(vreader_emul->slot);
     }
     if (vreader_emul->type_params) {
-        qemu_free(vreader_emul->type_params);
+        g_free(vreader_emul->type_params);
     }
     qemu_free(vreader_emul);
 }
@@ -735,7 +735,7 @@ VCardEmulError
 vcard_emul_init(const VCardEmulOptions *options)
 {
     SECStatus rv;
-    PRBool ret, has_readers = PR_FALSE, need_coolkey_module;
+    PRBool ret, has_readers = PR_FALSE;
     VReader *vreader;
     VReaderEmul *vreader_emul;
     SECMODListLock *module_lock;
@@ -758,7 +758,21 @@ vcard_emul_init(const VCardEmulOptions *options)
     if (options->nss_db) {
         rv = NSS_Init(options->nss_db);
     } else {
-        rv = NSS_Init("sql:/etc/pki/nssdb");
+        gchar *path;
+#ifndef _WIN32
+        path = g_strdup("/etc/pki/nssdb");
+#else
+        if (g_get_system_config_dirs() == NULL ||
+            g_get_system_config_dirs()[0] == NULL) {
+            return VCARD_EMUL_FAIL;
+        }
+
+        path = g_build_filename(
+            g_get_system_config_dirs()[0], "pki", "nssdb", NULL);
+#endif
+
+        rv = NSS_Init(path);
+        g_free(path);
     }
     if (rv != SECSuccess) {
         return VCARD_EMUL_FAIL;
@@ -831,35 +845,20 @@ vcard_emul_init(const VCardEmulOptions *options)
     /* make sure we have some PKCS #11 module loaded */
     module_lock = SECMOD_GetDefaultModuleListLock();
     module_list = SECMOD_GetDefaultModuleList();
-    need_coolkey_module = !has_readers;
     SECMOD_GetReadLock(module_lock);
     for (mlp = module_list; mlp; mlp = mlp->next) {
         SECMODModule *module = mlp->module;
         if (module_has_removable_hw_slots(module)) {
-            need_coolkey_module = PR_FALSE;
             break;
         }
     }
     SECMOD_ReleaseReadLock(module_lock);
 
-    if (need_coolkey_module) {
-        SECMODModule *module;
-        module = SECMOD_LoadUserModule(
-                    (char *)"library=libcoolkeypk11.so name=Coolkey",
-                    NULL, PR_FALSE);
-        if (module == NULL) {
-            return VCARD_EMUL_FAIL;
-        }
-        SECMOD_DestroyModule(module); /* free our reference, Module will still
-                                       * be on the list.
-                                       * until we destroy it */
-    }
-
     /* now examine all the slots, finding which should be readers */
     /* We should control this with options. For now we mirror out any
      * removable hardware slot */
     default_card_type = options->hw_card_type;
-    default_type_params = strdup(options->hw_type_params);
+    default_type_params = g_strdup(options->hw_type_params);
 
     SECMOD_GetReadLock(module_lock);
     for (mlp = module_list; mlp; mlp = mlp->next) {

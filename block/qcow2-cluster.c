@@ -708,7 +708,7 @@ int qcow2_alloc_cluster_offset(BlockDriverState *bs, uint64_t offset,
     int l2_index, ret;
     uint64_t l2_offset, *l2_table;
     int64_t cluster_offset;
-    unsigned int nb_clusters, i = 0;
+    unsigned int nb_clusters, i;
     QCowL2Meta *old_alloc;
 
 again:
@@ -747,7 +747,7 @@ again:
         nb_clusters = 1;
 
     /* how many available clusters ? */
-
+    i = 0;
     while (i < nb_clusters) {
         i += count_contiguous_clusters(nb_clusters - i, s->cluster_size,
                 &l2_table[l2_index], i, 0);
