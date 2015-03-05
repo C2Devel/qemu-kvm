@@ -183,6 +183,31 @@ static bool is_vectored_io_slow(int fd, int bdrv_flags)
 }
 #endif
 
+/* Check if read is allowed with given memory buffer and length.
+ *
+ * This function is used to check O_DIRECT memory buffer and request alignment.
+ */
+static bool raw_is_io_aligned(int fd, void *buf, size_t len)
+{
+    ssize_t ret = pread(fd, buf, len, 0);
+
+    if (ret >= 0) {
+        return true;
+    }
+
+#ifdef __linux__
+    /* The Linux kernel returns EINVAL for misaligned O_DIRECT reads.  Ignore
+     * other errors (e.g. real I/O error), which could happen on a failed
+     * drive, since we only care about probing alignment.
+     */
+    if (errno != EINVAL) {
+        return true;
+    }
+#endif
+
+    return false;
+}
+
 static void raw_probe_alignment(BlockDriverState *bs)
 {
     BDRVRawState *s = bs->opaque;
@@ -232,7 +257,7 @@ static void raw_probe_alignment(BlockDriverState *bs)
         size_t align;
         buf = qemu_memalign(MAX_BLOCKSIZE, 2 * MAX_BLOCKSIZE);
         for (align = 512; align <= MAX_BLOCKSIZE; align <<= 1) {
-            if (pread(s->fd, buf + align, MAX_BLOCKSIZE, 0) >= 0) {
+            if (raw_is_io_aligned(s->fd, buf + align, MAX_BLOCKSIZE)) {
                 s->buf_align = align;
                 break;
             }
@@ -244,7 +269,7 @@ static void raw_probe_alignment(BlockDriverState *bs)
         size_t align;
         buf = qemu_memalign(s->buf_align, MAX_BLOCKSIZE);
         for (align = 512; align <= MAX_BLOCKSIZE; align <<= 1) {
-            if (pread(s->fd, buf, align, 0) >= 0) {
+            if (raw_is_io_aligned(s->fd, buf, align)) {
                 bs->request_alignment = align;
                 break;
             }
