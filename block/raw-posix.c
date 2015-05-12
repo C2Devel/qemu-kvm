@@ -212,6 +212,7 @@ static void raw_probe_alignment(BlockDriverState *bs)
 {
     BDRVRawState *s = bs->opaque;
     char *buf;
+    size_t max_align = MAX(MAX_BLOCKSIZE, getpagesize());
     unsigned int sector_size;
 
     /* For /dev/sg devices the alignment is not really used.
@@ -255,9 +256,9 @@ static void raw_probe_alignment(BlockDriverState *bs)
     /* If we could not get the sizes so far, we can only guess them */
     if (!s->buf_align) {
         size_t align;
-        buf = qemu_memalign(MAX_BLOCKSIZE, 2 * MAX_BLOCKSIZE);
-        for (align = 512; align <= MAX_BLOCKSIZE; align <<= 1) {
-            if (raw_is_io_aligned(s->fd, buf + align, MAX_BLOCKSIZE)) {
+        buf = qemu_memalign(max_align, 2 * max_align);
+        for (align = 512; align <= max_align; align <<= 1) {
+            if (raw_is_io_aligned(s->fd, buf + align, max_align)) {
                 s->buf_align = align;
                 break;
             }
@@ -267,8 +268,8 @@ static void raw_probe_alignment(BlockDriverState *bs)
 
     if (!bs->request_alignment) {
         size_t align;
-        buf = qemu_memalign(s->buf_align, MAX_BLOCKSIZE);
-        for (align = 512; align <= MAX_BLOCKSIZE; align <<= 1) {
+        buf = qemu_memalign(s->buf_align, max_align);
+        for (align = 512; align <= max_align; align <<= 1) {
             if (raw_is_io_aligned(s->fd, buf, align)) {
                 bs->request_alignment = align;
                 break;
@@ -497,7 +498,7 @@ static int raw_refresh_limits(BlockDriverState *bs)
     BDRVRawState *s = bs->opaque;
     raw_probe_alignment(bs);
     bs->bl.min_mem_alignment = s->buf_align;
-    bs->bl.opt_mem_alignment = s->buf_align;
+    bs->bl.opt_mem_alignment = MAX(s->buf_align, getpagesize());
 
     return 0;
 }
