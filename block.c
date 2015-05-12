@@ -223,8 +223,8 @@ static void bdrv_io_limits_intercept(BlockDriverState *bs,
 size_t bdrv_opt_mem_align(BlockDriverState *bs)
 {
     if (!bs || !bs->drv) {
-        /* 4k should be on the safe side */
-        return 4096;
+        /* page size or 4k (hdd sector size) should be on the safe side */
+        return MAX(4096, getpagesize());
     }
 
     return bs->bl.opt_mem_alignment;
@@ -233,8 +233,8 @@ size_t bdrv_opt_mem_align(BlockDriverState *bs)
 size_t bdrv_min_mem_align(BlockDriverState *bs)
 {
     if (!bs || !bs->drv) {
-        /* 4k should be on the safe side */
-        return 4096;
+        /* page size or 4k (hdd sector size) should be on the safe side */
+        return MAX(4096, getpagesize());
     }
 
     return bs->bl.min_mem_alignment;
@@ -552,7 +552,7 @@ void bdrv_refresh_limits(BlockDriverState *bs, Error **errp)
         bs->bl.opt_mem_alignment = bs->file->bl.opt_mem_alignment;
     } else {
         bs->bl.min_mem_alignment = 512;
-        bs->bl.opt_mem_alignment = 512;
+        bs->bl.opt_mem_alignment = getpagesize();
     }
 
     if (bs->backing_hd) {
