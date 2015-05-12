@@ -230,6 +230,16 @@ size_t bdrv_opt_mem_align(BlockDriverState *bs)
     return bs->bl.opt_mem_alignment;
 }
 
+size_t bdrv_min_mem_align(BlockDriverState *bs)
+{
+    if (!bs || !bs->drv) {
+        /* 4k should be on the safe side */
+        return 4096;
+    }
+
+    return bs->bl.min_mem_alignment;
+}
+
 /* check if the path starts with "<protocol>:" */
 int path_has_protocol(const char *path)
 {
@@ -538,8 +548,10 @@ void bdrv_refresh_limits(BlockDriverState *bs, Error **errp)
         }
         bs->bl.opt_transfer_length = bs->file->bl.opt_transfer_length;
         bs->bl.max_transfer_length = bs->file->bl.max_transfer_length;
+        bs->bl.min_mem_alignment = bs->file->bl.min_mem_alignment;
         bs->bl.opt_mem_alignment = bs->file->bl.opt_mem_alignment;
     } else {
+        bs->bl.min_mem_alignment = 512;
         bs->bl.opt_mem_alignment = 512;
     }
 
@@ -558,6 +570,9 @@ void bdrv_refresh_limits(BlockDriverState *bs, Error **errp)
         bs->bl.opt_mem_alignment =
             MAX(bs->bl.opt_mem_alignment,
                 bs->backing_hd->bl.opt_mem_alignment);
+        bs->bl.min_mem_alignment =
+            MAX(bs->bl.min_mem_alignment,
+                bs->backing_hd->bl.min_mem_alignment);
     }
 
     /* Then let the driver override it */
@@ -1076,6 +1091,7 @@ static int bdrv_open_common(BlockDriverState *bs, BlockDriverState *file,
     }
 
     assert(bdrv_opt_mem_align(bs) != 0);
+    assert(bdrv_min_mem_align(bs) != 0);
     assert((bs->request_alignment != 0) || bs->sg);
     return 0;
 
@@ -5624,7 +5640,7 @@ void *qemu_try_blockalign0(BlockDriverState *bs, size_t size)
 bool bdrv_qiov_is_aligned(BlockDriverState *bs, QEMUIOVector *qiov)
 {
     int i;
-    size_t alignment = bdrv_opt_mem_align(bs);
+    size_t alignment = bdrv_min_mem_align(bs);
 
     for (i = 0; i < qiov->niov; i++) {
         if ((uintptr_t) qiov->iov[i].iov_base % alignment) {
