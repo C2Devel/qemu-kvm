@@ -83,7 +83,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid .CROC1
+%define buildid .CROC2
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.448
@@ -8479,6 +8479,8 @@ Patch4937: kvm-Revert-migration-set-speed-to-maximum-during-last-st.patch
 Patch4938: kvm-Revert-net-Forbid-dealing-with-packets-when-VM-is-no.patch
 # QMP: INCOMING_FINISHED event
 Patch9990: croc-kvm-qmp-incoming_finished-event-added.patch
+# Default cdrom readonly state false
+Patch9991: croc-kvm-blockdev-fix-cdrom-readonly-default-state.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -12561,6 +12563,7 @@ ApplyOptionalPatch()
 %patch4937 -p1
 %patch4938 -p1
 %Patch9990 -p1
+%Patch9991 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -12932,6 +12935,9 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Thu Jan 29 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.CROC2.el6
+- croc-kvm-blockdev-fix-cdrom-readonly-default-state.patch
+
 * Wed Jan 28 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.CROC1.el6
 - croc-kvm-qmp-incoming_finished-event-added.patch
 
