@@ -616,7 +616,7 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
     }
     dinfo->bdrv = bdrv_new(dinfo->id);
     dinfo->bdrv->open_flags = snapshot ? BDRV_O_SNAPSHOT : 0;
-    dinfo->bdrv->read_only = ro;
+    dinfo->bdrv->read_only = (media == MEDIA_CDROM) ? 1 : ro;
     dinfo->devaddr = devaddr;
     dinfo->type = type;
     dinfo->bus = bus_id;
