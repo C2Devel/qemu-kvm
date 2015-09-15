@@ -262,12 +262,13 @@ void path_combine(char *dest, int dest_size,
     }
 }
 
-void bdrv_get_full_backing_filename(BlockDriverState *bs, char *dest, size_t sz)
+void bdrv_get_full_backing_filename(BlockDriverState *bs, const char *filename,
+                                    char *dest, size_t sz)
 {
     if (bs->backing_file[0] == '\0' || path_has_protocol(bs->backing_file)) {
         pstrcpy(dest, sz, bs->backing_file);
     } else {
-        path_combine(dest, sz, bs->filename, bs->backing_file);
+        path_combine(dest, sz, filename, bs->backing_file);
     }
 }
 
@@ -762,7 +763,7 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
         BlockDriver *back_drv = NULL;
 
         bs->backing_hd = bdrv_new("");
-        bdrv_get_full_backing_filename(bs, backing_filename,
+        bdrv_get_full_backing_filename(bs, filename, backing_filename,
                                        sizeof(backing_filename));
 
         if (bs->backing_format[0] != '\0') {
@@ -1849,6 +1850,10 @@ static int bdrv_check_byte_request(BlockDriverState *bs, int64_t offset,
 static int bdrv_check_request(BlockDriverState *bs, int64_t sector_num,
                               int nb_sectors)
 {
+    if (nb_sectors > INT_MAX / BDRV_SECTOR_SIZE) {
+        return -EIO;
+    }
+
     return bdrv_check_byte_request(bs, sector_num * BDRV_SECTOR_SIZE,
                                    nb_sectors * BDRV_SECTOR_SIZE);
 }

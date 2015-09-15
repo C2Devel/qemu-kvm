@@ -686,8 +686,8 @@ static int assigned_dev_register_regions(PCIRegion *io_regions,
     return 0;
 }
 
-static int get_real_device(AssignedDevice *pci_dev, uint8_t r_bus,
-                           uint8_t r_dev, uint8_t r_func)
+static int get_real_device(AssignedDevice *pci_dev, uint16_t r_seg,
+			   uint8_t r_bus, uint8_t r_dev, uint8_t r_func)
 {
     char dir[128], name[128];
     int fd, r = 0;
@@ -700,8 +700,8 @@ static int get_real_device(AssignedDevice *pci_dev, uint8_t r_bus,
 
     dev->region_number = 0;
 
-    snprintf(dir, sizeof(dir), "/sys/bus/pci/devices/0000:%02x:%02x.%x/",
-	     r_bus, r_dev, r_func);
+    snprintf(dir, sizeof(dir), "/sys/bus/pci/devices/%04x:%02x:%02x.%x/",
+	     r_seg, r_bus, r_dev, r_func);
 
     snprintf(name, sizeof(name), "%sconfig", dir);
 
@@ -919,9 +919,9 @@ static void free_assigned_device(AssignedDevice *dev)
     }
 }
 
-static uint32_t calc_assigned_dev_id(uint8_t bus, uint8_t devfn)
+static uint32_t calc_assigned_dev_id(uint16_t seg, uint8_t bus, uint8_t devfn)
 {
-    return (uint32_t)bus << 8 | (uint32_t)devfn;
+    return (uint32_t)seg << 16 | (uint32_t)bus << 8 | (uint32_t)devfn;
 }
 
 static int assign_device(AssignedDevice *dev)
@@ -929,9 +929,20 @@ static int assign_device(AssignedDevice *dev)
     struct kvm_assigned_pci_dev assigned_dev_data;
     int r;
 
+#ifdef KVM_CAP_PCI_SEGMENT
+    /* Only pass non-zero PCI segment to capable module */
+    if (!kvm_check_extension(kvm_state, KVM_CAP_PCI_SEGMENT) &&
+        dev->h_segnr) {
+        fprintf(stderr, "Can't assign device inside non-zero PCI segment "
+                "as this KVM module doesn't support it.\n");
+        return -ENODEV;
+    }
+#endif
+
     memset(&assigned_dev_data, 0, sizeof(assigned_dev_data));
     assigned_dev_data.assigned_dev_id  =
-	calc_assigned_dev_id(dev->h_busnr, dev->h_devfn);
+	calc_assigned_dev_id(dev->h_segnr, dev->h_busnr, dev->h_devfn);
+    assigned_dev_data.segnr = dev->h_segnr;
     assigned_dev_data.busnr = dev->h_busnr;
     assigned_dev_data.devfn = dev->h_devfn;
 
@@ -977,7 +988,7 @@ static int assign_irq(AssignedDevice *dev)
 
     memset(&assigned_irq_data, 0, sizeof(assigned_irq_data));
     assigned_irq_data.assigned_dev_id =
-        calc_assigned_dev_id(dev->h_busnr, dev->h_devfn);
+        calc_assigned_dev_id(dev->h_segnr, dev->h_busnr, dev->h_devfn);
     assigned_irq_data.guest_irq = irq;
     assigned_irq_data.host_irq = dev->real_device.irq;
 #ifdef KVM_CAP_ASSIGN_DEV_IRQ
@@ -1021,7 +1032,7 @@ static void deassign_device(AssignedDevice *dev)
 
     memset(&assigned_dev_data, 0, sizeof(assigned_dev_data));
     assigned_dev_data.assigned_dev_id  =
-	calc_assigned_dev_id(dev->h_busnr, dev->h_devfn);
+	calc_assigned_dev_id(dev->h_segnr, dev->h_busnr, dev->h_devfn);
 
     r = kvm_deassign_pci_device(kvm_context, &assigned_dev_data);
     if (r < 0)
@@ -1077,7 +1088,7 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev, unsigned int ctrl_pos)
 
     memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
     assigned_irq_data.assigned_dev_id  =
-        calc_assigned_dev_id(assigned_dev->h_busnr,
+        calc_assigned_dev_id(assigned_dev->h_segnr, assigned_dev->h_busnr,
                 (uint8_t)assigned_dev->h_devfn);
 
     /* Some guests gratuitously disable MSI even if they're not using it,
@@ -1224,7 +1235,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
         return 0;
     }
 
-    msix_nr.assigned_dev_id = calc_assigned_dev_id(adev->h_busnr,
+    msix_nr.assigned_dev_id = calc_assigned_dev_id(adev->h_segnr, adev->h_busnr,
                                           (uint8_t)adev->h_devfn);
     msix_nr.entry_nr = entries_nr;
     r = kvm_assign_set_msix_nr(kvm_context, &msix_nr);
@@ -1292,7 +1303,7 @@ static void assigned_dev_update_msix(PCIDevice *pci_dev, unsigned int ctrl_pos)
 
     memset(&assigned_irq_data, 0, sizeof assigned_irq_data);
     assigned_irq_data.assigned_dev_id  =
-            calc_assigned_dev_id(assigned_dev->h_busnr,
+            calc_assigned_dev_id(assigned_dev->h_segnr, assigned_dev->h_busnr,
                     (uint8_t)assigned_dev->h_devfn);
 
     /* Some guests gratuitously disable MSIX even if they're not using it,
@@ -1892,8 +1903,8 @@ static void reset_assigned_device(DeviceState *dev)
     }
 
     snprintf(reset_file, sizeof(reset_file),
-             "/sys/bus/pci/devices/0000:%02x:%02x.%01x/reset",
-             adev->host.bus, adev->host.dev, adev->host.func);
+             "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/reset",
+             adev->host.seg, adev->host.bus, adev->host.dev, adev->host.func);
 
     /*
      * Issue a device reset via pci-sysfs.  Note that we use write(2) here
@@ -1950,12 +1961,13 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
         }
     }
 
-    if (!dev->host.bus && !dev->host.dev && !dev->host.func) {
+    if (!dev->host.seg && !dev->host.bus && !dev->host.dev && !dev->host.func) {
         error_report("pci-assign: error: no host device specified");
         return -1;
     }
 
-    if (get_real_device(dev, dev->host.bus, dev->host.dev, dev->host.func)) {
+    if (get_real_device(dev, dev->host.seg, dev->host.bus,
+			dev->host.dev, dev->host.func)) {
         error_report("pci-assign: Error: Couldn't get real device (%s)!",
                      dev->dev.qdev.id);
         goto out;
@@ -1973,6 +1985,7 @@ static int assigned_initfn(struct PCIDevice *pci_dev)
     dev->intpin = e_intx;
     dev->run = 0;
     dev->girq = -1;
+    dev->h_segnr = dev->host.seg;
     dev->h_busnr = dev->host.bus;
     dev->h_devfn = PCI_DEVFN(dev->host.dev, dev->host.func);
 
@@ -2040,7 +2053,7 @@ static int parse_hostaddr(DeviceState *dev, Property *prop, const char *str)
     PCIHostDevice *ptr = qdev_get_prop_ptr(dev, prop);
     int rc;
 
-    rc = pci_parse_host_devaddr(str, &ptr->bus, &ptr->dev, &ptr->func);
+    rc = pci_parse_host_devaddr(str, &ptr->seg, &ptr->bus, &ptr->dev, &ptr->func);
     if (rc != 0)
         return -1;
     return 0;
@@ -2050,7 +2063,12 @@ static int print_hostaddr(DeviceState *dev, Property *prop, char *dest, size_t l
 {
     PCIHostDevice *ptr = qdev_get_prop_ptr(dev, prop);
 
-    return snprintf(dest, len, "%02x:%02x.%x", ptr->bus, ptr->dev, ptr->func);
+    if (ptr->seg) {
+        return snprintf(dest, len, "%04x:%02x:%02x.%x", ptr->seg, ptr->bus,
+                        ptr->dev, ptr->func);
+    } else {
+        return snprintf(dest, len, "%02x:%02x.%x", ptr->bus, ptr->dev, ptr->func);
+    }
 }
 
 PropertyInfo qdev_prop_hostaddr = {
@@ -2093,7 +2111,7 @@ device_init(assign_register_devices)
 /*
  * Syntax to assign device:
  *
- * -pcidevice host=bus:dev.func[,dma=none][,name=Foo]
+ * -pcidevice host=[seg:]bus:dev.func[,dma=none][,name=Foo]
  *
  * Example:
  * -pcidevice host=00:13.0,dma=pvdma
@@ -2170,8 +2188,8 @@ static void assigned_dev_load_option_rom(AssignedDevice *dev)
         return;
 
     snprintf(rom_file, sizeof(rom_file),
-             "/sys/bus/pci/devices/0000:%02x:%02x.%01x/rom",
-             dev->host.bus, dev->host.dev, dev->host.func);
+             "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/rom",
+             dev->host.seg, dev->host.bus, dev->host.dev, dev->host.func);
 
     if (stat(rom_file, &st)) {
         return;

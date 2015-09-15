@@ -114,6 +114,12 @@ typedef unsigned char uuid_t[16];
 /* Unallocated blocks use this index (no need to convert endianess). */
 #define VDI_UNALLOCATED UINT32_MAX
 
+#define VDI_BLOCK_SIZE           (1 * MiB)
+/* max blocks in image is (0xffffffff / 4) */
+#define VDI_BLOCKS_IN_IMAGE_MAX  0x3fffffff
+#define VDI_DISK_SIZE_MAX        ((uint64_t)VDI_BLOCKS_IN_IMAGE_MAX * \
+                                  (uint64_t)VDI_BLOCK_SIZE)
+
 #if !defined(CONFIG_UUID)
 static inline void uuid_generate(uuid_t out)
 {
@@ -395,6 +401,10 @@ static int vdi_open(BlockDriverState *bs, int flags)
     vdi_header_print(&header);
 #endif
 
+    if (header.disk_size > VDI_DISK_SIZE_MAX) {
+        goto fail;
+    }
+
     if (header.version != VDI_VERSION_1_1) {
         logout("unsupported version %u.%u\n",
                header.version >> 16, header.version & 0xffff);
@@ -410,8 +420,9 @@ static int vdi_open(BlockDriverState *bs, int flags)
     } else if (header.sector_size != SECTOR_SIZE) {
         logout("unsupported sector size %u B\n", header.sector_size);
         goto fail;
-    } else if (header.block_size != 1 * MiB) {
-        logout("unsupported block size %u B\n", header.block_size);
+    } else if (header.block_size != VDI_BLOCK_SIZE) {
+        logout("unsupported VDI image (sector size %u is not %u)",
+               header.block_size, VDI_BLOCK_SIZE);
         goto fail;
     } else if (header.disk_size !=
                (uint64_t)header.blocks_in_image * header.block_size) {
@@ -422,6 +433,9 @@ static int vdi_open(BlockDriverState *bs, int flags)
         goto fail;
     } else if (!uuid_is_null(header.uuid_parent)) {
         logout("parent uuid != 0, unsupported\n");
+        goto fail;
+    } else if (header.blocks_in_image > VDI_BLOCKS_IN_IMAGE_MAX) {
+        logout("unsupported number of blocks in image\n");
         goto fail;
     }
 
@@ -835,10 +849,16 @@ static int vdi_create(const char *filename, QEMUOptionParameter *options)
         options++;
     }
 
+    if (bytes > VDI_DISK_SIZE_MAX) {
+        result = -EINVAL;
+        goto exit;
+    }
+
     fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY | O_LARGEFILE,
               0644);
     if (fd < 0) {
-        return -errno;
+        result = -errno;
+        goto exit;
     }
 
     blocks = bytes / block_size;
@@ -893,6 +913,7 @@ static int vdi_create(const char *filename, QEMUOptionParameter *options)
         result = -errno;
     }
 
+exit:
     return result;
 }
 

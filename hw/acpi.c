@@ -911,13 +911,19 @@ static int piix4_device_hotplug(PCIDevice *dev, int state);
 
 void piix4_acpi_system_hot_add_init(PCIBus *bus, const char *cpu_model)
 {
-    int i = 0, cpus = smp_cpus;
+    int cpu_index;
     struct gpe_regs *gpe = &pm_state->gpe;
 
-    while (cpus > 0) {
-        gpe->cpus_sts[i++] = (cpus < 8) ? (1 << cpus) - 1 : 0xff;
-        cpus -= 8;
+    memset(gpe->cpus_sts, 0, sizeof gpe->cpus_sts);
+    for (cpu_index = 0; cpu_index < smp_cpus; ++cpu_index) {
+        uint32_t apic_id;
+
+        apic_id = apic_id_for_cpu(cpu_index);
+        if (apic_id < sizeof gpe->cpus_sts * 8) {
+            gpe->cpus_sts[apic_id / 8] |= (1 << (apic_id % 8));
+        }
     }
+
     register_ioport_write(GPE_BASE, 4, 1, gpe_writeb, gpe);
     register_ioport_read(GPE_BASE, 4, 1,  gpe_readb, gpe);
 
@@ -1001,6 +1007,24 @@ void qemu_system_cpu_hot_add(int cpu, int state, Monitor *mon)
     pm_update_sci(pm_state);
 }
 #endif
+
+/* Query the ACPI enabled/disabled state of a VCPU, based on the VCPU's APIC
+ * ID. If the information is unavailable, @enabled is indeterminate on output
+ * and -1 is returned. Otherwise, @enabled is set to the VCPU's ACPI state, and
+ * 0 is returned.
+ */
+int acpi_query_processor(bool *enabled, uint32_t apic_id)
+{
+    const struct gpe_regs *g;
+
+    if (!acpi_enabled || apic_id >= sizeof g->cpus_sts * 8) {
+        return -1;
+    }
+
+    g = &pm_state->gpe;
+    *enabled = !!(g->cpus_sts[apic_id / 8] & (1 << (apic_id % 8)));
+    return 0;
+}
 
 static void enable_device(PIIX4PMState *s, int slot)
 {

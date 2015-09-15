@@ -289,8 +289,8 @@ void monitor_flush(Monitor *mon)
 
     if (len && !mon->mux_out) {
         rc = qemu_chr_fe_write(mon->chr, (const uint8_t *) buf, len);
-        if (rc == len) {
-            /* all flushed */
+        if ((rc < 0 && errno != EAGAIN) || (rc == len)) {
+            /* all flushed or error */
             QDECREF(mon->outbuf);
             mon->outbuf = qstring_new();
             return;
@@ -1141,6 +1141,9 @@ static void do_info_cpus(Monitor *mon, QObject **ret_data)
     for(env = first_cpu; env != NULL; env = env->next_cpu) {
         QDict *cpu;
         QObject *obj;
+#if defined(TARGET_I386)
+        bool enabled;
+#endif
 
         cpu_synchronize_state(env);
 
@@ -1152,6 +1155,10 @@ static void do_info_cpus(Monitor *mon, QObject **ret_data)
 
 #if defined(TARGET_I386)
         qdict_put(cpu, "pc", qint_from_int(env->eip + env->segs[R_CS].base));
+
+        if (acpi_query_processor(&enabled, env->cpuid_apic_id) == 0) {
+            qdict_put(cpu, "enabled-in-acpi", qbool_from_int(enabled));
+        }
 #elif defined(TARGET_PPC)
         qdict_put(cpu, "nip", qint_from_int(env->nip));
 #elif defined(TARGET_SPARC)

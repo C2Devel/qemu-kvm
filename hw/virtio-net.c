@@ -56,8 +56,8 @@ typedef struct VirtIONet
     uint8_t vhost_started;
     bool macvtap_rhel620_compat;
     struct {
-        int in_use;
-        int first_multi;
+        uint32_t in_use;
+        uint32_t first_multi;
         uint8_t multi_overflow;
         uint8_t uni_overflow;
         uint8_t *macs;
@@ -465,7 +465,7 @@ static int virtio_net_handle_mac(VirtIONet *n, uint8_t cmd,
         return VIRTIO_NET_ERR;
     }
 
-    if (n->mac_table.in_use + mac_data.entries <= MAC_TABLE_ENTRIES) {
+    if (mac_data.entries <= MAC_TABLE_ENTRIES - n->mac_table.in_use) {
         s = iov_to_buf(iov, iov_cnt, n->mac_table.macs, 0,
                        mac_data.entries * ETH_ALEN);
         if (s != mac_data.entries * ETH_ALEN) {

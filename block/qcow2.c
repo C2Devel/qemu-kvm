@@ -167,13 +167,41 @@ static void cleanup_unknown_header_ext(BlockDriverState *bs)
     }
 }
 
+static int validate_table_offset(BlockDriverState *bs, uint64_t offset,
+                                 uint64_t entries, size_t entry_len)
+{
+    BDRVQcowState *s = bs->opaque;
+    uint64_t size;
+
+    /* Use signed INT64_MAX as the maximum even for uint64_t header fields,
+     * because values will be passed to qemu functions taking int64_t. */
+    if (entries > INT64_MAX / entry_len) {
+        return -EINVAL;
+    }
+
+    size = entries * entry_len;
+
+    if (INT64_MAX - size < offset) {
+        return -EINVAL;
+    }
+
+    /* Tables must be cluster aligned */
+    if (offset & (s->cluster_size - 1)) {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 static int qcow2_open(BlockDriverState *bs, int flags)
 {
     BDRVQcowState *s = bs->opaque;
-    int len, i, ret = 0;
+    unsigned int len, i;
+    int ret = 0;
     QCowHeader header;
     uint64_t ext_end;
     bool writethrough;
+    uint64_t l1_vm_state_index;
 
     ret = bdrv_pread(bs->file, 0, &header, sizeof(header));
     if (ret < 0) {
@@ -227,23 +255,73 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     s->csize_shift = (62 - (s->cluster_bits - 8));
     s->csize_mask = (1 << (s->cluster_bits - 8)) - 1;
     s->cluster_offset_mask = (1LL << s->csize_shift) - 1;
+
     s->refcount_table_offset = header.refcount_table_offset;
     s->refcount_table_size =
         header.refcount_table_clusters << (s->cluster_bits - 3);
 
-    s->snapshots_offset = header.snapshots_offset;
-    s->nb_snapshots = header.nb_snapshots;
+    if (header.refcount_table_clusters > qcow2_max_refcount_clusters(s)) {
+        qerror_report(QERR_GENERIC_ERROR, "Reference count table too large");
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    ret = validate_table_offset(bs, s->refcount_table_offset,
+                                s->refcount_table_size, sizeof(uint64_t));
+    if (ret < 0) {
+         qerror_report(QERR_GENERIC_ERROR,
+                      "Invalid reference count table offset");
+        goto fail;
+    }
+
+    /* Snapshot table offset/length */
+    if (header.nb_snapshots > QCOW_MAX_SNAPSHOTS) {
+        qerror_report(QERR_GENERIC_ERROR, "Too many snapshots");
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    ret = validate_table_offset(bs, header.snapshots_offset,
+                                header.nb_snapshots,
+                                sizeof(QCowSnapshotHeader));
+    if (ret < 0) {
+        qerror_report(QERR_GENERIC_ERROR, "Invalid snapshot table offset");
+        goto fail;
+    }
 
     /* read the level 1 table */
+    if (header.l1_size > 0x2000000) {
+        /* 32 MB L1 table is enough for 2 PB images at 64k cluster size
+         * (128 GB for 512 byte clusters, 2 EB for 2 MB clusters) */
+        qerror_report(QERR_GENERIC_ERROR, "Active L1 table too large");
+        ret = -EFBIG;
+        goto fail;
+    }
     s->l1_size = header.l1_size;
-    s->l1_vm_state_index = size_to_l1(s, header.size);
+
+    l1_vm_state_index = size_to_l1(s, header.size);
+    if (l1_vm_state_index > INT_MAX) {
+        ret = -EFBIG;
+        goto fail;
+    }
+    s->l1_vm_state_index = l1_vm_state_index;
+
     /* the L1 table must contain at least enough entries to put
        header.size bytes */
     if (s->l1_size < s->l1_vm_state_index) {
         ret = -EINVAL;
         goto fail;
     }
+
+    ret = validate_table_offset(bs, header.l1_table_offset,
+                                header.l1_size, sizeof(uint64_t));
+    if (ret < 0) {
+        qerror_report(QERR_GENERIC_ERROR, "Invalid L1 table offset");
+        goto fail;
+    }
     s->l1_table_offset = header.l1_table_offset;
+
+
     if (s->l1_size > 0) {
         s->l1_table = g_malloc0(
             align_offset(s->l1_size * sizeof(uint64_t), 512));
@@ -277,6 +355,12 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     QLIST_INIT(&s->cluster_allocs);
 
     /* read qcow2 extensions */
+    if (header.backing_file_offset > s->cluster_size) {
+        qerror_report(QERR_GENERIC_ERROR, "Invalid backing file offset");
+        ret = -EINVAL;
+        goto fail;
+    }
+
     if (header.backing_file_offset) {
         ext_end = header.backing_file_offset;
     } else {
@@ -290,8 +374,10 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     /* read the backing file name */
     if (header.backing_file_offset != 0) {
         len = header.backing_file_size;
-        if (len > 1023) {
-            len = 1023;
+        if (len > MIN(1023, s->cluster_size - header.backing_file_offset)) {
+            qerror_report(QERR_GENERIC_ERROR, "Backing file name too long");
+            ret = -EINVAL;
+            goto fail;
         }
         ret = bdrv_pread(bs->file, header.backing_file_offset,
                          bs->backing_file, len);
@@ -300,6 +386,10 @@ static int qcow2_open(BlockDriverState *bs, int flags)
         }
         bs->backing_file[len] = '\0';
     }
+
+    /* Internal snapshots */
+    s->snapshots_offset = header.snapshots_offset;
+    s->nb_snapshots = header.nb_snapshots;
 
     ret = qcow2_read_snapshots(bs);
     if (ret < 0) {
@@ -905,7 +995,8 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
 static int qcow2_truncate(BlockDriverState *bs, int64_t offset)
 {
     BDRVQcowState *s = bs->opaque;
-    int ret, new_l1_size;
+    int64_t new_l1_size;
+    int ret;
 
     if (offset & 511) {
         return -EINVAL;
@@ -970,7 +1061,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
      */
     BlockDriverState* bs;
     QCowHeader header;
-    uint8_t* refcount_table;
+    uint64_t* refcount_table;
     int ret;
 
     ret = bdrv_create_file(filename, options);
@@ -1005,9 +1096,10 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         goto out;
     }
 
-    /* Write an empty refcount table */
-    refcount_table = qemu_mallocz(cluster_size);
-    ret = bdrv_pwrite(bs, cluster_size, refcount_table, cluster_size);
+    /* Write a refcount table with one refcount block */
+    refcount_table = qemu_mallocz(2 * cluster_size);
+    refcount_table[0] = cpu_to_be64(2 * cluster_size);
+    ret = bdrv_pwrite(bs, cluster_size, refcount_table, 2 * cluster_size);
     qemu_free(refcount_table);
 
     if (ret < 0) {
@@ -1029,7 +1121,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         goto out;
     }
 
-    ret = qcow2_alloc_clusters(bs, 2 * cluster_size);
+    ret = qcow2_alloc_clusters(bs, 3 * cluster_size);
     if (ret < 0) {
         goto out;
 

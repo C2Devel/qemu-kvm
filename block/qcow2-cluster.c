@@ -28,12 +28,12 @@
 #include "block_int.h"
 #include "block/qcow2.h"
 
-int qcow2_grow_l1_table(BlockDriverState *bs, int min_size)
+int qcow2_grow_l1_table(BlockDriverState *bs, uint64_t min_size)
 {
     BDRVQcowState *s = bs->opaque;
-    int new_l1_size, new_l1_size2, ret, i;
+    int new_l1_size2, ret, i;
     uint64_t *new_l1_table;
-    int64_t new_l1_table_offset;
+    int64_t new_l1_table_offset, new_l1_size;
     uint8_t data[12];
 
     new_l1_size = s->l1_size;
@@ -45,8 +45,14 @@ int qcow2_grow_l1_table(BlockDriverState *bs, int min_size)
     while (min_size > new_l1_size) {
         new_l1_size = (new_l1_size * 3 + 1) / 2;
     }
+
+    if (new_l1_size > INT_MAX / sizeof(uint64_t)) {
+        return -EFBIG;
+    }
+
 #ifdef DEBUG_ALLOC2
-    printf("grow l1_table from %d to %d\n", s->l1_size, new_l1_size);
+    fprintf(stderr, "grow l1_table from %d to %" PRId64 "\n",
+            s->l1_size, new_l1_size);
 #endif
 
     new_l1_size2 = sizeof(uint64_t) * new_l1_size;
@@ -388,8 +394,8 @@ int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
     int *num, uint64_t *cluster_offset)
 {
     BDRVQcowState *s = bs->opaque;
-    unsigned int l1_index, l2_index;
-    uint64_t l2_offset, *l2_table;
+    unsigned int l2_index;
+    uint64_t l1_index, l2_offset, *l2_table;
     int l1_bits, c;
     unsigned int index_in_cluster, nb_clusters;
     uint64_t nb_available, nb_needed;
@@ -482,8 +488,8 @@ static int get_cluster_table(BlockDriverState *bs, uint64_t offset,
                              int *new_l2_index)
 {
     BDRVQcowState *s = bs->opaque;
-    unsigned int l1_index, l2_index;
-    uint64_t l2_offset;
+    unsigned int l2_index;
+    uint64_t l1_index, l2_offset;
     uint64_t *l2_table = NULL;
     int ret;
 
@@ -496,6 +502,8 @@ static int get_cluster_table(BlockDriverState *bs, uint64_t offset,
             return ret;
         }
     }
+
+    assert(l1_index < s->l1_size);
     l2_offset = s->l1_table[l1_index];
 
     /* seek the l2 table of the given l2 offset */

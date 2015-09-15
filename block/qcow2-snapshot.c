@@ -26,26 +26,6 @@
 #include "block_int.h"
 #include "block/qcow2.h"
 
-typedef struct __attribute__((packed)) QCowSnapshotHeader {
-    /* header is 8 byte aligned */
-    uint64_t l1_table_offset;
-
-    uint32_t l1_size;
-    uint16_t id_str_size;
-    uint16_t name_size;
-
-    uint32_t date_sec;
-    uint32_t date_nsec;
-
-    uint64_t vm_clock_nsec;
-
-    uint32_t vm_state_size;
-    uint32_t extra_data_size; /* for extension */
-    /* extra data follows */
-    /* id_str follows */
-    /* name follows  */
-} QCowSnapshotHeader;
-
 void qcow2_free_snapshots(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
@@ -120,8 +100,14 @@ int qcow2_read_snapshots(BlockDriverState *bs)
         }
         offset += name_size;
         sn->name[name_size] = '\0';
+
+        if (offset - s->snapshots_offset > QCOW_MAX_SNAPSHOTS_SIZE) {
+            ret = -EFBIG;
+            goto fail;
+        }
     }
 
+    assert(offset - s->snapshots_offset <= INT_MAX);
     s->snapshots_size = offset - s->snapshots_offset;
     return 0;
 
@@ -152,7 +138,14 @@ static int qcow2_write_snapshots(BlockDriverState *bs)
         offset += sizeof(h);
         offset += strlen(sn->id_str);
         offset += strlen(sn->name);
+
+        if (offset > QCOW_MAX_SNAPSHOTS_SIZE) {
+            ret = -EFBIG;
+            goto fail;
+        }
     }
+
+    assert(offset <= INT_MAX);
     snapshots_size = offset;
 
     /* Allocate space for the new snapshot list */
@@ -283,6 +276,10 @@ int qcow2_snapshot_create(BlockDriverState *bs, QEMUSnapshotInfo *sn_info)
     int i, ret;
     uint64_t *l1_table = NULL;
     int64_t l1_table_offset;
+
+    if (s->nb_snapshots >= QCOW_MAX_SNAPSHOTS) {
+        return -EFBIG;
+    }
 
     memset(sn, 0, sizeof(*sn));
 

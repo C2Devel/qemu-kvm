@@ -2839,6 +2839,11 @@ Return a json-array. Each CPU is represented by a json-object, which contains:
      "nip": PPC (json-int)
      "pc" and "npc": sparc (json-int)
      "PC": mips (json-int)
+- "enabled-in-acpi": ACPI enabled/disabled state (json-bool, i386/x86_64 only).
+                     True if the VCPU is known to be enabled in the ACPI PM GPE
+                     register block. False if the VCPU is known to be disabled
+                     in the same. The field is missing if the information is
+                     unavailable.
 
 Example:
 
@@ -2849,13 +2854,15 @@ Example:
             "CPU":0,
             "current":true,
             "halted":false,
-            "pc":3227107138
+            "pc":3227107138,
+            "enabled-in-acpi":true
          },
          {
             "CPU":1,
             "current":false,
             "halted":true,
-            "pc":7108165
+            "pc":7108165,
+            "enabled-in-acpi":true
          }
       ]
    }

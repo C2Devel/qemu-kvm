@@ -1319,7 +1319,7 @@ static void collect_image_info(BlockDriverState *bs,
     if (backing_filename[0] != '\0') {
         info->backing_filename = g_strdup(backing_filename);
         info->has_backing_filename = true;
-        bdrv_get_full_backing_filename(bs, backing_filename2,
+        bdrv_get_full_backing_filename(bs, filename, backing_filename2,
                                        sizeof(backing_filename2));
 
         if (strcmp(backing_filename, backing_filename2) != 0) {

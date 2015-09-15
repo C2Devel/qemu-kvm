@@ -203,6 +203,7 @@ extern unsigned int nb_prom_envs;
 
 /* acpi */
 void qemu_system_cpu_hot_add(int cpu, int state, Monitor *mon);
+int acpi_query_processor(bool *enabled, uint32_t apic_id);
 
 /* pci-hotplug */
 void pci_device_hot_add(Monitor *mon, const QDict *qdict);

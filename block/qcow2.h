@@ -40,6 +40,15 @@
 #define QCOW_CRYPT_AES  1
 
 #define QCOW_MAX_CRYPT_CLUSTERS 32
+#define QCOW_MAX_SNAPSHOTS 65536
+
+/* 8 MB refcount table is enough for 2 PB images at 64k cluster size
+ * (128 GB for 512 byte clusters, 2 EB for 2 MB clusters) */
+#define QCOW_MAX_REFTABLE_SIZE 0x800000
+
+/* Allow for an average of 1k per snapshot table entry, should be plenty of
+ * space for snapshot names and IDs */
+#define QCOW_MAX_SNAPSHOTS_SIZE (1024 * QCOW_MAX_SNAPSHOTS)
 
 /* indicate that the refcount of the referenced cluster is exactly one. */
 #define QCOW_OFLAG_COPIED     (1LL << 63)
@@ -73,6 +82,27 @@ typedef struct QCowHeader {
     uint32_t nb_snapshots;
     uint64_t snapshots_offset;
 } QCowHeader;
+
+typedef struct __attribute__((packed)) QCowSnapshotHeader {
+    /* header is 8 byte aligned */
+    uint64_t l1_table_offset;
+
+    uint32_t l1_size;
+    uint16_t id_str_size;
+    uint16_t name_size;
+
+    uint32_t date_sec;
+    uint32_t date_nsec;
+
+    uint64_t vm_clock_nsec;
+
+    uint32_t vm_state_size;
+    uint32_t extra_data_size; /* for extension */
+    /* extra data follows */
+    /* id_str follows */
+    /* name follows  */
+} QCowSnapshotHeader;
+
 
 typedef struct QCowSnapshot {
     uint64_t l1_table_offset;
@@ -120,8 +150,8 @@ typedef struct BDRVQcowState {
     uint64_t *refcount_table;
     uint64_t refcount_table_offset;
     uint32_t refcount_table_size;
-    int64_t free_cluster_index;
-    int64_t free_byte_offset;
+    uint64_t free_cluster_index;
+    uint64_t free_byte_offset;
 
     CoMutex lock;
 
@@ -131,7 +161,7 @@ typedef struct BDRVQcowState {
     AES_KEY aes_decrypt_key;
     uint64_t snapshots_offset;
     int snapshots_size;
-    int nb_snapshots;
+    unsigned int nb_snapshots;
     QCowSnapshot *snapshots;
 
     QLIST_HEAD(, Qcow2UnknownHeaderExtension) unknown_header_ext;
@@ -169,7 +199,7 @@ static inline int size_to_clusters(BDRVQcowState *s, int64_t size)
     return (size + (s->cluster_size - 1)) >> s->cluster_bits;
 }
 
-static inline int size_to_l1(BDRVQcowState *s, int64_t size)
+static inline int64_t size_to_l1(BDRVQcowState *s, int64_t size)
 {
     int shift = s->cluster_bits + s->l2_bits;
     return (size + (1ULL << shift) - 1) >> shift;
@@ -181,6 +211,10 @@ static inline int64_t align_offset(int64_t offset, int n)
     return offset;
 }
 
+static inline uint64_t qcow2_max_refcount_clusters(BDRVQcowState *s)
+{
+    return QCOW_MAX_REFTABLE_SIZE >> s->cluster_bits;
+}
 
 // FIXME Need qcow2_ prefix to global functions
 
@@ -193,7 +227,7 @@ int qcow2_update_header(BlockDriverState *bs);
 int qcow2_refcount_init(BlockDriverState *bs);
 void qcow2_refcount_close(BlockDriverState *bs);
 
-int64_t qcow2_alloc_clusters(BlockDriverState *bs, int64_t size);
+int64_t qcow2_alloc_clusters(BlockDriverState *bs, uint64_t size);
 int64_t qcow2_alloc_bytes(BlockDriverState *bs, int size);
 void qcow2_free_clusters(BlockDriverState *bs,
     int64_t offset, int64_t size);
@@ -209,7 +243,7 @@ int qcow2_check_refcounts(BlockDriverState *bs, BdrvCheckResult *res,
                           BdrvCheckMode fix);
 
 /* qcow2-cluster.c functions */
-int qcow2_grow_l1_table(BlockDriverState *bs, int min_size);
+int qcow2_grow_l1_table(BlockDriverState *bs, uint64_t min_size);
 void qcow2_l2_cache_reset(BlockDriverState *bs);
 int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset);
 void qcow2_encrypt_sectors(BDRVQcowState *s, int64_t sector_num,

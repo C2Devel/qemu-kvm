@@ -1,6 +1,6 @@
 # build-time settings:
 # Define rhev as the first variable
-%define rhev 0
+%define rhev 1
 
 %if 0%{?rhev_test}
 %define enable_fake_machine 1
@@ -85,7 +85,7 @@
 
 %define buildid %{nil}
 
-%define zrelease 3
+%define zrelease 10
 %define sublevel 0.12.1.2
 %define pkgrelease 2.415
 
@@ -7735,6 +7735,186 @@ Patch4572: kvm-qcow2-Flush-image-after-creation.patch
 Patch4573: kvm-vmdk-Fix-vmdk_parse_extents.patch
 # For bz#1029331 - fix vmdk support to ESX images
 Patch4574: kvm-vmdk-fix-VMFS-extent-parsing.patch
+# For bz#1063202 - qemu-img fails to convert vmdk v3 image
+Patch4575: kvm-vmdk-Allow-read-only-open-of-VMDK-version-3.patch
+# For bz#1069239 - QMP socket breaks on unexpected close
+Patch4576: kvm-monitor-Cleanup-mon-outbuf-on-write-error.patch
+# For bz#1071740 - RHEV: Cannot start VMs that have more than 23 snapshots.
+Patch4577: kvm-block-Pass-filename-to-bdrv_get_full_backing_filenam.patch
+# For bz#1080436 - [Intel 6.5.z Bug] virsh setvcpus can not setup correct vcpu number
+Patch4578: kvm-ACPI-level-VCPU-enablement-info-for-libvirt-RHEL-6-o.patch
+# For bz#1078605 - EMBARGOED CVE-2014-0150 qemu: virtio-net: fix guest-triggerable buffer overrun [rhel-6.6]
+# For bz#1078849 - EMBARGOED CVE-2014-0150 qemu-kvm: qemu: virtio-net: buffer overflow in virtio_net_handle_mac() function [rhel-6.5.z]
+Patch4579: kvm-virtio-net-fix-guest-triggerable-buffer-overrun.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4580: kvm-qcow2-Check-backing_file_offset-CVE-2014-0144.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4581: kvm-qcow2-Check-refcount-table-size-CVE-2014-0144.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4582: kvm-qcow2-Validate-refcount-table-offset.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4583: kvm-qcow2-Validate-snapshot-table-offset-size-CVE-2014-0.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4584: kvm-qcow2-Validate-active-L1-table-offset-and-size-CVE-2.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4585: kvm-qcow2-Fix-backing-file-name-length-check.patch
+# For bz#1079337 - CVE-2014-0147 qemu-kvm: Qemu: block: possible crash due signed types or logic error [rhel-6.5.z]
+# For bz#1079338 - CVE-2014-0147 qemu-kvm: Qemu: block: possible crash due signed types or logic error [rhel-6.6]
+Patch4586: kvm-qcow2-Don-t-rely-on-free_cluster_index-in-alloc_refc.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4587: kvm-qcow2-Avoid-integer-overflow-in-get_refcount-CVE-201.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4588: kvm-qcow2-Check-new-refcount-table-size-on-growth.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4589: kvm-qcow2-Fix-types-in-qcow2_alloc_clusters-and-alloc_cl.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4590: kvm-qcow2-Protect-against-some-integer-overflows-in-bdrv.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4591: kvm-qcow2-Catch-some-L1-table-index-overflows.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4592: kvm-qcow2-Fix-new-L1-table-size-check-CVE-2014-0143.patch
+# For bz#1079330 - CVE-2014-0146 qemu-kvm: Qemu: qcow2: NULL dereference in qcow2_open() error path [rhel-6.5.z]
+# For bz#1079331 - CVE-2014-0146 qemu-kvm: Qemu: qcow2: NULL dereference in qcow2_open() error path [rhel-6.6]
+Patch4593: kvm-qcow2-Fix-NULL-dereference-in-qcow2_open-error-path-.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4594: kvm-qcow2-Limit-snapshot-table-size.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4595: kvm-block-cloop-validate-block_size-header-field-CVE-201.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4596: kvm-block-cloop-prevent-offsets_size-integer-overflow-CV.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4597: kvm-block-cloop-refuse-images-with-huge-offsets-arrays-C.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4598: kvm-block-cloop-Fix-coding-style.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4599: kvm-cloop-Fix-bdrv_open-error-handling.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4600: kvm-block-cloop-refuse-images-with-bogus-offsets-CVE-201.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4601: kvm-block-cloop-Use-g_free-instead-of-free.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4602: kvm-block-cloop-fix-offsets-size-off-by-one.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4603: kvm-bochs-Fix-bdrv_open-error-handling.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4604: kvm-bochs-Unify-header-structs-and-make-them-QEMU_PACKED.patch
+# For bz#1079337 - CVE-2014-0147 qemu-kvm: Qemu: block: possible crash due signed types or logic error [rhel-6.5.z]
+# For bz#1079338 - CVE-2014-0147 qemu-kvm: Qemu: block: possible crash due signed types or logic error [rhel-6.6]
+Patch4605: kvm-bochs-Use-unsigned-variables-for-offsets-and-sizes-C.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4606: kvm-bochs-Check-catalog_size-header-field-CVE-2014-0143.patch
+# For bz#1079313 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.5.z]
+# For bz#1079314 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.6]
+Patch4607: kvm-bochs-Check-extent_size-header-field-CVE-2014-0142.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4608: kvm-bochs-Fix-bitmap-offset-calculation.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4609: kvm-vpc-vhd-add-bounds-check-for-max_table_entries-and-b.patch
+# For bz#1079313 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.5.z]
+# For bz#1079314 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.6]
+Patch4610: kvm-vpc-Validate-block-size-CVE-2014-0142.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4611: kvm-vdi-add-bounds-checks-for-blocks_in_image-and-disk_s.patch
+# For bz#1079343 - CVE-2014-0148 qemu-kvm: Qemu: vhdx: bounds checking for block_size and logical_sector_size [rhel-6.5.z]
+# For bz#1079344 - CVE-2014-0148 qemu-kvm: Qemu: vhdx: bounds checking for block_size and logical_sector_size [rhel-6.6]
+Patch4612: kvm-vhdx-Bounds-checking-for-block_size-and-logical_sect.patch
+# For bz#1079452 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z]
+# For bz#1079453 - CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.6]
+Patch4613: kvm-curl-check-data-size-before-memcpy-to-local-buffer.-.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4614: kvm-dmg-Fix-bdrv_open-error-handling.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4615: kvm-dmg-coding-style-and-indentation-cleanup.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4616: kvm-dmg-prevent-out-of-bounds-array-access-on-terminator.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4617: kvm-dmg-drop-broken-bdrv_pread-loop.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4618: kvm-dmg-use-appropriate-types-when-reading-chunks.patch
+# For bz#1079323 - CVE-2014-0145 qemu-kvm: Qemu: prevent possible buffer overflows [rhel-6.5.z]
+# For bz#1079324 - CVE-2014-0145 qemu-kvm: Qemu: prevent possible buffer overflows [rhel-6.6]
+Patch4619: kvm-dmg-sanitize-chunk-length-and-sectorcount-CVE-2014-0.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4620: kvm-dmg-use-uint64_t-consistently-for-sectors-and-length.patch
+# For bz#1079323 - CVE-2014-0145 qemu-kvm: Qemu: prevent possible buffer overflows [rhel-6.5.z]
+# For bz#1079324 - CVE-2014-0145 qemu-kvm: Qemu: prevent possible buffer overflows [rhel-6.6]
+Patch4621: kvm-dmg-prevent-chunk-buffer-overflow-CVE-2014-0145.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4622: kvm-block-Limit-request-size-CVE-2014-0143.patch
+# For bz#1079318 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z]
+# For bz#1079319 - CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.6]
+Patch4623: kvm-parallels-Fix-catalog-size-integer-overflow-CVE-2014.patch
+# For bz#1079313 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.5.z]
+# For bz#1079314 - CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.6]
+Patch4624: kvm-parallels-Sanity-check-for-s-tracks-CVE-2014-0142.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4625: kvm-bochs-Fix-memory-leak-in-bochs_open-error-path.patch
+# For bz#1079518 - qemu-kvm: include leftover patches from block layer security audit
+# For bz#1086678 - qemu-kvm: include leftover patches from block layer security audit
+Patch4626: kvm-bochs-Fix-catalog-size-check.patch
+# For bz#1087978 - CVE-2014-2894 qemu-kvm: QEMU: out of bounds buffer accesses, guest triggerable via IDE SMART [rhel-6.5.z]
+Patch4627: kvm-ide-Correct-improper-smart-self-test-counter-reset-i.patch
+# For bz#1095692 - 
+Patch4628: kvm-virtio-out-of-bounds-buffer-write-on-invalid-state-l.patch
+# For bz#1095743 - 
+Patch4629: kvm-usb-sanity-check-setup_index-setup_len-in-post_load.patch
+# For bz#1095743 - 
+Patch4630: kvm-usb-sanity-check-setup_index-setup_len-in-post_load-2.patch
+# For bz#1095739 - 
+Patch4631: kvm-virtio-scsi-fix-buffer-overrun-on-invalid-state-load.patch
+# For bz#1095735 - 
+Patch4632: kvm-virtio-avoid-buffer-overrun-on-incoming-migration.patch
+# For bz#1095763 - 
+# For bz#1096124 - 
+Patch4633: kvm-virtio-validate-num_sg-when-mapping.patch
+# For bz#1095763 - 
+# For bz#1096124 - 
+Patch4634: kvm-virtio-allow-mapping-up-to-max-queue-size.patch
+# For bz#1099941 - 
+Patch4635: kvm-enable-PCI-multiple-segments-for-pass-through-device.patch
+# For bz#1095675 - 
+Patch4636: kvm-virtio-net-fix-buffer-overflow-on-invalid-state-load.patch
+# For bz#1095779 - 
+Patch4637: kvm-virtio-validate-config_len-on-load.patch
+# For bz#1096825 - 
+Patch4638: kvm-usb-fix-up-post-load-checks.patch
+# For bz#1100575 - Some vCPU topologies not accepted by libvirt
+Patch4639: kvm-CPU-hotplug-use-apic_id_for_cpu-round-2-RHEL-6-only.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -11441,6 +11621,71 @@ ApplyOptionalPatch()
 %patch4572 -p1
 %patch4573 -p1
 %patch4574 -p1
+%patch4575 -p1
+%patch4576 -p1
+%patch4577 -p1
+%patch4578 -p1
+%patch4579 -p1
+%patch4580 -p1
+%patch4581 -p1
+%patch4582 -p1
+%patch4583 -p1
+%patch4584 -p1
+%patch4585 -p1
+%patch4586 -p1
+%patch4587 -p1
+%patch4588 -p1
+%patch4589 -p1
+%patch4590 -p1
+%patch4591 -p1
+%patch4592 -p1
+%patch4593 -p1
+%patch4594 -p1
+%patch4595 -p1
+%patch4596 -p1
+%patch4597 -p1
+%patch4598 -p1
+%patch4599 -p1
+%patch4600 -p1
+%patch4601 -p1
+%patch4602 -p1
+%patch4603 -p1
+%patch4604 -p1
+%patch4605 -p1
+%patch4606 -p1
+%patch4607 -p1
+%patch4608 -p1
+%patch4609 -p1
+%patch4610 -p1
+%patch4611 -p1
+%patch4612 -p1
+%patch4613 -p1
+%patch4614 -p1
+%patch4615 -p1
+%patch4616 -p1
+%patch4617 -p1
+%patch4618 -p1
+%patch4619 -p1
+%patch4620 -p1
+%patch4621 -p1
+%patch4622 -p1
+%patch4623 -p1
+%patch4624 -p1
+%patch4625 -p1
+%patch4626 -p1
+%patch4627 -p1
+%patch4628 -p1
+%patch4629 -p1
+%patch4630 -p1
+%patch4631 -p1
+%patch4632 -p1
+%patch4633 -p1
+%patch4634 -p1
+%patch4635 -p1
+%patch4636 -p1
+%patch4637 -p1
+%patch4638 -p1
+%patch4639 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -11798,6 +12043,135 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Wed May 28 2014 Jeff E. Nelson <jenelson@redhat.com> - 0.12.1.2-2.415.el6_5.10
+- kvm-virtio-out-of-bounds-buffer-write-on-invalid-state-l.patch [bz#1095692]
+- kvm-usb-sanity-check-setup_index-setup_len-in-post_load.patch [bz#1095743]
+- kvm-usb-sanity-check-setup_index-setup_len-in-post_load-2.patch [bz#1095743]
+- kvm-virtio-scsi-fix-buffer-overrun-on-invalid-state-load.patch [bz#1095739]
+- kvm-virtio-avoid-buffer-overrun-on-incoming-migration.patch [bz#1095735]
+- kvm-virtio-validate-num_sg-when-mapping.patch [bz#1095763 bz#1096124]
+- kvm-virtio-allow-mapping-up-to-max-queue-size.patch [bz#1095763 bz#1096124]
+- kvm-enable-PCI-multiple-segments-for-pass-through-device.patch [bz#1099941]
+- kvm-virtio-net-fix-buffer-overflow-on-invalid-state-load.patch [bz#1095675]
+- kvm-virtio-validate-config_len-on-load.patch [bz#1095779]
+- kvm-usb-fix-up-post-load-checks.patch [bz#1096825]
+- kvm-CPU-hotplug-use-apic_id_for_cpu-round-2-RHEL-6-only.patch [bz#1100575]
+- Resolves: bz#1095675
+  ()
+- Resolves: bz#1095692
+  ()
+- Resolves: bz#1095735
+  ()
+- Resolves: bz#1095739
+  ()
+- Resolves: bz#1095743
+  ()
+- Resolves: bz#1095763
+  ()
+- Resolves: bz#1095779
+  ()
+- Resolves: bz#1096124
+  ()
+- Resolves: bz#1096825
+  ()
+- Resolves: bz#1099941
+  ()
+- Resolves: bz#1100575
+  (Some vCPU topologies not accepted by libvirt)
+
+* Tue Apr 29 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.9
+- kvm-ide-Correct-improper-smart-self-test-counter-reset-i.patch [bz#1087978]
+- Resolves: bz#1087978
+  (CVE-2014-2894 qemu-kvm: QEMU: out of bounds buffer accesses, guest triggerable via IDE SMART [rhel-6.5.z])
+
+* Fri Apr 11 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.8
+- kvm-virtio-net-fix-guest-triggerable-buffer-overrun.patch [bz#1078605 bz#1078849]
+- kvm-qcow2-Check-backing_file_offset-CVE-2014-0144.patch [bz#1079452 bz#1079453]
+- kvm-qcow2-Check-refcount-table-size-CVE-2014-0144.patch [bz#1079452 bz#1079453]
+- kvm-qcow2-Validate-refcount-table-offset.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Validate-snapshot-table-offset-size-CVE-2014-0.patch [bz#1079452 bz#1079453]
+- kvm-qcow2-Validate-active-L1-table-offset-and-size-CVE-2.patch [bz#1079452 bz#1079453]
+- kvm-qcow2-Fix-backing-file-name-length-check.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Don-t-rely-on-free_cluster_index-in-alloc_refc.patch [bz#1079337 bz#1079338]
+- kvm-qcow2-Avoid-integer-overflow-in-get_refcount-CVE-201.patch [bz#1079318 bz#1079319]
+- kvm-qcow2-Check-new-refcount-table-size-on-growth.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Fix-types-in-qcow2_alloc_clusters-and-alloc_cl.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Protect-against-some-integer-overflows-in-bdrv.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Catch-some-L1-table-index-overflows.patch [bz#1079518 bz#1086678]
+- kvm-qcow2-Fix-new-L1-table-size-check-CVE-2014-0143.patch [bz#1079318 bz#1079319]
+- kvm-qcow2-Fix-NULL-dereference-in-qcow2_open-error-path-.patch [bz#1079330 bz#1079331]
+- kvm-qcow2-Limit-snapshot-table-size.patch [bz#1079518 bz#1086678]
+- kvm-block-cloop-validate-block_size-header-field-CVE-201.patch [bz#1079452 bz#1079453]
+- kvm-block-cloop-prevent-offsets_size-integer-overflow-CV.patch [bz#1079318 bz#1079319]
+- kvm-block-cloop-refuse-images-with-huge-offsets-arrays-C.patch [bz#1079452 bz#1079453]
+- kvm-block-cloop-Fix-coding-style.patch [bz#1079518 bz#1086678]
+- kvm-cloop-Fix-bdrv_open-error-handling.patch [bz#1079518 bz#1086678]
+- kvm-block-cloop-refuse-images-with-bogus-offsets-CVE-201.patch [bz#1079452 bz#1079453]
+- kvm-block-cloop-Use-g_free-instead-of-free.patch [bz#1079518 bz#1086678]
+- kvm-block-cloop-fix-offsets-size-off-by-one.patch [bz#1079518 bz#1086678]
+- kvm-bochs-Fix-bdrv_open-error-handling.patch [bz#1079518 bz#1086678]
+- kvm-bochs-Unify-header-structs-and-make-them-QEMU_PACKED.patch [bz#1079518 bz#1086678]
+- kvm-bochs-Use-unsigned-variables-for-offsets-and-sizes-C.patch [bz#1079337 bz#1079338]
+- kvm-bochs-Check-catalog_size-header-field-CVE-2014-0143.patch [bz#1079318 bz#1079319]
+- kvm-bochs-Check-extent_size-header-field-CVE-2014-0142.patch [bz#1079313 bz#1079314]
+- kvm-bochs-Fix-bitmap-offset-calculation.patch [bz#1079518 bz#1086678]
+- kvm-vpc-vhd-add-bounds-check-for-max_table_entries-and-b.patch [bz#1079452 bz#1079453]
+- kvm-vpc-Validate-block-size-CVE-2014-0142.patch [bz#1079313 bz#1079314]
+- kvm-vdi-add-bounds-checks-for-blocks_in_image-and-disk_s.patch [bz#1079452 bz#1079453]
+- kvm-vhdx-Bounds-checking-for-block_size-and-logical_sect.patch [bz#1079343 bz#1079344]
+- kvm-curl-check-data-size-before-memcpy-to-local-buffer.-.patch [bz#1079452 bz#1079453]
+- kvm-dmg-Fix-bdrv_open-error-handling.patch [bz#1079518 bz#1086678]
+- kvm-dmg-coding-style-and-indentation-cleanup.patch [bz#1079518 bz#1086678]
+- kvm-dmg-prevent-out-of-bounds-array-access-on-terminator.patch [bz#1079518 bz#1086678]
+- kvm-dmg-drop-broken-bdrv_pread-loop.patch [bz#1079518 bz#1086678]
+- kvm-dmg-use-appropriate-types-when-reading-chunks.patch [bz#1079518 bz#1086678]
+- kvm-dmg-sanitize-chunk-length-and-sectorcount-CVE-2014-0.patch [bz#1079323 bz#1079324]
+- kvm-dmg-use-uint64_t-consistently-for-sectors-and-length.patch [bz#1079518 bz#1086678]
+- kvm-dmg-prevent-chunk-buffer-overflow-CVE-2014-0145.patch [bz#1079323 bz#1079324]
+- kvm-block-Limit-request-size-CVE-2014-0143.patch [bz#1079318 bz#1079319]
+- kvm-parallels-Fix-catalog-size-integer-overflow-CVE-2014.patch [bz#1079318 bz#1079319]
+- kvm-parallels-Sanity-check-for-s-tracks-CVE-2014-0142.patch [bz#1079313 bz#1079314]
+- kvm-bochs-Fix-memory-leak-in-bochs_open-error-path.patch [bz#1079518 bz#1086678]
+- kvm-bochs-Fix-catalog-size-check.patch [bz#1079518 bz#1086678]
+- Resolves: bz#1078849
+  (EMBARGOED CVE-2014-0150 qemu-kvm: qemu: virtio-net: buffer overflow in virtio_net_handle_mac() function [rhel-6.5.z])
+- Resolves: bz#1079313
+  (CVE-2014-0142 qemu-kvm: qemu: crash by possible division by zero [rhel-6.5.z])
+- Resolves: bz#1079318
+  (CVE-2014-0143 qemu-kvm: Qemu: block: multiple integer overflow flaws [rhel-6.5.z])
+- Resolves: bz#1079323
+  (CVE-2014-0145 qemu-kvm: Qemu: prevent possible buffer overflows [rhel-6.5.z])
+- Resolves: bz#1079330
+  (CVE-2014-0146 qemu-kvm: Qemu: qcow2: NULL dereference in qcow2_open() error path [rhel-6.5.z])
+- Resolves: bz#1079337
+  (CVE-2014-0147 qemu-kvm: Qemu: block: possible crash due signed types or logic error [rhel-6.5.z])
+- Resolves: bz#1079343
+  (CVE-2014-0148 qemu-kvm: Qemu: vhdx: bounds checking for block_size and logical_sector_size [rhel-6.5.z])
+- Resolves: bz#1079452
+  (CVE-2014-0144 qemu-kvm: Qemu: block: missing input validation [rhel-6.5.z])
+- Resolves: bz#1086678
+  (qemu-kvm: include leftover patches from block layer security audit)
+
+* Thu Mar 27 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.7
+- kvm-ACPI-level-VCPU-enablement-info-for-libvirt-RHEL-6-o.patch [bz#1080436]
+- Resolves: bz#1080436
+  ([Intel 6.5.z Bug] virsh setvcpus can not setup correct vcpu number)
+
+* Tue Mar 04 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.6
+- kvm-block-Pass-filename-to-bdrv_get_full_backing_filenam.patch [bz#1071740]
+- Resolves: bz#1071740
+  (RHEV: Cannot start VMs that have more than 23 snapshots.)
+
+* Tue Feb 25 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.5
+- kvm-monitor-Cleanup-mon-outbuf-on-write-error.patch [bz#1069239]
+- Resolves: bz#1069239
+  (QMP socket breaks on unexpected close)
+
+* Mon Feb 10 2014 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.4
+- kvm-vmdk-Allow-read-only-open-of-VMDK-version-3.patch [bz#1056642 bz#1063202]
+- Resolves: bz#1063202
+  (qemu-img fails to convert vmdk v3 image)
+
 * Tue Nov 12 2013 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.415.el6_5.3
 - kvm-monitor-monitor_puts-bail-out-when-mon-NULL.patch [bz#1015979 bz#1029329]
 - kvm-qcow2-Flush-image-after-creation.patch [bz#1029327]
@@ -12926,6 +13300,7 @@ fi
 - kvm-Revert-e1000-no-need-auto-negotiation-if-link-was-do.patch [bz#907397]
 - Resolves: bz#907397
   (Patch "e1000: no need auto-negotiation if link was down" may break e1000 guest)
+>>>>>>> rhel-6.5
 
 * Wed Jan 23 2013 Michal Novotny <minovotn@redhat.com> - qemu-kvm-0.12.1.2-2.355.el6
 - kvm-Revert-audio-spice-add-support-for-volume-control.patch [bz#884253]
