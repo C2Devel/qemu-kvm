@@ -83,7 +83,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid %{nil}
+%define buildid .CROC1
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.448
@@ -130,6 +130,7 @@ Version: %{rpmversion}
 Release: %{full_release}
 # Epoch because we pushed a qemu-1.0 package
 Epoch: 2
+Provides: %name = %version-%release
 License: GPLv2+ and LGPLv2+ and BSD
 Group: Development/Tools
 URL: http://www.linux-kvm.org
@@ -8501,6 +8502,7 @@ BuildRequires: systemtap-sdt-devel
 
 # 'stap' binary is required by configure detection of systemtap:
 BuildRequires: systemtap
+BuildRequires: gcc
 
 Requires(post): /usr/bin/getent
 Requires(post): /usr/sbin/groupadd
@@ -8559,6 +8561,7 @@ management code, not to run actual virtual machines.
 %if %{with qemu_kvm}
 %package -n qemu-img%{?pkgsuffix}
 Summary: QEMU command line tool for manipulating disk images
+Provides: qemu-img%{?pkgsuffix} = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-img
 
@@ -8567,6 +8570,7 @@ This package provides a command line tool for manipulating disk images
 
 %package -n %{pkgname}-tools
 Summary: KVM debugging and diagnostics tools
+Provides: %{pkgname}-tools = %version-%release
 Group: Development/Tools
 %rhel_rhev_conflicts qemu-kvm-tools
 
