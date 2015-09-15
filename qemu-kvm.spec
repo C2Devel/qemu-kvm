@@ -8477,6 +8477,8 @@ Patch4936: kvm-Revert-migration-only-call-append-when-there-is-some.patch
 Patch4937: kvm-Revert-migration-set-speed-to-maximum-during-last-st.patch
 # For bz#970103 - Downtime during live migration of busy VM is much higher than migration_downtime in vdsm.conf
 Patch4938: kvm-Revert-net-Forbid-dealing-with-packets-when-VM-is-no.patch
+# QMP: INCOMING_FINISHED event
+Patch9990: croc-kvm-qmp-incoming_finished-event-added.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -12558,6 +12560,7 @@ ApplyOptionalPatch()
 %patch4936 -p1
 %patch4937 -p1
 %patch4938 -p1
+%Patch9990 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -12929,6 +12932,9 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Wed Jan 28 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.CROC1.el6
+- croc-kvm-qmp-incoming_finished-event-added.patch
+
 * Fri Sep 26 2014 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.448.el6
 - kvm-Revert-migration-Don-t-calculate-bandwidth-when-last.patch [bz#970103]
 - kvm-Revert-migration-move-bandwidth-calculation-to-insid.patch [bz#970103]
