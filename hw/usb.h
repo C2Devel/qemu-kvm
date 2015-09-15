@@ -91,17 +91,26 @@
 
 #define DeviceRequest ((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_DEVICE)<<8)
 #define DeviceOutRequest ((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_DEVICE)<<8)
-#define InterfaceRequest \
+#define VendorDeviceRequest ((USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_DEVICE)<<8)
+#define VendorDeviceOutRequest \
+        ((USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_DEVICE)<<8)
+
+#define InterfaceRequest                                        \
         ((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_INTERFACE)<<8)
 #define InterfaceOutRequest \
         ((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_INTERFACE)<<8)
-#define EndpointRequest ((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
-#define EndpointOutRequest \
-        ((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
 #define ClassInterfaceRequest \
         ((USB_DIR_IN|USB_TYPE_CLASS|USB_RECIP_INTERFACE)<<8)
 #define ClassInterfaceOutRequest \
         ((USB_DIR_OUT|USB_TYPE_CLASS|USB_RECIP_INTERFACE)<<8)
+#define VendorInterfaceRequest \
+        ((USB_DIR_IN|USB_TYPE_VENDOR|USB_RECIP_INTERFACE)<<8)
+#define VendorInterfaceOutRequest \
+        ((USB_DIR_OUT|USB_TYPE_VENDOR|USB_RECIP_INTERFACE)<<8)
+
+#define EndpointRequest ((USB_DIR_IN|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
+#define EndpointOutRequest \
+        ((USB_DIR_OUT|USB_TYPE_STANDARD|USB_RECIP_ENDPOINT)<<8)
 
 #define USB_REQ_GET_STATUS		0x00
 #define USB_REQ_CLEAR_FEATURE		0x01
@@ -149,11 +158,17 @@ typedef struct USBDescIface USBDescIface;
 typedef struct USBDescEndpoint USBDescEndpoint;
 typedef struct USBDescOther USBDescOther;
 typedef struct USBDescString USBDescString;
+typedef struct USBDescMSOS USBDescMSOS;
 
 struct USBDescString {
     uint8_t index;
     char *str;
     QLIST_ENTRY(USBDescString) next;
+};
+
+enum USBDeviceFlags {
+    USB_DEV_FLAG_MSOS_DESC_ENABLE,
+    USB_DEV_FLAG_MSOS_DESC_IN_USE,
 };
 
 /* definition of a USB device */
@@ -164,6 +179,7 @@ struct USBDevice {
     char *port_path;
     uint32_t create_unique_serial;
     void *opaque;
+    uint32_t flags;
 
     /* Actual connected speed */
     int speed;

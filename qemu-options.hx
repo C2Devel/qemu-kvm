@@ -144,6 +144,14 @@ an untrusted format header.
 This option specifies the serial number to assign to the device.
 @item addr=@var{addr}
 Specify the controller's PCI address (if=virtio only).
+@item werror=@var{action},rerror=@var{action}
+Specify which @var{action} to take on write and read errors. Valid actions are:
+"ignore" (ignore the error and try to continue), "stop" (pause QEMU),
+"report" (report the error to the guest), "enospc" (pause QEMU only if the
+host disk is full; report the error to the guest otherwise).
+The default setting is @option{werror=enospc} and @option{rerror=report}.
+@item readonly
+Open drive @option{file} as read-only. Guest write attempts will fail.
 @item copy-on-read=@var{copy-on-read}
 @var{copy-on-read} is "on" or "off" and enables whether to copy read backing
 file sectors into the image file.
@@ -607,6 +615,19 @@ Force using the specified IP version.
 
 @item password=<secret>
 Set the password you need to authenticate.
+
+@item sasl
+Require that the client use SASL to authenticate with the spice.
+The exact choice of authentication method used is controlled from the
+system / user's SASL configuration file for the 'qemu' service. This
+is typically found in /etc/sasl2/qemu.conf. If running QEMU as an
+unprivileged user, an environment variable SASL_CONF_PATH can be used
+to make it search alternate locations for the service config.
+While some SASL auth methods can also provide data encryption (eg GSSAPI),
+it is recommended that SASL always be combined with the 'tls' and
+'x509' settings to enable use of SSL and server certificates. This
+ensures a data encryption preventing compromise of authentication
+credentials.
 
 @item disable-ticketing
 Allow client connects without authentication.
@@ -2263,4 +2284,24 @@ STEXI
 @item -msg timestamp[=on|off]
 @findex -msg
 prepend a timestamp to each log message.(default:on)
+ETEXI
+
+DEF("object", HAS_ARG, QEMU_OPTION_object,
+    "-object TYPENAME[,PROP1=VALUE1,...]\n"
+    "                create an new object of type TYPENAME setting properties\n"
+    "                in the order they are specified.  Note that the 'id'\n"
+    "                property must be set.  These objects are placed in the\n"
+    "                '/objects' path.\n")
+
+DEF("dump-vmstate", HAS_ARG, QEMU_OPTION_dump_vmstate,
+    "-dump-vmstate <file>\n"
+    "                Output vmstate information in JSON format to file.\n"
+    "                Use the scripts/vmstate-static-checker.py file to\n"
+    "                check for possible regressions in migration code\n"
+    "                by comparing two such vmstate dumps.")
+STEXI
+@item -dump-vmstate @var{file}
+@findex -dump-vmstate
+Dump json-encoded vmstate information for current machine type to file
+in @var{file}
 ETEXI

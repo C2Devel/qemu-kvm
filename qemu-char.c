@@ -221,7 +221,11 @@ void qemu_chr_add_handlers(CharDriverState *s,
                            IOEventHandler *fd_event,
                            void *opaque)
 {
+    int fe_open;
+
+    fe_open = 1;
     if (!opaque && !fd_can_read && !fd_read && !fd_event) {
+        fe_open = 0;
         /* chr driver being released. */
         ++s->avail_connections;
         remove_fd_in_watch(s);
@@ -230,7 +234,7 @@ void qemu_chr_add_handlers(CharDriverState *s,
     s->chr_read = fd_read;
     s->chr_event = fd_event;
     s->handler_opaque = opaque;
-    if (s->chr_update_read_handler)
+    if (fe_open && s->chr_update_read_handler)
         s->chr_update_read_handler(s);
 
     /* We're connecting to an already opened device, so let's make sure we
@@ -1137,12 +1141,13 @@ static void pty_chr_state(CharDriverState *chr, int connected)
         if (!s->connected) {
             qemu_chr_generic_open(chr);
             s->connected = 1;
+        }
+        if (!chr->fd_in_tag) {
             chr->fd_in_tag = io_add_watch_poll(s->fd, pty_chr_read_poll,
                                                pty_chr_read, chr);
         }
     }
 }
-
 
 static void pty_chr_close(struct CharDriverState *chr)
 {
@@ -2297,6 +2302,17 @@ static void tcp_chr_connect(void *opaque)
     qemu_chr_generic_open(chr);
 }
 
+static void tcp_chr_update_read_handler(CharDriverState *chr)
+{
+    TCPCharDriver *s = chr->opaque;
+
+    remove_fd_in_watch(chr);
+    if (s->chan) {
+        chr->fd_in_tag = io_add_watch_poll(s->chan, tcp_chr_read_poll,
+                                           tcp_chr_read, chr);
+    }
+}
+
 #define IACSET(x,a,b,c) x[0] = a; x[1] = b; x[2] = c;
 static void tcp_chr_telnet_init(int fd)
 {
@@ -2445,6 +2461,7 @@ static CharDriverState *qemu_chr_open_socket_fd(int fd, bool do_nodelay,
     chr->chr_close = tcp_chr_close;
     chr->get_msgfd = tcp_get_msgfd;
     chr->chr_add_watch = tcp_chr_add_watch;
+    chr->chr_update_read_handler = tcp_chr_update_read_handler;
 
     if (is_listen) {
         s->listen_fd = fd;
@@ -2529,70 +2546,6 @@ static CharDriverState *qemu_chr_open_socket(QemuOpts *opts)
         g_free(chr);
     }
     return NULL;
-}
-
-/***********************************************************/
-/* Memory chardev */
-typedef struct {
-    size_t outbuf_size;
-    size_t outbuf_capacity;
-    uint8_t *outbuf;
-} MemoryDriver;
-
-static int mem_chr_write(CharDriverState *chr, const uint8_t *buf, int len)
-{
-    MemoryDriver *d = chr->opaque;
-
-    /* TODO: the QString implementation has the same code, we should
-     * introduce a generic way to do this in cutils.c */
-    if (d->outbuf_capacity < d->outbuf_size + len) {
-        /* grow outbuf */
-        d->outbuf_capacity += len;
-        d->outbuf_capacity *= 2;
-        d->outbuf = qemu_realloc(d->outbuf, d->outbuf_capacity);
-    }
-
-    memcpy(d->outbuf + d->outbuf_size, buf, len);
-    d->outbuf_size += len;
-
-    return len;
-}
-
-void qemu_chr_init_mem(CharDriverState *chr)
-{
-    MemoryDriver *d;
-
-    d = qemu_malloc(sizeof(*d));
-    d->outbuf_size = 0;
-    d->outbuf_capacity = 4096;
-    d->outbuf = qemu_mallocz(d->outbuf_capacity);
-
-    memset(chr, 0, sizeof(*chr));
-    chr->opaque = d;
-    chr->chr_write = mem_chr_write;
-}
-
-QString *qemu_chr_mem_to_qs(CharDriverState *chr)
-{
-    MemoryDriver *d = chr->opaque;
-    return qstring_from_substr((char *) d->outbuf, 0, d->outbuf_size - 1);
-}
-
-/* NOTE: this driver can not be closed with qemu_chr_delete()! */
-void qemu_chr_close_mem(CharDriverState *chr)
-{
-    MemoryDriver *d = chr->opaque;
-
-    qemu_free(d->outbuf);
-    qemu_free(chr->opaque);
-    chr->opaque = NULL;
-    chr->chr_write = NULL;
-}
-
-size_t qemu_chr_mem_osize(const CharDriverState *chr)
-{
-    const MemoryDriver *d = chr->opaque;
-    return d->outbuf_size;
 }
 
 QemuOpts *qemu_chr_parse_compat(const char *label, const char *filename)

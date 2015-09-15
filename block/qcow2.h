@@ -164,6 +164,8 @@ typedef struct BDRVQcowState {
     unsigned int nb_snapshots;
     QCowSnapshot *snapshots;
 
+    int overlap_check; /* bitmask of Qcow2MetadataOverlap values */
+
     QLIST_HEAD(, Qcow2UnknownHeaderExtension) unknown_header_ext;
 } BDRVQcowState;
 
@@ -194,6 +196,67 @@ typedef struct QCowL2Meta
     QLIST_ENTRY(QCowL2Meta) next_in_flight;
 } QCowL2Meta;
 
+enum {
+    QCOW2_CLUSTER_UNALLOCATED,
+    QCOW2_CLUSTER_NORMAL,
+    QCOW2_CLUSTER_COMPRESSED,
+};
+
+typedef enum QCow2MetadataOverlap {
+    QCOW2_OL_MAIN_HEADER_BITNR    = 0,
+    QCOW2_OL_ACTIVE_L1_BITNR      = 1,
+    QCOW2_OL_ACTIVE_L2_BITNR      = 2,
+    QCOW2_OL_REFCOUNT_TABLE_BITNR = 3,
+    QCOW2_OL_REFCOUNT_BLOCK_BITNR = 4,
+    QCOW2_OL_SNAPSHOT_TABLE_BITNR = 5,
+    QCOW2_OL_INACTIVE_L1_BITNR    = 6,
+    QCOW2_OL_INACTIVE_L2_BITNR    = 7,
+
+    QCOW2_OL_MAX_BITNR            = 8,
+
+    QCOW2_OL_NONE           = 0,
+    QCOW2_OL_MAIN_HEADER    = (1 << QCOW2_OL_MAIN_HEADER_BITNR),
+    QCOW2_OL_ACTIVE_L1      = (1 << QCOW2_OL_ACTIVE_L1_BITNR),
+    QCOW2_OL_ACTIVE_L2      = (1 << QCOW2_OL_ACTIVE_L2_BITNR),
+    QCOW2_OL_REFCOUNT_TABLE = (1 << QCOW2_OL_REFCOUNT_TABLE_BITNR),
+    QCOW2_OL_REFCOUNT_BLOCK = (1 << QCOW2_OL_REFCOUNT_BLOCK_BITNR),
+    QCOW2_OL_SNAPSHOT_TABLE = (1 << QCOW2_OL_SNAPSHOT_TABLE_BITNR),
+    QCOW2_OL_INACTIVE_L1    = (1 << QCOW2_OL_INACTIVE_L1_BITNR),
+    /* NOTE: Checking overlaps with inactive L2 tables will result in bdrv
+     * reads. */
+    QCOW2_OL_INACTIVE_L2    = (1 << QCOW2_OL_INACTIVE_L2_BITNR),
+} QCow2MetadataOverlap;
+
+/* Perform all overlap checks which can be done in constant time */
+#define QCOW2_OL_CONSTANT \
+    (QCOW2_OL_MAIN_HEADER | QCOW2_OL_ACTIVE_L1 | QCOW2_OL_REFCOUNT_TABLE | \
+     QCOW2_OL_SNAPSHOT_TABLE)
+
+/* Perform all overlap checks which don't require disk access */
+#define QCOW2_OL_CACHED \
+    (QCOW2_OL_CONSTANT | QCOW2_OL_ACTIVE_L2 | QCOW2_OL_REFCOUNT_BLOCK | \
+     QCOW2_OL_INACTIVE_L1)
+
+/* Perform all overlap checks */
+#define QCOW2_OL_ALL \
+    (QCOW2_OL_CACHED | QCOW2_OL_INACTIVE_L2)
+
+#define L1E_OFFSET_MASK 0x00fffffffffffe00ULL
+#define L2E_OFFSET_MASK 0x00fffffffffffe00ULL
+#define L2E_COMPRESSED_OFFSET_SIZE_MASK 0x3fffffffffffffffULL
+
+#define REFT_OFFSET_MASK 0xfffffffffffffe00ULL
+
+static inline int64_t start_of_cluster(BDRVQcowState *s, int64_t offset)
+{
+    return offset & ~(s->cluster_size - 1);
+}
+
+static inline int64_t offset_into_cluster(BDRVQcowState *s, int64_t offset)
+{
+    return offset & (s->cluster_size - 1);
+}
+
 static inline int size_to_clusters(BDRVQcowState *s, int64_t size)
 {
     return (size + (s->cluster_size - 1)) >> s->cluster_bits;
@@ -214,6 +277,17 @@ static inline int64_t align_offset(int64_t offset, int n)
 static inline uint64_t qcow2_max_refcount_clusters(BDRVQcowState *s)
 {
     return QCOW_MAX_REFTABLE_SIZE >> s->cluster_bits;
+}
+
+static inline int qcow2_get_cluster_type(uint64_t l2_entry)
+{
+    if (l2_entry & QCOW_OFLAG_COMPRESSED) {
+        return QCOW2_CLUSTER_COMPRESSED;
+    } else if (!(l2_entry & L2E_OFFSET_MASK)) {
+        return QCOW2_CLUSTER_UNALLOCATED;
+    } else {
+        return QCOW2_CLUSTER_NORMAL;
+    }
 }
 
 // FIXME Need qcow2_ prefix to global functions
@@ -242,8 +316,14 @@ int qcow2_update_snapshot_refcount(BlockDriverState *bs,
 int qcow2_check_refcounts(BlockDriverState *bs, BdrvCheckResult *res,
                           BdrvCheckMode fix);
 
+int qcow2_check_metadata_overlap(BlockDriverState *bs, int ign, int64_t offset,
+                                 int64_t size);
+int qcow2_pre_write_overlap_check(BlockDriverState *bs, int ign, int64_t offset,
+                                  int64_t size);
+
 /* qcow2-cluster.c functions */
 int qcow2_grow_l1_table(BlockDriverState *bs, uint64_t min_size);
+int qcow2_write_l1_entry(BlockDriverState *bs, int l1_index);
 void qcow2_l2_cache_reset(BlockDriverState *bs);
 int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset);
 void qcow2_encrypt_sectors(BDRVQcowState *s, int64_t sector_num,

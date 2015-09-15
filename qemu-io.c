@@ -263,6 +263,18 @@ static int do_co_write_zeroes(int64_t offset, int count, int *total)
     }
 }
 
+static int do_write_compressed(char *buf, int64_t offset, int count, int *total)
+{
+    int ret;
+
+    ret = bdrv_write_compressed(bs, offset >> 9, (uint8_t *)buf, count >> 9);
+    if (ret < 0) {
+        return ret;
+    }
+    *total = count;
+    return 1;
+}
+
 static int do_load_vmstate(char *buf, int64_t offset, int count, int *total)
 {
     *total = bdrv_load_vmstate(bs, (uint8_t *)buf, offset, count);
@@ -647,6 +659,7 @@ static void write_help(void)
 " Writes into a segment of the currently open file, using a buffer\n"
 " filled with a set pattern (0xcdcdcdcd).\n"
 " -b, -- write to the VM state rather than the virtual disk\n"
+" -c, -- write compressed data with bdrv_write_compressed\n"
 " -p, -- use bdrv_pwrite to write the file\n"
 " -P, -- use different pattern to fill file\n"
 " -C, -- report statistics in a machine parsable format\n"
@@ -663,7 +676,7 @@ static const cmdinfo_t write_cmd = {
     .cfunc      = write_f,
     .argmin     = 2,
     .argmax     = -1,
-    .args       = "[-bCpqz] [-P pattern ] off len",
+    .args       = "[-bcCpqz] [-P pattern ] off len",
     .oneline    = "writes a number of bytes at a specified offset",
     .help       = write_help,
 };
@@ -672,6 +685,7 @@ static int write_f(int argc, char **argv)
 {
     struct timeval t1, t2;
     int Cflag = 0, pflag = 0, qflag = 0, bflag = 0, Pflag = 0, zflag = 0;
+    int cflag = 0;
     int c, cnt;
     char *buf = NULL;
     int64_t offset;
@@ -680,10 +694,13 @@ static int write_f(int argc, char **argv)
     int total = 0;
     int pattern = 0xcd;
 
-    while ((c = getopt(argc, argv, "bCpP:qz")) != EOF) {
+    while ((c = getopt(argc, argv, "bcCpP:qz")) != EOF) {
         switch (c) {
         case 'b':
             bflag = 1;
+            break;
+        case 'c':
+            cflag = 1;
             break;
         case 'C':
             Cflag = 1;
@@ -761,6 +778,8 @@ static int write_f(int argc, char **argv)
         cnt = do_save_vmstate(buf, offset, count, &total);
     } else if (zflag) {
         cnt = do_co_write_zeroes(offset, count, &total);
+    } else if (cflag) {
+        cnt = do_write_compressed(buf, offset, count, &total);
     } else {
         cnt = do_write(buf, offset, count, &total);
     }
@@ -1337,6 +1356,44 @@ static const cmdinfo_t alloc_cmd = {
     .oneline    = "checks if a sector is present in the file",
 };
 
+static int
+map_f(int argc, char **argv)
+{
+	int64_t offset;
+	int64_t nb_sectors;
+	char s1[64];
+	int num, num_checked;
+	int ret;
+	const char *retstr;
+
+	offset = 0;
+	nb_sectors = bs->total_sectors;
+
+	do {
+		num_checked = MIN(nb_sectors, INT_MAX);
+		ret = bdrv_is_allocated(bs, offset, num_checked, &num);
+		retstr = ret ? "    allocated" : "not allocated";
+		cvtstr(offset << 9ULL, s1, sizeof(s1));
+		printf("[% 24" PRId64 "] % 8d/% 8d sectors %s at offset %s (%d)\n",
+				offset << 9ULL, num, num_checked, retstr, s1, ret);
+
+		offset += num;
+		nb_sectors -= num;
+	} while(offset < bs->total_sectors);
+
+	return 0;
+}
+
+static const cmdinfo_t map_cmd = {
+       .name           = "map",
+       .argmin         = 0,
+       .argmax         = 0,
+       .cfunc          = map_f,
+       .args           = "",
+       .oneline        = "prints the allocated areas of a file",
+};
+
+
 static int close_f(int argc, char **argv)
 {
     bdrv_close(bs);
@@ -1483,6 +1540,7 @@ static void usage(const char *name)
 "  -g, --growable       allow file to grow (only applies to protocols)\n"
 "  -m, --misalign       misalign allocations for O_DIRECT\n"
 "  -k, --native-aio     use kernel AIO implementation (on Linux only)\n"
+"  -t, --cache=MODE     use the given cache mode for the image\n"
 "  -h, --help           display this help and exit\n"
 "  -V, --version        output version information and exit\n"
 "\n",
@@ -1494,7 +1552,7 @@ int main(int argc, char **argv)
 {
     int readonly = 0;
     int growable = 0;
-    const char *sopt = "hVc:Crsnmgk";
+    const char *sopt = "hVc:Crsnmgkt:";
     struct option lopt[] = {
         { "help", 0, NULL, 'h' },
         { "version", 0, NULL, 'V' },
@@ -1507,6 +1565,7 @@ int main(int argc, char **argv)
         { "misalign", 0, NULL, 'm' },
         { "growable", 0, NULL, 'g' },
         { "native-aio", 0, NULL, 'k' },
+        { "cache", 1, NULL, 't' },
         { NULL, 0, NULL, 0 }
     };
     int c;
@@ -1540,6 +1599,12 @@ int main(int argc, char **argv)
             break;
         case 'k':
             flags |= BDRV_O_NATIVE_AIO;
+            break;
+        case 't':
+            if (bdrv_parse_cache_flags(optarg, &flags) < 0) {
+                error_report("Invalid cache option: %s", optarg);
+                exit(1);
+            }
             break;
         case 'V':
             printf("%s version %s\n", progname, VERSION);
@@ -1577,6 +1642,7 @@ int main(int argc, char **argv)
     add_command(&length_cmd);
     add_command(&info_cmd);
     add_command(&alloc_cmd);
+    add_command(&map_cmd);
 
     add_args_command(init_args_command);
     add_check_command(init_check_command);

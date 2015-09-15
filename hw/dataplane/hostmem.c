@@ -12,9 +12,9 @@
  */
 
 #include <linux/vhost.h>
-#include "hw/pci.h" /* for range_*() helper functions */
 #include "hw/vhost.h"
 #include "hostmem.h"
+#include "range.h"
 
 /**
  * Map guest physical address to host pointer

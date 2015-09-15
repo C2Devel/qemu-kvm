@@ -400,12 +400,16 @@ PropertyInfo qdev_prop_chr = {
 static int parse_netdev(DeviceState *dev, Property *prop, const char *str)
 {
     VLANClientState **ptr = qdev_get_prop_ptr(dev, prop);
+    NICConf *conf = container_of(ptr, NICConf, peer);
 
     *ptr = qemu_find_netdev(str);
     if (*ptr == NULL)
         return -ENOENT;
     if ((*ptr)->peer) {
         return -EEXIST;
+    }
+    if (conf->vlan) {
+        return -EINVAL;
     }
     return 0;
 }
@@ -434,6 +438,7 @@ PropertyInfo qdev_prop_netdev = {
 static int parse_vlan(DeviceState *dev, Property *prop, const char *str)
 {
     VLANState **ptr = qdev_get_prop_ptr(dev, prop);
+    NICConf *conf = container_of(ptr, NICConf, vlan);
     int id;
 
     if (sscanf(str, "%d", &id) != 1)
@@ -441,6 +446,9 @@ static int parse_vlan(DeviceState *dev, Property *prop, const char *str)
     *ptr = qemu_find_vlan(id, 1);
     if (*ptr == NULL)
         return -ENOENT;
+    if (conf->peer) {
+        return -EINVAL;
+    }
     return 0;
 }
 

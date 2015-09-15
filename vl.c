@@ -177,6 +177,8 @@ int main(int argc, char **argv)
 #include "trace.h"
 
 #include "ui/qemu-spice.h"
+#include "qapi/string-input-visitor.h"
+#include "qom/object.h"
 
 //#define DEBUG_NET
 //#define DEBUG_SLIRP
@@ -252,7 +254,7 @@ unsigned int kvm_shadow_memory = 0;
 const char *mem_path = NULL;
 int disable_KSM;
 #ifdef MAP_POPULATE
-int mem_prealloc = 1;	/* force preallocation of physical target memory */
+int mem_prealloc = 0; /* force preallocation of physical target memory */
 #endif
 #ifdef TARGET_ARM
 int old_param = 0;
@@ -5027,13 +5029,18 @@ static QEMUMachine *machine_parse(const char *name)
     if (machine) {
         return machine;
     }
-    printf("Supported machines are:\n");
-    for (m = first_machine; m != NULL; m = m->next) {
-        if (m->alias) {
-            printf("%-10s %s (alias of %s)\n", m->alias, m->desc, m->name);
+    if (name && *name != '?') {
+        error_report("Unsupported machine type");
+        error_printf("Use -M ? to list supported machines!\n");
+    } else {   
+        printf("Supported machines are:\n");
+        for (m = first_machine; m != NULL; m = m->next) {
+            if (m->alias) {
+                printf("%-10s %s (alias of %s)\n", m->alias, m->desc, m->name);
+            }
+            printf("%-10s %s%s\n", m->name, m->desc,
+                   m->is_default ? " (default)" : "");
         }
-        printf("%-10s %s%s\n", m->name, m->desc,
-               m->is_default ? " (default)" : "");
     }
     exit(!name || *name != '?');
 }
@@ -5180,6 +5187,53 @@ static const QEMUOption *lookup_opt(int argc, char **argv,
     return popt;
 }
 
+static int object_set_property(const char *name, const char *value, void *opaque)
+{
+    Object *obj = OBJECT(opaque);
+    StringInputVisitor *siv;
+    Error *local_err = NULL;
+
+    if (strcmp(name, "qom-type") == 0 || strcmp(name, "id") == 0) {
+        return 0;
+    }
+
+    siv = string_input_visitor_new(value);
+    object_property_set(obj, string_input_get_visitor(siv), name, &local_err);
+    string_input_visitor_cleanup(siv);
+
+    if (local_err) {
+        qerror_report_err(local_err);
+        error_free(local_err);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int object_create(QemuOpts *opts, void *opaque)
+{
+    const char *type = qemu_opt_get(opts, "qom-type");
+    const char *id = qemu_opts_id(opts);
+    Object *obj;
+
+    g_assert(type != NULL);
+
+    if (id == NULL) {
+        qerror_report(QERR_MISSING_PARAMETER, "id");
+        return -1;
+    }
+
+    obj = object_new(type);
+    if (qemu_opt_foreach(opts, object_set_property, obj, 1) < 0) {
+        return -1;
+    }
+
+    object_property_add_child(container_get(object_get_root(), "/objects"),
+                              id, obj, NULL);
+
+    return 0;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     const char *gdbstub_dev = NULL;
@@ -5214,6 +5268,7 @@ int main(int argc, char **argv, char **envp)
     int show_vnc_port = 0;
     int defconfig = 1;
     int defconfig_verbose = 0;
+    FILE *vmstate_dump_file = NULL;
 
     atexit(qemu_run_exit_notifiers);
     error_set_progname(argv[0]);
@@ -5226,6 +5281,8 @@ int main(int argc, char **argv, char **envp)
 
     QLIST_INIT (&vm_change_state_head);
     os_setup_early_signal_handling();
+
+    module_call_init(MODULE_INIT_QOM);
 
     module_call_init(MODULE_INIT_MACHINE);
     machine = find_default_machine();
@@ -5970,8 +6027,8 @@ int main(int argc, char **argv, char **envp)
                 break;
 #ifdef MAP_POPULATE
             case QEMU_OPTION_mem_prealloc:
-		mem_prealloc = !mem_prealloc;
-		break;
+                mem_prealloc = 1;
+                break;
 #endif
             case QEMU_OPTION_name:
                 qemu_name = qemu_strdup(optarg);
@@ -6112,11 +6169,29 @@ int main(int argc, char **argv, char **envp)
                 }
                 configure_msg(opts);
                 break;
+            case QEMU_OPTION_object:
+                opts = qemu_opts_parse(qemu_find_opts("object"), optarg, 1);
+                if (!opts) {
+                    exit(1);
+                }
+                break;
+            case QEMU_OPTION_dump_vmstate:
+                vmstate_dump_file = fopen(optarg, "w");
+                if (vmstate_dump_file == NULL) {
+                    fprintf(stderr, "open %s: %s\n", optarg, strerror(errno));
+                    exit(1);
+                }
+                break;
             }
         }
     }
     fips_set_state(true);
     loc_set_none();
+
+    if (qemu_opts_foreach(qemu_find_opts("object"),
+                          object_create, NULL, 0) != 0) {
+        exit(1);
+    }
 
     /* If no data_dir is specified then try to find it relative to the
        executable path.  */
@@ -6550,6 +6625,12 @@ int main(int argc, char **argv, char **envp)
         if (load_vmstate(loadvm) < 0) {
             autostart = 0;
         }
+    }
+
+    if (vmstate_dump_file) {
+        /* dump and exit */
+        dump_vmstate_json_to_file(vmstate_dump_file, current_machine->name);
+        return 0;
     }
 
     if (incoming) {

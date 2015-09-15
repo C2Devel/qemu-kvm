@@ -171,6 +171,7 @@ void qemu_mutex_lock_iothread(void);
 void qemu_mutex_unlock_iothread(void);
 
 int qemu_open(const char *name, int flags, ...);
+int qemu_close(int fd);
 ssize_t qemu_write_full(int fd, const void *buf, size_t count)
     QEMU_WARN_UNUSED_RESULT;
 void qemu_set_cloexec(int fd);

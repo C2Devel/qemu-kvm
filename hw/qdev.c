@@ -28,6 +28,7 @@
 #include "net.h"
 #include "qdev.h"
 #include "sysemu.h"
+#include "qjson.h"
 #include "monitor.h"
 
 static int qdev_hotplug = 0;
@@ -354,6 +355,13 @@ void qdev_free(DeviceState *dev)
 {
     BusState *bus;
     Property *prop;
+    QObject *event_data;
+
+    if (dev->id) {
+        event_data = qobject_from_jsonf("{ 'device': %s }", dev->id);
+    } else {
+        event_data = qobject_from_jsonf("{ }");
+    }
 
     if (dev->state == DEV_STATE_INITIALIZED) {
         while (dev->num_child_bus) {
@@ -374,6 +382,12 @@ void qdev_free(DeviceState *dev)
             prop->info->free(dev, prop);
         }
     }
+
+    if (dev->state == DEV_STATE_INITIALIZED) {
+        monitor_protocol_event(QEVENT_DEVICE_DELETED, event_data);
+    }
+
+    qobject_decref(event_data);
     qemu_free(dev);
 }
 

@@ -378,6 +378,18 @@ static void ide_rw_error(IDEState *s) {
     ide_set_irq(s->bus);
 }
 
+static bool ide_sect_range_ok(IDEState *s,
+                              uint64_t sector, uint64_t nb_sectors)
+{
+    uint64_t total_sectors;
+
+    bdrv_get_geometry(s->bs, &total_sectors);
+    if (sector > total_sectors || nb_sectors > total_sectors - sector) {
+        return false;
+    }
+    return true;
+}
+
 static void ide_sector_read(IDEState *s);
 static void ide_sector_read_cb(void *opaque, int ret)
 {
@@ -433,6 +445,11 @@ static void ide_sector_read(IDEState *s)
 #if defined(DEBUG_IDE)
     printf("sector=%" PRId64 "\n", sector_num);
 #endif
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        ide_rw_error(s);
+        return;
+    }
 
     s->iov.iov_base = s->io_buffer;
     s->iov.iov_len  = n * BDRV_SECTOR_SIZE;
@@ -629,6 +646,13 @@ static void ide_read_dma_cb(void *opaque, int ret)
 #ifdef DEBUG_AIO
     printf("aio_read: sector_num=%" PRId64 " n=%d\n", sector_num, n);
 #endif
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        dma_buf_commit(s, 0);
+        ide_dma_error(s);
+        return;
+    }
+
     bm->aiocb = dma_bdrv_read(s->bs, &s->sg, sector_num, ide_read_dma_cb, bm);
     ide_dma_submit_check(s, ide_read_dma_cb, bm);
 }
@@ -715,6 +739,11 @@ static void ide_sector_write(IDEState *s)
     n = s->nsector;
     if (n > s->req_nb_sectors) {
         n = s->req_nb_sectors;
+    }
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        ide_rw_error(s);
+        return;
     }
 
     s->iov.iov_base = s->io_buffer;
@@ -815,6 +844,13 @@ static void ide_write_dma_cb(void *opaque, int ret)
 #ifdef DEBUG_AIO
     printf("aio_write: sector_num=%" PRId64 " n=%d\n", sector_num, n);
 #endif
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        dma_buf_commit(s, 0);
+        ide_dma_error(s);
+        return;
+    }
+
     bm->aiocb = dma_bdrv_write(s->bs, &s->sg, sector_num, ide_write_dma_cb, bm);
     ide_dma_submit_check(s, ide_write_dma_cb, bm);
 }
@@ -841,7 +877,9 @@ static void ide_flush_cb(void *opaque, int ret)
         }
     }
 
-    bdrv_acct_done(s->bs, &s->acct);
+    if (s->bs) {
+        bdrv_acct_done(s->bs, &s->acct);
+    }
     s->status = READY_STAT | SEEK_STAT;
     ide_set_irq(s->bus);
 }

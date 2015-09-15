@@ -165,6 +165,7 @@ struct Monitor {
     int reset_seen;
     int flags;
     int suspend_cnt;
+    bool skip_flush;
     QString *outbuf;
     guint watch;
     ReadLineState *rs;
@@ -280,7 +281,7 @@ void monitor_flush(Monitor *mon)
     size_t len;
     const char *buf;
 
-    if (!mon) {
+    if (!mon || mon->skip_flush) {
         return;
     }
 
@@ -500,6 +501,7 @@ static const char *monitor_event_names[] = {
     [QEVENT_RH_SPICE_DISCONNECTED] = RFQDN_REDHAT "SPICE_DISCONNECTED",
     [QEVENT_BLOCK_JOB_COMPLETED] = "BLOCK_JOB_COMPLETED",
     [QEVENT_BLOCK_JOB_CANCELLED] = "BLOCK_JOB_CANCELLED",
+    [QEVENT_DEVICE_DELETED] = "DEVICE_DELETED",
     [QEVENT_DEVICE_TRAY_MOVED] = "DEVICE_TRAY_MOVED",
     [QEVENT_SUSPEND] = "SUSPEND",
     [QEVENT_SUSPEND_DISK] = "SUSPEND_DISK",
@@ -507,6 +509,7 @@ static const char *monitor_event_names[] = {
     [QEVENT_BALLOON_CHANGE] = "BALLOON_CHANGE",
     [QEVENT_SPICE_MIGRATE_COMPLETED] = "SPICE_MIGRATE_COMPLETED",
     [QEVENT_GUEST_PANICKED] = "GUEST_PANICKED",
+    [QEVENT_BLOCK_IMAGE_CORRUPTED] = "BLOCK_IMAGE_CORRUPTED",
 };
 QEMU_BUILD_BUG_ON(ARRAY_SIZE(monitor_event_names) != QEVENT_MAX)
 
@@ -683,49 +686,43 @@ static int do_qmp_capabilities(Monitor *mon, const QDict *params,
     return 0;
 }
 
-static int mon_set_cpu(int cpu_index);
 static void handle_user_command(Monitor *mon, const char *cmdline);
 
-static int do_hmp_passthrough(Monitor *mon, const QDict *params,
-                              QObject **ret_data)
+char *qmp_human_monitor_command(const char *command_line, bool has_cpu_index,
+                                int64_t cpu_index, Error **errp)
 {
-    int ret = 0;
+    char *output = NULL;
     Monitor *old_mon, hmp;
-    CharDriverState mchar;
-
-    if (!monitor_ctrl_mode(mon)) {
-        return -1;
-    }
 
     memset(&hmp, 0, sizeof(hmp));
     hmp.outbuf = qstring_new();
-
-    qemu_chr_init_mem(&mchar);
-    hmp.chr = &mchar;
+    hmp.skip_flush = true;
 
     old_mon = cur_mon;
     cur_mon = &hmp;
 
-    if (qdict_haskey(params, "cpu-index")) {
-        ret = mon_set_cpu(qdict_get_int(params, "cpu-index"));
+    if (has_cpu_index) {
+        int ret = monitor_set_cpu(cpu_index);
         if (ret < 0) {
             cur_mon = old_mon;
-            qerror_report(QERR_INVALID_PARAMETER_VALUE, "cpu-index", "a CPU number");
+            error_set(errp, QERR_INVALID_PARAMETER_VALUE, "cpu-index",
+                      "a CPU number");
             goto out;
         }
     }
 
-    handle_user_command(&hmp, qdict_get_str(params, "command-line"));
+    handle_user_command(&hmp, command_line);
     cur_mon = old_mon;
 
-    if (qemu_chr_mem_osize(hmp.chr) > 0) {
-        *ret_data = QOBJECT(qemu_chr_mem_to_qs(hmp.chr));
+    if (qstring_get_length(hmp.outbuf) > 0) {
+        output = g_strdup(qstring_get_str(hmp.outbuf));
+    } else {
+        output = g_strdup("");
     }
 
 out:
     QDECREF(hmp.outbuf);
-    qemu_chr_close_mem(hmp.chr);
-    return ret;
+    return output;
 }
 
 static int compare_cmd(const char *name, const char *list)
@@ -1042,8 +1039,8 @@ static void do_info_uuid(Monitor *mon, QObject **ret_data)
     *ret_data = qobject_from_jsonf("{ 'UUID': %s }", uuid);
 }
 
-/* get the current CPU defined by the user */
-static int mon_set_cpu(int cpu_index)
+/* set the current CPU defined by the user */
+int monitor_set_cpu(int cpu_index)
 {
     CPUState *env;
 
@@ -1059,7 +1056,7 @@ static int mon_set_cpu(int cpu_index)
 static CPUState *mon_get_cpu(void)
 {
     if (!cur_mon->mon_cpu) {
-        mon_set_cpu(0);
+        monitor_set_cpu(0);
     }
     cpu_synchronize_state(cur_mon->mon_cpu);
     return cur_mon->mon_cpu;
@@ -1178,7 +1175,7 @@ static void do_info_cpus(Monitor *mon, QObject **ret_data)
 static int do_cpu_set(Monitor *mon, const QDict *qdict, QObject **ret_data)
 {
     int index = qdict_get_int(qdict, "index");
-    if (mon_set_cpu(index) < 0) {
+    if (monitor_set_cpu(index) < 0) {
         qerror_report(QERR_INVALID_PARAMETER_VALUE, "index",
                       "a CPU number");
         return -1;
@@ -2991,7 +2988,7 @@ static const mon_cmd_t info_cmds[] = {
         .args_type  = "",
         .params     = "",
         .help       = "show PCI info",
-        .mhandler.info = pci_info,
+        .mhandler.info = hmp_info_pci,
     },
 #if defined(TARGET_I386) || defined(TARGET_SH4)
     {

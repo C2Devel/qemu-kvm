@@ -45,6 +45,10 @@ static const QType qerror_type = {
  */
 static const QErrorStringTable qerror_table[] = {
     {
+        .error_fmt = QERR_AMBIGUOUS_PATH,
+        .desc      = "Path '%(path)' does not uniquely identify a %(object)"
+    },
+    {
         .error_fmt = QERR_BAD_BUS_FOR_DEVICE,
         .desc      = "Device '%(device)' can't go on a %(bad_bus_type) bus",
     },
@@ -204,6 +208,10 @@ static const QErrorStringTable qerror_table[] = {
     {
         .error_fmt = QERR_OPEN_FILE_FAILED,
         .desc      = "Could not open '%(filename)': %(__com.redhat_error_message)",
+    },
+    {
+        .error_fmt = QERR_PERMISSION_DENIED,
+        .desc      = "Insufficient permission to perform this operation",
     },
     {
         .error_fmt = QERR_PROPERTY_NOT_FOUND,

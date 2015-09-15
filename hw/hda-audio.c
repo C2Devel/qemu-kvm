@@ -674,6 +674,9 @@ static void hda_audio_set_amp(HDAAudioStream *st)
     left = left * 255 / QEMU_HDA_AMP_STEPS;
     right = right * 255 / QEMU_HDA_AMP_STEPS;
 
+    if (get_mixemu_disabled()) {
+        return;
+    }
     if (st->output) {
         AUD_set_volume_out(st->voice.out, muted, left, right);
     } else {

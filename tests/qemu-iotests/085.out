@@ -1,0 +1,55 @@
+QA output created by 085
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=134217728 
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=134217728 
+
+=== Running QEMU ===
+
+
+=== Sending capabilities ===
+
+{"return": {}}
+
+=== Create a single snapshot on virtio0 ===
+
+Formatting 'TEST_DIR/1-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/t.qcow2.orig' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+
+=== Invalid command - missing device and nodename ===
+
+{"error": {"class": "MissingParameter", "desc": "Parameter 'device' is missing", "data": {"name": "device"}}}
+
+=== Invalid command - missing snapshot-file ===
+
+{"error": {"class": "MissingParameter", "desc": "Parameter 'snapshot-file' is missing", "data": {"name": "snapshot-file"}}}
+
+
+=== Create several transactional group snapshots ===
+
+Formatting 'TEST_DIR/2-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/1-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/2-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/t.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/3-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/2-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/3-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/2-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/4-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/3-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/4-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/3-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/5-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/4-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/5-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/4-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/6-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/5-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/6-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/5-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/7-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/6-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/7-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/6-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/8-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/7-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/8-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/7-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/9-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/8-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/9-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/8-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+Formatting 'TEST_DIR/10-snapshot-v0.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/9-snapshot-v0.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+Formatting 'TEST_DIR/10-snapshot-v1.qcow2', fmt=qcow2 size=134217728 backing_file='TEST_DIR/9-snapshot-v1.qcow2' backing_fmt='qcow2' encryption=off cluster_size=65536
+{"return": {}}
+*** done

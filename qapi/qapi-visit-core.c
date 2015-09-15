@@ -253,3 +253,53 @@ void visit_type_number(Visitor *v, double *obj, const char *name, Error **errp)
         v->type_number(v, obj, name, errp);
     }
 }
+
+void output_type_enum(Visitor *v, int *obj, const char *strings[],
+                      const char *kind, const char *name,
+                      Error **errp)
+{
+    int i = 0;
+    int value = *obj;
+    char *enum_str;
+
+    assert(strings);
+    while (strings[i++] != NULL);
+    if (value < 0 || value >= i - 1) {
+        error_set(errp, QERR_INVALID_PARAMETER, name ? name : "null");
+        return;
+    }
+
+    enum_str = (char *)strings[value];
+    visit_type_str(v, &enum_str, name, errp);
+}
+
+void input_type_enum(Visitor *v, int *obj, const char *strings[],
+                     const char *kind, const char *name,
+                     Error **errp)
+{
+    int64_t value = 0;
+    char *enum_str;
+
+    assert(strings);
+
+    visit_type_str(v, &enum_str, name, errp);
+    if (error_is_set(errp)) {
+        return;
+    }
+
+    while (strings[value] != NULL) {
+        if (strcmp(strings[value], enum_str) == 0) {
+            break;
+        }
+        value++;
+    }
+
+    if (strings[value] == NULL) {
+        error_set(errp, QERR_INVALID_PARAMETER, enum_str);
+        g_free(enum_str);
+        return;
+    }
+
+    g_free(enum_str);
+    *obj = value;
+}

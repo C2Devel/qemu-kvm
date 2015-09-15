@@ -9,7 +9,6 @@
 
 static char *scsibus_get_dev_path(DeviceState *dev);
 static char *scsibus_get_fw_dev_path(DeviceState *dev);
-static int scsi_req_parse(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf);
 static void scsi_req_dequeue(SCSIRequest *req);
 static uint8_t *scsi_target_alloc_buf(SCSIRequest *req, size_t len);
 static void scsi_target_free_buf(SCSIRequest *req);
@@ -27,6 +26,20 @@ static struct BusInfo scsi_bus_info = {
     },
 };
 static int next_scsi_bus;
+
+int scsi_bus_parse_cdb(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf,
+                       void *hba_private)
+{
+    SCSIBus *bus = DO_UPCAST(SCSIBus, qbus, dev->qdev.parent_bus);
+    int rc;
+
+    assert(cmd->len == 0);
+    rc = scsi_req_parse_cdb(dev, cmd, buf);
+    if (bus->info->parse_cdb) {
+        rc = bus->info->parse_cdb(dev, cmd, buf, hba_private);
+    }
+    return rc;
+}
 
 /* Create a scsi bus, and attach devices to it.  */
 void scsi_bus_new(SCSIBus *bus, DeviceState *host, const SCSIBusInfo *info)
@@ -133,7 +146,9 @@ static int scsi_qdev_init(DeviceState *qdev, DeviceInfo *base)
         d = scsi_device_find(bus, dev->channel, dev->id, dev->lun);
         assert(d);
         if (d->lun == dev->lun && dev != d) {
-            qdev_free(&d->qdev);
+            error_report("lun already used by '%s'", d->qdev.id);
+            goto err;
+
         }
     }
 
@@ -516,13 +531,43 @@ SCSIRequest *scsi_req_new(SCSIDevice *d, uint32_t tag, uint32_t lun,
                           uint8_t *buf, void *hba_private)
 {
     SCSIBus *bus = DO_UPCAST(SCSIBus, qbus, d->qdev.parent_bus);
+    const SCSIReqOps *ops;
     SCSIRequest *req;
-    SCSICommand cmd;
+    SCSICommand cmd = { .len = 0 };
+    int ret;
 
-    if (scsi_req_parse(&cmd, d, buf) != 0) {
+    if ((d->unit_attention.key == UNIT_ATTENTION ||
+         bus->unit_attention.key == UNIT_ATTENTION) &&
+        (buf[0] != INQUIRY &&
+         buf[0] != REPORT_LUNS &&
+         buf[0] != GET_CONFIGURATION &&
+         buf[0] != GET_EVENT_STATUS_NOTIFICATION &&
+
+         /*
+          * If we already have a pending unit attention condition,
+          * report this one before triggering another one.
+          */
+         !(buf[0] == REQUEST_SENSE && d->sense_is_ua))) {
+        ops = &reqops_unit_attention;
+    } else if (lun != d->lun ||
+               buf[0] == REPORT_LUNS ||
+               (buf[0] == REQUEST_SENSE && d->sense_len)) {
+        ops = &reqops_target_command;
+    } else {
+        ops = NULL;
+    }
+
+    if (ops != NULL || !d->info->parse_cdb) {
+        ret = scsi_req_parse_cdb(d, &cmd, buf);
+    } else {
+        ret = d->info->parse_cdb(d, &cmd, buf, hba_private);
+    }
+
+    if (ret != 0) {
         trace_scsi_req_parse_bad(d->id, lun, tag, buf[0]);
         req = scsi_req_alloc(&reqops_invalid_opcode, d, tag, lun, hba_private);
     } else {
+        assert(cmd.len != 0);
         trace_scsi_req_parsed(d->id, lun, tag, buf[0],
                               cmd.mode, cmd.xfer);
         if (cmd.lba != -1) {
@@ -530,25 +575,8 @@ SCSIRequest *scsi_req_new(SCSIDevice *d, uint32_t tag, uint32_t lun,
                                       cmd.lba);
         }
 
-        if ((d->unit_attention.key == UNIT_ATTENTION ||
-             bus->unit_attention.key == UNIT_ATTENTION) &&
-            (buf[0] != INQUIRY &&
-             buf[0] != REPORT_LUNS &&
-             buf[0] != GET_CONFIGURATION &&
-             buf[0] != GET_EVENT_STATUS_NOTIFICATION &&
-
-             /*
-              * If we already have a pending unit attention condition,
-              * report this one before triggering another one.
-              */
-             !(buf[0] == REQUEST_SENSE && d->sense_is_ua))) {
-            req = scsi_req_alloc(&reqops_unit_attention, d, tag, lun,
-                                 hba_private);
-        } else if (lun != d->lun ||
-                   buf[0] == REPORT_LUNS ||
-                   (buf[0] == REQUEST_SENSE && d->sense_len)) {
-            req = scsi_req_alloc(&reqops_target_command, d, tag, lun,
-                                 hba_private);
+        if (ops) {
+            req = scsi_req_alloc(ops, d, tag, lun, hba_private);
         } else {
             req = d->info->alloc_req(d, tag, lun, buf, hba_private);
         }
@@ -735,22 +763,18 @@ static int scsi_req_length(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
     switch (buf[0] >> 5) {
     case 0:
         cmd->xfer = (uint64_t) buf[4];
-        cmd->len = 6;
         break;
     case 1:
     case 2:
         cmd->xfer = (uint64_t) buf[8] | ((uint64_t) buf[7] << 8);
-        cmd->len = 10;
         break;
     case 4:
         cmd->xfer = (uint64_t) buf[13] | ((uint64_t) buf[12] << 8) |
 		    ((uint64_t) buf[11] << 16) | ((uint64_t) buf[10] << 24);
-        cmd->len = 16;
         break;
     case 5:
         cmd->xfer = (uint64_t) buf[9] | ((uint64_t) buf[8] << 8) |
 		    ((uint64_t) buf[7] << 16) | ((uint64_t) buf[6] << 24);
-        cmd->len = 12;
         break;
     default:
         return -1;
@@ -889,7 +913,6 @@ static int scsi_req_stream_length(SCSICommand *cmd, SCSIDevice *dev, uint8_t *bu
     case READ_REVERSE:
     case RECOVER_BUFFERED_DATA:
     case WRITE_6:
-        cmd->len = 6;
         cmd->xfer = buf[4] | (buf[3] << 8) | (buf[2] << 16);
         if (buf[1] & 0x01) { /* fixed */
             cmd->xfer *= dev->blocksize;
@@ -897,7 +920,6 @@ static int scsi_req_stream_length(SCSICommand *cmd, SCSIDevice *dev, uint8_t *bu
         break;
     case REWIND:
     case START_STOP:
-        cmd->len = 6;
         cmd->xfer = 0;
         break;
     case SPACE_16:
@@ -998,9 +1020,28 @@ static uint64_t scsi_cmd_lba(SCSICommand *cmd)
     return lba;
 }
 
-int scsi_req_parse(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
+int scsi_req_parse_cdb(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf)
 {
     int rc;
+
+    cmd->lba = -1;
+    switch (buf[0] >> 5) {
+    case 0:
+        cmd->len = 6;
+        break;
+    case 1:
+    case 2:
+        cmd->len = 10;
+        break;
+    case 4:
+        cmd->len = 16;
+        break;
+    case 5:
+        cmd->len = 12;
+        break;
+    default:
+        return -1;
+    }
 
     if (dev->type == TYPE_TAPE) {
         rc = scsi_req_stream_length(cmd, dev, buf);

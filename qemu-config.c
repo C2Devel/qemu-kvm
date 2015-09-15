@@ -384,6 +384,9 @@ QemuOptsList qemu_spice_opts = {
             .name = "disable-agent-file-xfer",
             .type = QEMU_OPT_BOOL,
         },{
+            .name = "sasl",
+            .type = QEMU_OPT_BOOL,
+        },{
             .name = "x509-dir",
             .type = QEMU_OPT_STRING,
         },{
@@ -525,6 +528,15 @@ static QemuOptsList qemu_msg_opts = {
     },
 };
 
+static QemuOptsList qemu_object_opts = {
+    .name = "object",
+    .implied_opt_name = "qom-type",
+    .head = QTAILQ_HEAD_INITIALIZER(qemu_object_opts.head),
+    .desc = {
+        { }
+    },
+};
+
 static QemuOptsList *vm_config_groups[] = {
     &qemu_drive_opts,
     &qemu_simple_drive_opts,
@@ -542,6 +554,7 @@ static QemuOptsList *vm_config_groups[] = {
     &qemu_boot_opts,
     &qemu_realtime_opts,
     &qemu_msg_opts,
+    &qemu_object_opts,
     NULL,
 };
 

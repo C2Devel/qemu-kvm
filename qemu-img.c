@@ -79,6 +79,7 @@ static void help(void)
            "  'fmt' is the disk image format. It is guessed automatically in most cases\n"
            "  'cache' is the cache mode used to write the output disk image, the valid\n"
            "    options are: 'none', 'writeback' (default), 'writethrough' and 'unsafe'\n"
+           "  'src_cache' in contrast is the cache mode used to read input disk images\n"
            "  'size' is the disk image size in bytes. Optional suffixes\n"
            "    'k' or 'K' (kilobyte, 1024), 'M' (megabyte, 1024k), 'G' (gigabyte, 1024M)\n"
            "    and T (terabyte, 1024G) are supported. 'b' is ignored.\n"
@@ -109,6 +110,11 @@ static void help(void)
            "  '-c' creates a snapshot\n"
            "  '-d' deletes a snapshot\n"
            "  '-l' lists all snapshots in the given image\n"
+           "\n"
+           "Parameters to compare subcommand:\n"
+           "  '-f' first image format\n"
+           "  '-F' second image format\n"
+           "  '-s' run in Strict mode - fail on different image size or sector allocation\n"
            );
     printf("\nSupported formats:");
     bdrv_iterate_format(format_print, NULL);
@@ -203,27 +209,6 @@ static int read_password(char *buf, int buf_size)
     return ret;
 }
 #endif
-
-static int set_cache_flag(const char *mode, int *flags)
-{
-    *flags &= ~BDRV_O_CACHE_MASK;
-
-    if (!strcmp(mode, "none") || !strcmp(mode, "off")) {
-        *flags |= BDRV_O_CACHE_WB;
-        *flags |= BDRV_O_NOCACHE;
-    } else if (!strcmp(mode, "writeback")) {
-        *flags |= BDRV_O_CACHE_WB;
-    } else if (!strcmp(mode, "unsafe")) {
-        *flags |= BDRV_O_CACHE_WB;
-        *flags |= BDRV_O_NO_FLUSH;
-    } else if (!strcmp(mode, "writethrough")) {
-        /* this is the default */
-    } else {
-        return -1;
-    }
-
-    return 0;
-}
 
 static int print_block_option_help(const char *filename, const char *fmt)
 {
@@ -491,16 +476,17 @@ static int collect_image_check(BlockDriverState *bs,
 /*
  * Checks an image for consistency. Exit codes:
  *
- * 0 - Check completed, image is good
- * 1 - Check not completed because of internal errors
- * 2 - Check completed, image is corrupted
- * 3 - Check completed, image has leaked clusters, but is good otherwise
+ *  0 - Check completed, image is good
+ *  1 - Check not completed because of internal errors
+ *  2 - Check completed, image is corrupted
+ *  3 - Check completed, image has leaked clusters, but is good otherwise
+ * 63 - Checks are not supported by the image format
  */
 static int img_check(int argc, char **argv)
 {
     int c, ret;
     OutputFormat output_format = OFORMAT_HUMAN;
-    const char *filename, *fmt, *output;
+    const char *filename, *fmt, *output, *cache;
     BlockDriverState *bs;
     int fix = 0;
     int flags = BDRV_O_FLAGS | BDRV_O_CHECK;
@@ -508,6 +494,7 @@ static int img_check(int argc, char **argv)
 
     fmt = NULL;
     output = NULL;
+    cache = BDRV_DEFAULT_CACHE;
     for(;;) {
         int option_index = 0;
         static const struct option long_options[] = {
@@ -517,7 +504,7 @@ static int img_check(int argc, char **argv)
             {"output", required_argument, 0, OPTION_OUTPUT},
             {0, 0, 0, 0}
         };
-        c = getopt_long(argc, argv, "f:hr:",
+        c = getopt_long(argc, argv, "hf:r:T:",
                         long_options, &option_index);
         if (c == -1) {
             break;
@@ -544,6 +531,9 @@ static int img_check(int argc, char **argv)
         case OPTION_OUTPUT:
             output = optarg;
             break;
+        case 'T':
+            cache = optarg;
+            break;
         }
     }
     if (optind >= argc) {
@@ -560,6 +550,12 @@ static int img_check(int argc, char **argv)
         return 1;
     }
 
+    ret = bdrv_parse_cache_flags(cache, &flags);
+    if (ret < 0) {
+        error_report("Invalid source cache option: %s", cache);
+        return 1;
+    }
+
     bs = bdrv_new_open(filename, fmt, flags, true);
     if (!bs) {
         return 1;
@@ -569,10 +565,8 @@ static int img_check(int argc, char **argv)
     ret = collect_image_check(bs, check, filename, fmt, fix);
 
     if (ret == -ENOTSUP) {
-        if (output_format == OFORMAT_HUMAN) {
-            error_report("This image format does not support checks");
-        }
-        ret = 1;
+        error_report("This image format does not support checks");
+        ret = 63;
         goto fail;
     }
 
@@ -658,7 +652,7 @@ static int img_commit(int argc, char **argv)
     filename = argv[optind++];
 
     flags = BDRV_O_RDWR;
-    ret = set_cache_flag(cache, &flags);
+    ret = bdrv_parse_cache_flags(cache, &flags);
     if (ret < 0) {
         error_report("Invalid cache option: %s\n", cache);
         return -1;
@@ -796,11 +790,297 @@ static int compare_sectors(const uint8_t *buf1, const uint8_t *buf2, int n,
 
 #define IO_BUF_SIZE (2 * 1024 * 1024)
 
+static int64_t sectors_to_bytes(int64_t sectors)
+{
+    return sectors << BDRV_SECTOR_BITS;
+}
+
+static int64_t sectors_to_process(int64_t total, int64_t from)
+{
+    return MIN(total - from, IO_BUF_SIZE >> BDRV_SECTOR_BITS);
+}
+
+/*
+ * Check if passed sectors are empty (not allocated or contain only 0 bytes)
+ *
+ * Returns 0 in case sectors are filled with 0, 1 if sectors contain non-zero
+ * data and negative value on error.
+ *
+ * @param bs:  Driver used for accessing file
+ * @param sect_num: Number of first sector to check
+ * @param sect_count: Number of sectors to check
+ * @param filename: Name of disk file we are checking (logging purpose)
+ * @param buffer: Allocated buffer for storing read data
+ */
+static int check_empty_sectors(BlockDriverState *bs, int64_t sect_num,
+                               int sect_count, const char *filename,
+                               uint8_t *buffer)
+{
+    int pnum, ret = 0;
+    ret = bdrv_read(bs, sect_num, buffer, sect_count);
+    if (ret < 0) {
+        error_report("Error while reading offset %" PRId64 " of %s: %s",
+                     sectors_to_bytes(sect_num), filename, strerror(-ret));
+        return ret;
+    }
+    ret = is_allocated_sectors(buffer, sect_count, &pnum);
+    if (ret || pnum != sect_count) {
+        printf("Content mismatch at offset %" PRId64 "!\n",
+                sectors_to_bytes(ret ? sect_num : sect_num + pnum));
+        return 1;
+    }
+
+    return 0;
+}
+
+/*
+ * Compares two images. Exit codes:
+ *
+ * 0 - Images are identical
+ * 1 - Images differ
+ * >1 - Error occurred
+ */
+static int img_compare(int argc, char **argv)
+{
+    const char *fmt1 = NULL, *fmt2 = NULL, *cache, *filename1, *filename2;
+    BlockDriverState *bs1, *bs2;
+    int64_t total_sectors1, total_sectors2;
+    uint8_t *buf1 = NULL, *buf2 = NULL;
+    int pnum1, pnum2;
+    int allocated1, allocated2;
+    int ret = 0; /* return value - 0 Ident, 1 Different, >1 Error */
+    bool progress = false, strict = false;
+    int flags;
+    int64_t total_sectors;
+    int64_t sector_num = 0;
+    int64_t nb_sectors;
+    int c, pnum;
+    uint64_t bs_sectors;
+    uint64_t progress_base;
+
+    cache = BDRV_DEFAULT_CACHE;
+    for (;;) {
+        c = getopt(argc, argv, "hf:F:T:ps");
+        if (c == -1) {
+            break;
+        }
+        switch (c) {
+        case '?':
+        case 'h':
+            help();
+            break;
+        case 'f':
+            fmt1 = optarg;
+            break;
+        case 'F':
+            fmt2 = optarg;
+            break;
+        case 'T':
+            cache = optarg;
+            break;
+        case 'p':
+            progress = true;
+            break;
+        case 's':
+            strict = true;
+            break;
+        }
+    }
+
+    if (optind > argc - 2) {
+        help();
+    }
+    filename1 = argv[optind++];
+    filename2 = argv[optind++];
+
+    /* Initialize before goto out */
+    qemu_progress_init(progress, 2.0);
+
+    flags = BDRV_O_FLAGS;
+    ret = bdrv_parse_cache_flags(cache, &flags);
+    if (ret < 0) {
+        error_report("Invalid source cache option: %s", cache);
+        ret = 2;
+        goto out3;
+    }
+
+    bs1 = bdrv_new_open(filename1, fmt1, flags, true);
+    if (!bs1) {
+        error_report("Can't open file %s", filename1);
+        ret = 2;
+        goto out3;
+    }
+
+    bs2 = bdrv_new_open(filename2, fmt2, flags, true);
+    if (!bs2) {
+        error_report("Can't open file %s", filename2);
+        ret = 2;
+        goto out2;
+    }
+
+    buf1 = qemu_blockalign(bs1, IO_BUF_SIZE);
+    buf2 = qemu_blockalign(bs2, IO_BUF_SIZE);
+    bdrv_get_geometry(bs1, &bs_sectors);
+    total_sectors1 = bs_sectors;
+    bdrv_get_geometry(bs2, &bs_sectors);
+    total_sectors2 = bs_sectors;
+    total_sectors = MIN(total_sectors1, total_sectors2);
+    progress_base = MAX(total_sectors1, total_sectors2);
+
+    qemu_progress_print(0, 100);
+
+    if (strict && total_sectors1 != total_sectors2) {
+        ret = 1;
+        printf("Strict mode: Image size mismatch!\n");
+        goto out;
+    }
+
+    for (;;) {
+        nb_sectors = sectors_to_process(total_sectors, sector_num);
+        if (nb_sectors <= 0) {
+            break;
+        }
+        allocated1 = bdrv_is_allocated_above(bs1, NULL, sector_num, nb_sectors,
+                                             &pnum1);
+        if (allocated1 < 0) {
+            ret = 3;
+            error_report("Sector allocation test failed for %s", filename1);
+            goto out;
+        }
+
+        allocated2 = bdrv_is_allocated_above(bs2, NULL, sector_num, nb_sectors,
+                                             &pnum2);
+        if (allocated2 < 0) {
+            ret = 3;
+            error_report("Sector allocation test failed for %s", filename2);
+            goto out;
+        }
+        nb_sectors = MIN(pnum1, pnum2);
+
+        if (allocated1 == allocated2) {
+            if (allocated1) {
+                ret = bdrv_read(bs1, sector_num, buf1, nb_sectors);
+                if (ret < 0) {
+                    error_report("Error while reading offset %" PRId64 " of %s:"
+                                 " %s", sectors_to_bytes(sector_num), filename1,
+                                 strerror(-ret));
+                    ret = 4;
+                    goto out;
+                }
+                ret = bdrv_read(bs2, sector_num, buf2, nb_sectors);
+                if (ret < 0) {
+                    error_report("Error while reading offset %" PRId64
+                                 " of %s: %s", sectors_to_bytes(sector_num),
+                                 filename2, strerror(-ret));
+                    ret = 4;
+                    goto out;
+                }
+                ret = compare_sectors(buf1, buf2, nb_sectors, &pnum);
+                if (ret || pnum != nb_sectors) {
+                    printf("Content mismatch at offset %" PRId64 "!\n",
+                            sectors_to_bytes(
+                                ret ? sector_num : sector_num + pnum));
+                    ret = 1;
+                    goto out;
+                }
+            }
+        } else {
+            if (strict) {
+                ret = 1;
+                printf("Strict mode: Offset %" PRId64
+                        " allocation mismatch!\n",
+                        sectors_to_bytes(sector_num));
+                goto out;
+            }
+
+            if (allocated1) {
+                ret = check_empty_sectors(bs1, sector_num, nb_sectors,
+                                          filename1, buf1);
+            } else {
+                ret = check_empty_sectors(bs2, sector_num, nb_sectors,
+                                          filename2, buf1);
+            }
+            if (ret) {
+                if (ret < 0) {
+                    error_report("Error while reading offset %" PRId64 ": %s",
+                                 sectors_to_bytes(sector_num), strerror(-ret));
+                    ret = 4;
+                }
+                goto out;
+            }
+        }
+        sector_num += nb_sectors;
+        qemu_progress_print(((float) nb_sectors / progress_base)*100, 100);
+    }
+
+    if (total_sectors1 != total_sectors2) {
+        BlockDriverState *bs_over;
+        int64_t total_sectors_over;
+        const char *filename_over;
+
+        printf("Warning: Image size mismatch!\n");
+        if (total_sectors1 > total_sectors2) {
+            total_sectors_over = total_sectors1;
+            bs_over = bs1;
+            filename_over = filename1;
+        } else {
+            total_sectors_over = total_sectors2;
+            bs_over = bs2;
+            filename_over = filename2;
+        }
+
+        for (;;) {
+            nb_sectors = sectors_to_process(total_sectors_over, sector_num);
+            if (nb_sectors <= 0) {
+                break;
+            }
+            ret = bdrv_is_allocated_above(bs_over, NULL, sector_num,
+                                          nb_sectors, &pnum);
+            if (ret < 0) {
+                ret = 3;
+                error_report("Sector allocation test failed for %s",
+                             filename_over);
+                goto out;
+
+            }
+            nb_sectors = pnum;
+            if (ret) {
+                ret = check_empty_sectors(bs_over, sector_num, nb_sectors,
+                                          filename_over, buf1);
+                if (ret) {
+                    if (ret < 0) {
+                        error_report("Error while reading offset %" PRId64
+                                     " of %s: %s", sectors_to_bytes(sector_num),
+                                     filename_over, strerror(-ret));
+                        ret = 4;
+                    }
+                    goto out;
+                }
+            }
+            sector_num += nb_sectors;
+            qemu_progress_print(((float) nb_sectors / progress_base)*100, 100);
+        }
+    }
+
+    printf("Images are identical.\n");
+    ret = 0;
+
+out:
+    bdrv_delete(bs2);
+    qemu_vfree(buf1);
+    qemu_vfree(buf2);
+out2:
+    bdrv_delete(bs1);
+out3:
+    qemu_progress_end();
+    return ret;
+}
+
 static int img_convert(int argc, char **argv)
 {
     int c, ret = 0, n, n1, bs_n, bs_i, compress, cluster_size, cluster_sectors;
-    int progress = 0, flags;
-    const char *fmt, *out_fmt, *cache, *out_baseimg, *out_filename;
+    int progress = 0, flags, src_flags;
+    const char *fmt, *out_fmt, *cache, *src_cache, *out_baseimg, *out_filename;
     BlockDriver *drv, *proto_drv;
     BlockDriverState **bs = NULL, *out_bs = NULL;
     int64_t total_sectors, nb_sectors, sector_num, bs_offset;
@@ -817,10 +1097,11 @@ static int img_convert(int argc, char **argv)
     fmt = NULL;
     out_fmt = "raw";
     cache = "unsafe";
+    src_cache = BDRV_DEFAULT_CACHE;
     out_baseimg = NULL;
     compress = 0;
     for(;;) {
-        c = getopt(argc, argv, "f:O:B:hce6o:pS:t:");
+        c = getopt(argc, argv, "hf:O:B:ce6o:S:pt:T:");
         if (c == -1) {
             break;
         }
@@ -870,6 +1151,9 @@ static int img_convert(int argc, char **argv)
         case 't':
             cache = optarg;
             break;
+        case 'T':
+            src_cache = optarg;
+            break;
         }
     }
 
@@ -895,13 +1179,20 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
+    src_flags = BDRV_O_FLAGS;
+    ret = bdrv_parse_cache_flags(src_cache, &src_flags);
+    if (ret < 0) {
+        error_report("Invalid source cache option: %s", src_cache);
+        goto out;
+    }
+
     qemu_progress_print(0, 100);
 
     bs = qemu_mallocz(bs_n * sizeof(BlockDriverState *));
 
     total_sectors = 0;
     for (bs_i = 0; bs_i < bs_n; bs_i++) {
-        bs[bs_i] = bdrv_new_open(argv[optind + bs_i], fmt, BDRV_O_FLAGS, true);
+        bs[bs_i] = bdrv_new_open(argv[optind + bs_i], fmt, src_flags, true);
         if (!bs[bs_i]) {
             error_report("Could not open '%s'", argv[optind + bs_i]);
             ret = -1;
@@ -990,7 +1281,7 @@ static int img_convert(int argc, char **argv)
     }
 
     flags = BDRV_O_RDWR;
-    ret = set_cache_flag(cache, &flags);
+    ret = bdrv_parse_cache_flags(cache, &flags);
     if (ret < 0) {
         error_report("Invalid cache option: %s\n", cache);
         return -1;
@@ -1885,18 +2176,19 @@ static int img_rebase(int argc, char **argv)
     BlockDriverState *bs, *bs_old_backing = NULL, *bs_new_backing = NULL;
     BlockDriver *old_backing_drv, *new_backing_drv;
     char *filename;
-    const char *fmt, *cache, *out_basefmt, *out_baseimg;
-    int c, flags, ret;
+    const char *fmt, *cache, *src_cache, *out_basefmt, *out_baseimg;
+    int c, flags, src_flags, ret;
     int unsafe = 0;
     int progress = 0;
 
     /* Parse commandline parameters */
     fmt = NULL;
     cache = BDRV_DEFAULT_CACHE;
+    src_cache = BDRV_DEFAULT_CACHE;
     out_baseimg = NULL;
     out_basefmt = NULL;
     for(;;) {
-        c = getopt(argc, argv, "uhf:F:b:pt:");
+        c = getopt(argc, argv, "hf:F:b:upt:T:");
         if (c == -1) {
             break;
         }
@@ -1923,6 +2215,9 @@ static int img_rebase(int argc, char **argv)
         case 't':
             cache = optarg;
             break;
+        case 'T':
+            src_cache = optarg;
+            break;
         }
     }
 
@@ -1935,9 +2230,16 @@ static int img_rebase(int argc, char **argv)
     qemu_progress_print(0, 100);
 
     flags = BDRV_O_RDWR | (unsafe ? BDRV_O_NO_BACKING : 0);
-    ret = set_cache_flag(cache, &flags);
+    ret = bdrv_parse_cache_flags(cache, &flags);
     if (ret < 0) {
         error_report("Invalid cache option: %s\n", cache);
+        return -1;
+    }
+
+    src_flags = BDRV_O_FLAGS;
+    ret = bdrv_parse_cache_flags(src_cache, &src_flags);
+    if (ret < 0) {
+        error_report("Invalid source cache option: %s", src_cache);
         return -1;
     }
 
@@ -1984,7 +2286,7 @@ static int img_rebase(int argc, char **argv)
 
         bs_old_backing = bdrv_new("old_backing");
         bdrv_get_backing_filename(bs, backing_name, sizeof(backing_name));
-        ret = bdrv_open(bs_old_backing, backing_name, BDRV_O_FLAGS,
+        ret = bdrv_open(bs_old_backing, backing_name, src_flags,
                         old_backing_drv);
         if (ret) {
             error_report("Could not open old backing file '%s'", backing_name);
@@ -1992,7 +2294,7 @@ static int img_rebase(int argc, char **argv)
         }
         if (out_baseimg[0]) {
             bs_new_backing = bdrv_new("new_backing");
-            ret = bdrv_open(bs_new_backing, out_baseimg, BDRV_O_FLAGS,
+            ret = bdrv_open(bs_new_backing, out_baseimg, src_flags,
                         new_backing_drv);
             if (ret) {
                 error_report("Could not open new backing file '%s'",

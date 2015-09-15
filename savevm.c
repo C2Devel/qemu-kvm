@@ -1109,6 +1109,132 @@ static QTAILQ_HEAD(savevm_handlers, SaveStateEntry) savevm_handlers =
     QTAILQ_HEAD_INITIALIZER(savevm_handlers);
 static int global_section_id;
 
+static void dump_vmstate_vmsd(FILE *out_file,
+                              const VMStateDescription *vmsd, int indent,
+                              bool is_subsection);
+
+static void dump_vmstate_vmsf(FILE *out_file, const VMStateField *field,
+                              int indent)
+{
+    fprintf(out_file, "%*s{\n", indent, "");
+    indent += 2;
+    fprintf(out_file, "%*s\"field\": \"%s\",\n", indent, "", field->name);
+    fprintf(out_file, "%*s\"version_id\": %d,\n", indent, "",
+            field->version_id);
+    fprintf(out_file, "%*s\"field_exists\": %s,\n", indent, "",
+            field->field_exists ? "true" : "false");
+    fprintf(out_file, "%*s\"size\": %zu", indent, "", field->size);
+    if (field->vmsd != NULL) {
+        fprintf(out_file, ",\n");
+        dump_vmstate_vmsd(out_file, field->vmsd, indent, false);
+    }
+    fprintf(out_file, "\n%*s}", indent - 2, "");
+}
+
+static void dump_vmstate_vmss(FILE *out_file,
+                              const VMStateSubsection *subsection,
+                              int indent)
+{
+    if (subsection->vmsd != NULL) {
+        dump_vmstate_vmsd(out_file, subsection->vmsd, indent, true);
+    }
+}
+
+static void dump_vmstate_vmsd(FILE *out_file,
+                              const VMStateDescription *vmsd, int indent,
+                              bool is_subsection)
+{
+    if (is_subsection) {
+        fprintf(out_file, "%*s{\n", indent, "");
+    } else {
+        fprintf(out_file, "%*s\"%s\": {\n", indent, "", "Description");
+    }
+    indent += 2;
+    fprintf(out_file, "%*s\"name\": \"%s\",\n", indent, "", vmsd->name);
+    fprintf(out_file, "%*s\"version_id\": %d,\n", indent, "",
+            vmsd->version_id);
+    fprintf(out_file, "%*s\"minimum_version_id\": %d", indent, "",
+            vmsd->minimum_version_id);
+    if (vmsd->fields != NULL) {
+        const VMStateField *field = vmsd->fields;
+        bool first;
+
+        fprintf(out_file, ",\n%*s\"Fields\": [\n", indent, "");
+        first = true;
+        while (field->name != NULL) {
+            if (!first) {
+                fprintf(out_file, ",\n");
+            }
+            dump_vmstate_vmsf(out_file, field, indent + 2);
+            field++;
+            first = false;
+        }
+        fprintf(out_file, "\n%*s]", indent, "");
+    }
+    if (vmsd->subsections != NULL) {
+        const VMStateSubsection *subsection = vmsd->subsections;
+        bool first;
+
+        fprintf(out_file, ",\n%*s\"Subsections\": [\n", indent, "");
+        first = true;
+        while (subsection->vmsd != NULL) {
+            if (!first) {
+                fprintf(out_file, ",\n");
+            }
+            dump_vmstate_vmss(out_file, subsection, indent + 2);
+            subsection++;
+            first = false;
+        }
+        fprintf(out_file, "\n%*s]", indent, "");
+    }
+    fprintf(out_file, "\n%*s}", indent - 2, "");
+}
+
+static void dump_machine_type(FILE *out_file, const char *name)
+{
+    fprintf(out_file, "  \"vmschkmachine\": {\n");
+    fprintf(out_file, "    \"Name\": \"%s\"\n", name);
+    fprintf(out_file, "  },\n");
+}
+
+void dump_vmstate_json_to_file(FILE *out_file, const char *name)
+{
+    DeviceInfo *dc;
+    bool first;
+
+    fprintf(out_file, "{\n");
+    dump_machine_type(out_file, name);
+
+    first = true;
+    for (dc = device_info_list; dc != NULL; dc = dc->next) {
+        const char *name;
+        int indent = 2;
+
+        if (!dc->vmsd) {
+            continue;
+        }
+
+        if (!first) {
+            fprintf(out_file, ",\n");
+        }
+        name = dc->name;
+        fprintf(out_file, "%*s\"%s\": {\n", indent, "", name);
+        indent += 2;
+        fprintf(out_file, "%*s\"Name\": \"%s\",\n", indent, "", name);
+        fprintf(out_file, "%*s\"version_id\": %d,\n", indent, "",
+                dc->vmsd->version_id);
+        fprintf(out_file, "%*s\"minimum_version_id\": %d,\n", indent, "",
+                dc->vmsd->minimum_version_id);
+
+        dump_vmstate_vmsd(out_file, dc->vmsd, indent, false);
+
+        fprintf(out_file, "\n%*s}", indent - 2, "");
+        first = false;
+    }
+    fprintf(out_file, "\n}\n");
+    fclose(out_file);
+}
+
 static int calculate_new_instance_id(const char *idstr)
 {
     SaveStateEntry *se;

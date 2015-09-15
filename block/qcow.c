@@ -47,9 +47,10 @@ typedef struct QCowHeader {
     uint64_t size; /* in bytes */
     uint8_t cluster_bits;
     uint8_t l2_bits;
+    uint16_t padding;
     uint32_t crypt_method;
     uint64_t l1_table_offset;
-} QCowHeader;
+} QEMU_PACKED QCowHeader;
 
 #define L2_CACHE_SIZE 16
 
@@ -59,7 +60,7 @@ typedef struct BDRVQcowState {
     int cluster_sectors;
     int l2_bits;
     int l2_size;
-    int l1_size;
+    unsigned int l1_size;
     uint64_t cluster_offset_mask;
     uint64_t l1_table_offset;
     uint64_t *l1_table;
@@ -93,11 +94,14 @@ static int qcow_probe(const uint8_t *buf, int buf_size, const char *filename)
 static int qcow_open(BlockDriverState *bs, int flags)
 {
     BDRVQcowState *s = bs->opaque;
-    int len, i, shift;
+    unsigned int len, i, shift;
+    int ret;
     QCowHeader header;
 
-    if (bdrv_pread(bs->file, 0, &header, sizeof(header)) != sizeof(header))
+    ret = bdrv_pread(bs->file, 0, &header, sizeof(header));
+    if (ret < 0) {
         goto fail;
+    }
     be32_to_cpus(&header.magic);
     be32_to_cpus(&header.version);
     be64_to_cpus(&header.backing_file_offset);
@@ -107,15 +111,49 @@ static int qcow_open(BlockDriverState *bs, int flags)
     be32_to_cpus(&header.crypt_method);
     be64_to_cpus(&header.l1_table_offset);
 
-    if (header.magic != QCOW_MAGIC || header.version != QCOW_VERSION)
+    if (header.magic != QCOW_MAGIC) {
+        ret = -EINVAL;
         goto fail;
-    if (header.size <= 1 || header.cluster_bits < 9)
+    }
+    if (header.version != QCOW_VERSION) {
+        char version[64];
+        snprintf(version, sizeof(version), "QCOW version %d", header.version);
+        qerror_report(QERR_UNKNOWN_BLOCK_FORMAT_FEATURE,
+            bs->device_name, "qcow", version);
+        ret = -ENOTSUP;
         goto fail;
-    if (header.crypt_method > QCOW_CRYPT_AES)
+    }
+
+    if (header.size <= 1) {
+        qerror_report(QERR_GENERIC_ERROR,
+                      "Image size is too small (must be at least 2 bytes)");
+        ret = -EINVAL;
         goto fail;
+    }
+    if (header.cluster_bits < 9 || header.cluster_bits > 16) {
+        qerror_report(QERR_GENERIC_ERROR,
+                      "Cluster size must be between 512 and 64k");
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    /* l2_bits specifies number of entries; storing a uint64_t in each entry,
+     * so bytes = num_entries << 3. */
+    if (header.l2_bits < 9 - 3 || header.l2_bits > 16 - 3) {
+        qerror_report(QERR_GENERIC_ERROR,
+                      "L2 table size must be between 512 and 64k");
+        ret = -EINVAL;
+        goto fail;
+    }
+
+    if (header.crypt_method > QCOW_CRYPT_AES) {
+        ret = -EINVAL;
+        goto fail;
+    }
     s->crypt_method_header = header.crypt_method;
-    if (s->crypt_method_header)
+    if (s->crypt_method_header) {
         bs->encrypted = 1;
+    }
     s->cluster_bits = header.cluster_bits;
     s->cluster_size = 1 << s->cluster_bits;
     s->cluster_sectors = 1 << (s->cluster_bits - 9);
@@ -126,37 +164,51 @@ static int qcow_open(BlockDriverState *bs, int flags)
 
     /* read the level 1 table */
     shift = s->cluster_bits + s->l2_bits;
-    s->l1_size = (header.size + (1LL << shift) - 1) >> shift;
+    if (header.size > UINT64_MAX - (1LL << shift)) {
+        qerror_report(QERR_GENERIC_ERROR, "Image too large");
+        ret = -EINVAL;
+        goto fail;
+    } else {
+        uint64_t l1_size = (header.size + (1LL << shift) - 1) >> shift;
+        if (l1_size > INT_MAX / sizeof(uint64_t)) {
+            qerror_report(QERR_GENERIC_ERROR, "Image too large");
+            ret = -EINVAL;
+            goto fail;
+        }
+        s->l1_size = l1_size;
+    }
 
     s->l1_table_offset = header.l1_table_offset;
     s->l1_table = g_malloc(s->l1_size * sizeof(uint64_t));
-    if (!s->l1_table)
+
+    ret = bdrv_pread(bs->file, s->l1_table_offset, s->l1_table,
+               s->l1_size * sizeof(uint64_t));
+    if (ret < 0) {
         goto fail;
-    if (bdrv_pread(bs->file, s->l1_table_offset, s->l1_table, s->l1_size * sizeof(uint64_t)) !=
-        s->l1_size * sizeof(uint64_t))
-        goto fail;
+    }
+
     for(i = 0;i < s->l1_size; i++) {
         be64_to_cpus(&s->l1_table[i]);
     }
     /* alloc L2 cache */
     s->l2_cache = g_malloc(s->l2_size * L2_CACHE_SIZE * sizeof(uint64_t));
-    if (!s->l2_cache)
-        goto fail;
     s->cluster_cache = g_malloc(s->cluster_size);
-    if (!s->cluster_cache)
-        goto fail;
     s->cluster_data = g_malloc(s->cluster_size);
-    if (!s->cluster_data)
-        goto fail;
     s->cluster_cache_offset = -1;
 
     /* read the backing file name */
     if (header.backing_file_offset != 0) {
         len = header.backing_file_size;
-        if (len > 1023)
-            len = 1023;
-        if (bdrv_pread(bs->file, header.backing_file_offset, bs->backing_file, len) != len)
+        if (len > 1023) {
+            qerror_report(QERR_GENERIC_ERROR, "Backing file name too long");
+            ret = -EINVAL;
             goto fail;
+        }
+        ret = bdrv_pread(bs->file, header.backing_file_offset,
+                   bs->backing_file, len);
+        if (ret < 0) {
+            goto fail;
+        }
         bs->backing_file[len] = '\0';
     }
 
@@ -168,7 +220,7 @@ static int qcow_open(BlockDriverState *bs, int flags)
     g_free(s->l2_cache);
     g_free(s->cluster_cache);
     g_free(s->cluster_data);
-    return -1;
+    return ret;
 }
 
 

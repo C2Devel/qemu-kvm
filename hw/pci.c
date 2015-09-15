@@ -27,9 +27,11 @@
 #include "net.h"
 #include "sysemu.h"
 #include "loader.h"
+#include "qmp-commands.h"
 #include "qemu-kvm.h"
 #include "hw/pc.h"
 #include "device-assignment.h"
+#include "range.h"
 
 //#define DEBUG_PCI
 #ifdef DEBUG_PCI
@@ -1224,90 +1226,6 @@ static const pci_class_desc pci_class_descriptions[] =
     { 0, NULL}
 };
 
-static void pci_info_device(PCIBus *bus, PCIDevice *d)
-{
-    Monitor *mon = cur_mon;
-    int i, class;
-    PCIIORegion *r;
-    const pci_class_desc *desc;
-
-    monitor_printf(mon, "  Bus %2d, device %3d, function %d:\n",
-                   pci_bus_num(d->bus),
-                   PCI_SLOT(d->devfn), PCI_FUNC(d->devfn));
-    class = pci_get_word(d->config + PCI_CLASS_DEVICE);
-    monitor_printf(mon, "    ");
-    desc = pci_class_descriptions;
-    while (desc->desc && class != desc->class)
-        desc++;
-    if (desc->desc) {
-        monitor_printf(mon, "%s", desc->desc);
-    } else {
-        monitor_printf(mon, "Class %04x", class);
-    }
-    monitor_printf(mon, ": PCI device %04x:%04x\n",
-           pci_get_word(d->config + PCI_VENDOR_ID),
-           pci_get_word(d->config + PCI_DEVICE_ID));
-
-    if (d->config[PCI_INTERRUPT_PIN] != 0) {
-        monitor_printf(mon, "      IRQ %d.\n",
-                       d->config[PCI_INTERRUPT_LINE]);
-    }
-    if (class == 0x0604) {
-        uint64_t base;
-        uint64_t limit;
-
-        monitor_printf(mon, "      BUS %d.\n", d->config[0x19]);
-        monitor_printf(mon, "      secondary bus %d.\n",
-                       d->config[PCI_SECONDARY_BUS]);
-        monitor_printf(mon, "      subordinate bus %d.\n",
-                       d->config[PCI_SUBORDINATE_BUS]);
-
-        base = pci_bridge_get_base(d, PCI_BASE_ADDRESS_SPACE_IO);
-        limit = pci_bridge_get_limit(d, PCI_BASE_ADDRESS_SPACE_IO);
-        monitor_printf(mon, "      IO range [0x%04"PRIx64", 0x%04"PRIx64"]\n",
-                       base, limit);
-
-        base = pci_bridge_get_base(d, PCI_BASE_ADDRESS_SPACE_MEMORY);
-        limit= pci_bridge_get_limit(d, PCI_BASE_ADDRESS_SPACE_MEMORY);
-        monitor_printf(mon,
-                       "      memory range [0x%08"PRIx64", 0x%08"PRIx64"]\n",
-                       base, limit);
-
-        base = pci_bridge_get_base(d, PCI_BASE_ADDRESS_SPACE_MEMORY |
-                                   PCI_BASE_ADDRESS_MEM_PREFETCH);
-        limit = pci_bridge_get_limit(d, PCI_BASE_ADDRESS_SPACE_MEMORY |
-                                     PCI_BASE_ADDRESS_MEM_PREFETCH);
-        monitor_printf(mon, "      prefetchable memory range "
-                       "[0x%08"PRIx64", 0x%08"PRIx64"]\n", base, limit);
-    }
-    for(i = 0;i < PCI_NUM_REGIONS; i++) {
-        r = &d->io_regions[i];
-        if (r->size != 0) {
-            monitor_printf(mon, "      BAR%d: ", i);
-            if (r->type & PCI_BASE_ADDRESS_SPACE_IO) {
-                monitor_printf(mon, "I/O at 0x%04"FMT_PCIBUS
-                               " [0x%04"FMT_PCIBUS"].\n",
-                               r->addr, r->addr + r->size - 1);
-            } else {
-                const char *type = r->type & PCI_BASE_ADDRESS_MEM_TYPE_64 ?
-                    "64 bit" : "32 bit";
-                const char *prefetch =
-                    r->type & PCI_BASE_ADDRESS_MEM_PREFETCH ?
-                    " prefetchable" : "";
-
-                monitor_printf(mon, "%s%s memory at 0x%08"FMT_PCIBUS
-                               " [0x%08"FMT_PCIBUS"].\n",
-                               type, prefetch,
-                               r->addr, r->addr + r->size - 1);
-            }
-        }
-    }
-    monitor_printf(mon, "      id \"%s\"\n", d->qdev.id ? d->qdev.id : "");
-    if (class == 0x0604 && d->config[0x19] != 0) {
-        pci_for_each_device(bus, d->config[0x19], pci_info_device);
-    }
-}
-
 static void pci_for_each_device_under_bus(PCIBus *bus,
                                           void (*fn)(PCIBus *b, PCIDevice *d))
 {
@@ -1316,8 +1234,9 @@ static void pci_for_each_device_under_bus(PCIBus *bus,
 
     for(devfn = 0; devfn < ARRAY_SIZE(bus->devices); devfn++) {
         d = bus->devices[devfn];
-        if (d)
+        if (d) {
             fn(bus, d);
+        }
     }
 }
 
@@ -1331,12 +1250,196 @@ void pci_for_each_device(PCIBus *bus, int bus_num,
     }
 }
 
-void pci_info(Monitor *mon)
+static const pci_class_desc *get_class_desc(int class)
 {
-    struct PCIHostBus *host;
-    QLIST_FOREACH(host, &host_buses, next) {
-        pci_for_each_device(host->bus, 0, pci_info_device);
+    const pci_class_desc *desc;
+
+    desc = pci_class_descriptions;
+    while (desc->desc && class != desc->class) {
+        desc++;
     }
+
+    return desc;
+}
+
+static PciDeviceInfoList *qmp_query_pci_devices(PCIBus *bus, int bus_num);
+
+static PciMemoryRegionList *qmp_query_pci_regions(const PCIDevice *dev)
+{
+    PciMemoryRegionList *head = NULL, *cur_item = NULL;
+    int i;
+
+    for (i = 0; i < PCI_NUM_REGIONS; i++) {
+        const PCIIORegion *r = &dev->io_regions[i];
+        PciMemoryRegionList *region;
+
+        if (!r->size) {
+            continue;
+        }
+
+        region = g_malloc0(sizeof(*region));
+        region->value = g_malloc0(sizeof(*region->value));
+
+        if (r->type & PCI_BASE_ADDRESS_SPACE_IO) {
+            region->value->type = g_strdup("io");
+        } else {
+            region->value->type = g_strdup("memory");
+            region->value->has_prefetch = true;
+            region->value->prefetch = !!(r->type & PCI_BASE_ADDRESS_MEM_PREFETCH);
+            region->value->has_mem_type_64 = true;
+            region->value->mem_type_64 = !!(r->type & PCI_BASE_ADDRESS_MEM_TYPE_64);
+        }
+
+        region->value->bar = i;
+        region->value->address = r->addr;
+        region->value->size = r->size;
+
+        /* XXX: waiting for the qapi to support GSList */
+        if (!cur_item) {
+            head = cur_item = region;
+        } else {
+            cur_item->next = region;
+            cur_item = region;
+        }
+    }
+
+    return head;
+}
+
+static PciBridgeInfo *qmp_query_pci_bridge(PCIDevice *dev, PCIBus *bus,
+                                           int bus_num)
+{
+    PciBridgeInfo *info;
+
+    info = g_malloc0(sizeof(*info));
+
+    info->bus.number = dev->config[PCI_PRIMARY_BUS];
+    info->bus.secondary = dev->config[PCI_SECONDARY_BUS];
+    info->bus.subordinate = dev->config[PCI_SUBORDINATE_BUS];
+
+    info->bus.io_range = g_malloc0(sizeof(*info->bus.io_range));
+    info->bus.io_range->base = pci_bridge_get_base(dev, PCI_BASE_ADDRESS_SPACE_IO);
+    info->bus.io_range->limit = pci_bridge_get_limit(dev, PCI_BASE_ADDRESS_SPACE_IO);
+
+    info->bus.memory_range = g_malloc0(sizeof(*info->bus.memory_range));
+    info->bus.memory_range->base = pci_bridge_get_base(dev, PCI_BASE_ADDRESS_SPACE_MEMORY);
+    info->bus.memory_range->limit = pci_bridge_get_limit(dev, PCI_BASE_ADDRESS_SPACE_MEMORY);
+
+    info->bus.prefetchable_range = g_malloc0(sizeof(*info->bus.prefetchable_range));
+    info->bus.prefetchable_range->base = pci_bridge_get_base(dev, PCI_BASE_ADDRESS_MEM_PREFETCH);
+    info->bus.prefetchable_range->limit = pci_bridge_get_limit(dev, PCI_BASE_ADDRESS_MEM_PREFETCH);
+
+    if (dev->config[PCI_SECONDARY_BUS] != 0) {
+        PCIBus *child_bus = pci_find_bus(bus, dev->config[PCI_SECONDARY_BUS]);
+        if (child_bus) {
+            info->has_devices = true;
+            info->devices = qmp_query_pci_devices(child_bus, dev->config[PCI_SECONDARY_BUS]);
+        }
+    }
+
+    return info;
+}
+
+static PciDeviceInfo *qmp_query_pci_device(PCIDevice *dev, PCIBus *bus,
+                                           int bus_num)
+{
+    const pci_class_desc *desc;
+    PciDeviceInfo *info;
+    uint8_t type;
+
+    int class;
+
+    info = g_malloc0(sizeof(*info));
+    info->bus = bus_num;
+    info->slot = PCI_SLOT(dev->devfn);
+    info->function = PCI_FUNC(dev->devfn);
+
+    class = pci_get_word(dev->config + PCI_CLASS_DEVICE);
+    info->class_info.class = class;
+    desc = get_class_desc(class);
+    if (desc->desc) {
+        info->class_info.has_desc = true;
+        info->class_info.desc = g_strdup(desc->desc);
+    }
+
+    info->id.vendor = pci_get_word(dev->config + PCI_VENDOR_ID);
+    info->id.device = pci_get_word(dev->config + PCI_DEVICE_ID);
+    info->regions = qmp_query_pci_regions(dev);
+    info->qdev_id = g_strdup(dev->qdev.id ? dev->qdev.id : "");
+
+    if (dev->config[PCI_INTERRUPT_PIN] != 0) {
+        info->has_irq = true;
+        info->irq = dev->config[PCI_INTERRUPT_LINE];
+    }
+
+    type = dev->config[PCI_HEADER_TYPE] & ~PCI_HEADER_TYPE_MULTI_FUNCTION;
+    if (type == PCI_HEADER_TYPE_BRIDGE) {
+        info->has_pci_bridge = true;
+        info->pci_bridge = qmp_query_pci_bridge(dev, bus, bus_num);
+    }
+
+    return info;
+}
+
+static PciDeviceInfoList *qmp_query_pci_devices(PCIBus *bus, int bus_num)
+{
+    PciDeviceInfoList *info, *head = NULL, *cur_item = NULL;
+    PCIDevice *dev;
+    int devfn;
+
+    for (devfn = 0; devfn < ARRAY_SIZE(bus->devices); devfn++) {
+        dev = bus->devices[devfn];
+        if (dev) {
+            info = g_malloc0(sizeof(*info));
+            info->value = qmp_query_pci_device(dev, bus, bus_num);
+
+            /* XXX: waiting for the qapi to support GSList */
+            if (!cur_item) {
+                head = cur_item = info;
+            } else {
+                cur_item->next = info;
+                cur_item = info;
+            }
+        }
+    }
+
+    return head;
+}
+
+static PciInfo *qmp_query_pci_bus(PCIBus *bus, int bus_num)
+{
+    PciInfo *info = NULL;
+
+    bus = pci_find_bus(bus, bus_num);
+    if (bus) {
+        info = g_malloc0(sizeof(*info));
+        info->bus = bus_num;
+        info->devices = qmp_query_pci_devices(bus, bus_num);
+    }
+
+    return info;
+}
+
+PciInfoList *qmp_query_pci(Error **errp)
+{
+    PciInfoList *info, *head = NULL, *cur_item = NULL;
+    struct PCIHostBus *host;
+
+
+    QLIST_FOREACH(host, &host_buses, next) {
+        info = g_malloc0(sizeof(*info));
+        info->value = qmp_query_pci_bus(host->bus, 0);
+
+        /* XXX: waiting for the qapi to support GSList */
+        if (!cur_item) {
+            head = cur_item = info;
+        } else {
+            cur_item->next = info;
+            cur_item = info;
+        }
+    }
+
+    return head;
 }
 
 static const char * const pci_nic_models[] = {

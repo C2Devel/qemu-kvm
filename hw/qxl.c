@@ -19,6 +19,7 @@
  */
 
 #include <pthread.h>
+#include <zlib.h>
 
 #include "qemu-common.h"
 #include "qemu-timer.h"
@@ -403,6 +404,7 @@ static void init_qxl_ram(PCIQXLDevice *d)
     d->ram->int_pending = cpu_to_le32(0);
     d->ram->int_mask    = cpu_to_le32(0);
     d->ram->update_surface = 0;
+    d->ram->monitors_config = 0;
     SPICE_RING_INIT(&d->ram->cmd_ring);
     SPICE_RING_INIT(&d->ram->cursor_ring);
     SPICE_RING_INIT(&d->ram->release_ring);
@@ -986,6 +988,79 @@ static void interface_set_client_capabilities(QXLInstance *sin,
 
 #endif
 
+#if defined(CONFIG_QXL_CLIENT_MONITORS_CONFIG) \
+    && SPICE_SERVER_VERSION >= 0x000b05
+
+static uint32_t qxl_crc32(const uint8_t *p, unsigned len)
+{
+    /*
+     * zlib xors the seed with 0xffffffff, and xors the result
+     * again with 0xffffffff; Both are not done with linux's crc32,
+     * which we want to be compatible with, so undo that.
+     */
+    return crc32(0xffffffff, p, len) ^ 0xffffffff;
+}
+
+/* called from main context only */
+static int interface_client_monitors_config(QXLInstance *sin,
+                                        VDAgentMonitorsConfig *monitors_config)
+{
+    PCIQXLDevice *qxl = container_of(sin, PCIQXLDevice, ssd.qxl);
+    QXLRom *rom = qemu_get_ram_ptr(qxl->rom_offset);
+    int i;
+
+    /*
+     * Older windows drivers set int_mask to 0 when their ISR is called,
+     * then later set it to ~0. So it doesn't relate to the actual interrupts
+     * handled. However, they are old, so clearly they don't support this
+     * interrupt
+     */
+    if (qxl->ram->int_mask == 0 || qxl->ram->int_mask == ~0 ||
+        !(qxl->ram->int_mask & QXL_INTERRUPT_CLIENT_MONITORS_CONFIG)) {
+        trace_qxl_client_monitors_config_unsupported_by_guest(qxl->id,
+                                                            qxl->ram->int_mask,
+                                                            monitors_config);
+        return 0;
+    }
+    if (!monitors_config) {
+        return 1;
+    }
+    memset(&rom->client_monitors_config, 0,
+           sizeof(rom->client_monitors_config));
+    rom->client_monitors_config.count = monitors_config->num_of_monitors;
+    /* monitors_config->flags ignored */
+    if (rom->client_monitors_config.count >=
+            ARRAY_SIZE(rom->client_monitors_config.heads)) {
+        trace_qxl_client_monitors_config_capped(qxl->id,
+                                monitors_config->num_of_monitors,
+                                ARRAY_SIZE(rom->client_monitors_config.heads));
+        rom->client_monitors_config.count =
+            ARRAY_SIZE(rom->client_monitors_config.heads);
+    }
+    for (i = 0 ; i < rom->client_monitors_config.count ; ++i) {
+        VDAgentMonConfig *monitor = &monitors_config->monitors[i];
+        QXLURect *rect = &rom->client_monitors_config.heads[i];
+        /* monitor->depth ignored */
+        rect->left = monitor->x;
+        rect->top = monitor->y;
+        rect->right = monitor->x + monitor->width;
+        rect->bottom = monitor->y + monitor->height;
+    }
+    rom->client_monitors_config_crc = qxl_crc32(
+            (const uint8_t *)&rom->client_monitors_config,
+            sizeof(rom->client_monitors_config));
+    trace_qxl_client_monitors_config_crc(qxl->id,
+            sizeof(rom->client_monitors_config),
+            rom->client_monitors_config_crc);
+
+    trace_qxl_interrupt_client_monitors_config(qxl->id,
+                        rom->client_monitors_config.count,
+                        rom->client_monitors_config.heads);
+    qxl_send_events(qxl, QXL_INTERRUPT_CLIENT_MONITORS_CONFIG);
+    return 1;
+}
+#endif
+
 static const QXLInterface qxl_interface = {
     .base.type               = SPICE_INTERFACE_QXL,
     .base.description        = "qxl gpu",
@@ -1009,6 +1084,10 @@ static const QXLInterface qxl_interface = {
     .update_area_complete    = interface_update_area_complete,
 #if SPICE_SERVER_VERSION >= 0x000b04
     .set_client_capabilities = interface_set_client_capabilities,
+#endif
+#if SPICE_SERVER_VERSION >= 0x000b05 && \
+    defined(CONFIG_QXL_CLIENT_MONITORS_CONFIG)
+    .client_monitors_config = interface_client_monitors_config,
 #endif
 };
 
@@ -1094,7 +1173,13 @@ static void qxl_soft_reset(PCIQXLDevice *d)
 
 static void qxl_hard_reset(PCIQXLDevice *d, int loadvm)
 {
+    bool startstop = qemu_spice_display_is_running(&d->ssd);
+
     trace_qxl_hard_reset(d->id, loadvm);
+
+    if (startstop) {
+        qemu_spice_display_stop();
+    }
 
     qxl_spice_reset_cursor(d);
     qxl_spice_reset_image_cache(d);
@@ -1109,6 +1194,10 @@ static void qxl_hard_reset(PCIQXLDevice *d, int loadvm)
     }
     qemu_spice_create_host_memslot(&d->ssd);
     qxl_soft_reset(d);
+
+    if (startstop) {
+        qemu_spice_display_start();
+    }
 }
 
 static void qxl_reset_handler(DeviceState *dev)
@@ -1469,15 +1558,15 @@ async_common:
         if (d->ram->update_surface > NUM_SURFACES) {
             qxl_set_guest_bug(d, "QXL_IO_UPDATE_AREA: invalid surface id %d\n",
                               d->ram->update_surface);
-            return;
+            break;
         }
-        if (update.left >= update.right || update.top >= update.bottom) {
+        if (update.left >= update.right || update.top >= update.bottom ||
+            update.left < 0 || update.top < 0) {
             qxl_set_guest_bug(d,
                     "QXL_IO_UPDATE_AREA: invalid area (%ux%u)x(%ux%u)\n",
                     update.left, update.top, update.right, update.bottom);
-            return;
+            break;
         }
-
         if (async == QXL_ASYNC) {
             cookie = qxl_cookie_new(QXL_COOKIE_TYPE_IO,
                                     QXL_IO_UPDATE_AREA_ASYNC);
@@ -1806,7 +1895,6 @@ static void qxl_vm_change_state_handler(void *opaque, int running,
                                         RunState state)
 {
     PCIQXLDevice *qxl = opaque;
-    qemu_spice_vm_change_state_handler(&qxl->ssd, running, state);
 
     if (running) {
         /*

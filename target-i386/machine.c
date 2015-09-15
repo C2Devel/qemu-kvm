@@ -527,6 +527,49 @@ static const VMStateDescription vmstate_steal_time_msr = {
     }
 };
 
+static bool pmu_enable_needed(void *opaque)
+{
+    CPUState *env = opaque;
+    int i;
+
+    if (!migrate_pmu) {
+        return false;
+    }
+    if (env->msr_fixed_ctr_ctrl || env->msr_global_ctrl ||
+        env->msr_global_status || env->msr_global_ovf_ctrl) {
+        return true;
+    }
+    for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+        if (env->msr_fixed_counters[i]) {
+            return true;
+        }
+    }
+    for (i = 0; i < MAX_GP_COUNTERS; i++) {
+        if (env->msr_gp_counters[i] || env->msr_gp_evtsel[i]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const VMStateDescription vmstate_msr_architectural_pmu = {
+    .name = "cpu/msr_architectural_pmu",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT64(msr_fixed_ctr_ctrl, CPUState),
+        VMSTATE_UINT64(msr_global_ctrl, CPUState),
+        VMSTATE_UINT64(msr_global_status, CPUState),
+        VMSTATE_UINT64(msr_global_ovf_ctrl, CPUState),
+        VMSTATE_UINT64_ARRAY(msr_fixed_counters, CPUState, MAX_FIXED_COUNTERS),
+        VMSTATE_UINT64_ARRAY(msr_gp_counters, CPUState, MAX_GP_COUNTERS),
+        VMSTATE_UINT64_ARRAY(msr_gp_evtsel, CPUState, MAX_GP_COUNTERS),
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 static const VMStateDescription vmstate_cpu = {
     .name = "cpu",
     .version_id = CPU_SAVE_VERSION,
@@ -648,6 +691,9 @@ static const VMStateDescription vmstate_cpu = {
         }, {
             .vmsd = &vmstate_steal_time_msr,
             .needed = steal_time_msr_needed, 
+        }, {
+            .vmsd = &vmstate_msr_architectural_pmu,
+            .needed = pmu_enable_needed,
         } , {
 	    /* empty */
 	}

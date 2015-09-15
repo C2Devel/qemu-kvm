@@ -91,6 +91,8 @@ typedef struct BlockDevOps {
 /* BDRV_BLOCK_DATA: data is read from bs->file or another file
  * BDRV_BLOCK_ZERO: sectors read as zero
  * BDRV_BLOCK_OFFSET_VALID: sector stored in bs->file as raw data
+ * BDRV_BLOCK_ALLOCATED: the content of the block is determined by this
+ *                       layer (as opposed to the backing file)
  *
  * If BDRV_BLOCK_OFFSET_VALID is set, bits 9-62 represent the offset in
  * bs->file where sector data can be read from as raw data.
@@ -112,6 +114,7 @@ typedef struct BlockDevOps {
 #define BDRV_BLOCK_DATA         1
 #define BDRV_BLOCK_ZERO         2
 #define BDRV_BLOCK_OFFSET_VALID 4
+#define BDRV_BLOCK_ALLOCATED    0x10
 #define BDRV_BLOCK_OFFSET_MASK  BDRV_SECTOR_MASK
 
 typedef enum {
@@ -171,6 +174,7 @@ BlockDriverState *bdrv_new(const char *device_name);
 void bdrv_make_anon(BlockDriverState *bs);
 void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top);
 void bdrv_delete(BlockDriverState *bs);
+int bdrv_parse_cache_flags(const char *mode, int *flags);
 int bdrv_file_open(BlockDriverState **pbs, const char *filename, int flags);
 int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
               BlockDriver *drv);
@@ -462,6 +466,7 @@ typedef enum {
 
     BLKDBG_REFTABLE_LOAD,
     BLKDBG_REFTABLE_GROW,
+    BLKDBG_REFTABLE_UPDATE,
 
     BLKDBG_REFBLOCK_LOAD,
     BLKDBG_REFBLOCK_UPDATE,

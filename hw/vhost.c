@@ -15,8 +15,7 @@
 #include <sys/eventfd.h>
 #include "vhost.h"
 #include "hw/hw.h"
-/* For range_get_last */
-#include "pci.h"
+#include "range.h"
 
 static void vhost_dev_sync_region(struct vhost_dev *dev,
                                   uint64_t mfirst, uint64_t mlast,

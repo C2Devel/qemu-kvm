@@ -1335,15 +1335,21 @@ done:
         vc->info->link_status_changed(vc);
     }
 
-    /* Notify peer. Don't update peer link status: this makes it possible to
-     * disconnect from host network without notifying the guest.
-     * FIXME: is disconnected link status change operation useful?
-     *
-     * Current behaviour is compatible with qemu vlans where there could be
-     * multiple clients that can still communicate with each other in
-     * disconnected mode. For now maintain this compatibility. */
-    if (vc->peer && vc->peer->info->link_status_changed) {
-        vc->peer->info->link_status_changed(vc->peer);
+    if (vc->peer) {
+        /* Change peer link only if the peer is NIC and then notify peer.
+         * If the peer is a HUBPORT or a backend, we do not change the
+         * link status.
+         *
+         * This behavior is compatible with qemu vlans where there could be
+         * multiple clients that can still communicate with each other in
+         * disconnected mode. For now maintain this compatibility.
+         */
+        if (vc->peer->info->type == NET_CLIENT_TYPE_NIC) {
+                vc->peer->link_down = !up;
+        }
+        if (vc->peer->info->link_status_changed) {
+            vc->peer->info->link_status_changed(vc->peer);
+        }
     }
     return 0;
 }

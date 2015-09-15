@@ -2034,6 +2034,7 @@ static void ehci_advance_async_state(EHCIState *ehci)
 {
     const int async = 1;
 
+    qemu_bh_cancel(ehci->async_bh);
     switch(ehci_get_state(ehci, async)) {
     case EST_INACTIVE:
         if (!(ehci->usbcmd & USBCMD_ASE)) {

@@ -1623,8 +1623,16 @@ static void rhel_common_init(const char *type1_version,
                      strlen(buf) + 1, buf);
 }
 
-#define PC_RHEL6_4_COMPAT \
+#define PC_RHEL6_5_COMPAT \
         {\
+            .driver   = "USB",\
+            .property = "msos-desc",\
+            .value    = "off",\
+        }
+
+#define PC_RHEL6_4_COMPAT \
+        PC_RHEL6_5_COMPAT \
+        ,{\
             .driver   = "virtio-scsi-pci",\
             .property = "vectors",\
             .value    = stringify(2),\
@@ -1728,10 +1736,6 @@ static void rhel_common_init(const char *type1_version,
             .driver   = "qxl",\
             .property = "revision",\
             .value    = stringify(2),\
-        },{\
-            .driver   = "virtio-balloon",\
-            .property = "event_idx",\
-            .value    = "off",\
         }
 
 #define PC_RHEL6_0_COMPAT \
@@ -1751,9 +1755,16 @@ static void rhel_common_init(const char *type1_version,
         }
 
 bool migrate_steal_time_msr = true;
+bool migrate_pmu = true;
+
+static void pc_rhel650_compat(void)
+{
+    migrate_pmu = false;
+}
 
 static void pc_rhel640_compat(void)
 {
+    pc_rhel650_compat();
     disable_kvm_sep();
     migrate_steal_time_msr = false;
 }
@@ -1776,6 +1787,27 @@ static void pc_rhel620_compat(void)
     set_pmu_passthrough(false);
 }
 
+static void pc_init_rhel660(ram_addr_t ram_size,
+			    const char *boot_device,
+			    const char *kernel_filename,
+			    const char *kernel_cmdline,
+			    const char *initrd_filename,
+			    const char *cpu_model)
+{
+	rhel_common_init("RHEL 6.6.0 PC", 0);
+	pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
+		    initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
+}
+
+static QEMUMachine pc_machine_rhel660 = {
+	.name = "rhel6.6.0",
+	.alias = "pc",
+	.desc = "RHEL 6.6.0 PC",
+	.init = pc_init_rhel660,
+	.max_cpus = 255,
+	.is_default = 1,
+};
+
 static void pc_init_rhel650(ram_addr_t ram_size,
 			    const char *boot_device,
 			    const char *kernel_filename,
@@ -1784,17 +1816,20 @@ static void pc_init_rhel650(ram_addr_t ram_size,
 			    const char *cpu_model)
 {
 	rhel_common_init("RHEL 6.5.0 PC", 0);
+	pc_rhel650_compat();
 	pc_init_pci(ram_size, boot_device, kernel_filename, kernel_cmdline,
 		    initrd_filename, setdef_cpu_model(cpu_model, "cpu64-rhel6"));
 }
 
 static QEMUMachine pc_machine_rhel650 = {
-	.name = "rhel6.5.0",
-	.alias = "pc",
-	.desc = "RHEL 6.5.0 PC",
-	.init = pc_init_rhel650,
-	.max_cpus = 255,
-	.is_default = 1,
+    .name = "rhel6.5.0",
+    .desc = "RHEL 6.5.0 PC",
+    .init = pc_init_rhel650,
+    .max_cpus = 255,
+    .compat_props = (GlobalProperty[]) {
+        PC_RHEL6_5_COMPAT,
+        { /* end of list */ }
+    },
 };
 
 static void pc_init_rhel640(ram_addr_t ram_size,
@@ -2037,6 +2072,7 @@ static QEMUMachine pc_machine_rhel540 = {
 
 static void rhel_machine_init(void)
 {
+    qemu_register_machine(&pc_machine_rhel660);
     qemu_register_machine(&pc_machine_rhel650);
     qemu_register_machine(&pc_machine_rhel640);
     qemu_register_machine(&pc_machine_rhel630);

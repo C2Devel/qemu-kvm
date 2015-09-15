@@ -93,8 +93,11 @@ void hmp_dump_guest_memory(Monitor *mon, const QDict *qdict)
     const char *file = qdict_get_str(qdict, "filename");
     bool has_begin = qdict_haskey(qdict, "begin");
     bool has_length = qdict_haskey(qdict, "length");
+    /* kdump-compressed format is not supported for HMP */
+    bool has_format = false;
     int64_t begin = 0;
     int64_t length = 0;
+    enum DumpGuestMemoryFormat dump_format = DUMP_GUEST_MEMORY_FORMAT_ELF;
     char *prot;
 
     if (has_begin) {
@@ -106,7 +109,108 @@ void hmp_dump_guest_memory(Monitor *mon, const QDict *qdict)
 
     prot = g_strconcat("file:", file, NULL);
     qmp_dump_guest_memory(paging, prot, has_begin, begin, has_length, length,
-                          &errp);
+                          has_format, dump_format, &errp);
     hmp_handle_error(mon, &errp);
     g_free(prot);
+}
+
+static void hmp_info_pci_device(Monitor *mon, const PciDeviceInfo *dev)
+{
+    PciMemoryRegionList *region;
+
+    monitor_printf(mon, "  Bus %2" PRId64 ", ", dev->bus);
+    monitor_printf(mon, "device %3" PRId64 ", function %" PRId64 ":\n",
+                   dev->slot, dev->function);
+    monitor_printf(mon, "    ");
+
+    if (dev->class_info.has_desc) {
+        monitor_printf(mon, "%s", dev->class_info.desc);
+    } else {
+        monitor_printf(mon, "Class %04" PRId64, dev->class_info.class);
+    }
+
+    monitor_printf(mon, ": PCI device %04" PRIx64 ":%04" PRIx64 "\n",
+                   dev->id.vendor, dev->id.device);
+
+    if (dev->has_irq) {
+        monitor_printf(mon, "      IRQ %" PRId64 ".\n", dev->irq);
+    }
+
+    if (dev->has_pci_bridge) {
+        monitor_printf(mon, "      BUS %" PRId64 ".\n",
+                       dev->pci_bridge->bus.number);
+        monitor_printf(mon, "      secondary bus %" PRId64 ".\n",
+                       dev->pci_bridge->bus.secondary);
+        monitor_printf(mon, "      subordinate bus %" PRId64 ".\n",
+                       dev->pci_bridge->bus.subordinate);
+
+        monitor_printf(mon, "      IO range [0x%04"PRIx64", 0x%04"PRIx64"]\n",
+                       dev->pci_bridge->bus.io_range->base,
+                       dev->pci_bridge->bus.io_range->limit);
+
+        monitor_printf(mon,
+                       "      memory range [0x%08"PRIx64", 0x%08"PRIx64"]\n",
+                       dev->pci_bridge->bus.memory_range->base,
+                       dev->pci_bridge->bus.memory_range->limit);
+
+        monitor_printf(mon, "      prefetchable memory range "
+                       "[0x%08"PRIx64", 0x%08"PRIx64"]\n",
+                       dev->pci_bridge->bus.prefetchable_range->base,
+                       dev->pci_bridge->bus.prefetchable_range->limit);
+    }
+
+    for (region = dev->regions; region; region = region->next) {
+        uint64_t addr, size;
+
+        addr = region->value->address;
+        size = region->value->size;
+
+        monitor_printf(mon, "      BAR%" PRId64 ": ", region->value->bar);
+
+        if (!strcmp(region->value->type, "io")) {
+            monitor_printf(mon, "I/O at 0x%04" PRIx64
+                                " [0x%04" PRIx64 "].\n",
+                           addr, addr + size - 1);
+        } else {
+            monitor_printf(mon, "%d bit%s memory at 0x%08" PRIx64
+                               " [0x%08" PRIx64 "].\n",
+                           region->value->mem_type_64 ? 64 : 32,
+                           region->value->prefetch ? " prefetchable" : "",
+                           addr, addr + size - 1);
+        }
+    }
+
+    monitor_printf(mon, "      id \"%s\"\n", dev->qdev_id);
+
+    if (dev->has_pci_bridge) {
+        if (dev->pci_bridge->has_devices) {
+            PciDeviceInfoList *cdev;
+            for (cdev = dev->pci_bridge->devices; cdev; cdev = cdev->next) {
+                hmp_info_pci_device(mon, cdev->value);
+            }
+        }
+    }
+}
+
+void hmp_info_pci(Monitor *mon)
+{
+    PciInfoList *info_list, *info;
+    Error *err = NULL;
+
+    info_list = qmp_query_pci(&err);
+    if (err) {
+        monitor_printf(mon, "PCI devices not supported\n");
+        error_free(err);
+        return;
+    }
+
+    for (info = info_list; info; info = info->next) {
+        PciDeviceInfoList *dev;
+
+        for (dev = info->value->devices; dev; dev = dev->next) {
+            hmp_info_pci_device(mon, dev->value);
+        }
+    }
+
+    qapi_free_PciInfoList(info_list);
 }

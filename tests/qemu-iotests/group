@@ -1,0 +1,102 @@
+#
+# QA groups control file
+# Defines test groups
+# - do not start group names with a digit
+#
+
+#
+# test-group association ... one line per test
+#
+001 rw auto quick
+002 rw auto quick
+003 rw auto
+004 rw auto quick
+005 img auto quick
+006 img auto
+007 snapshot auto
+008 rw auto quick
+009 rw auto quick
+010 rw auto quick
+011 rw auto quick
+012 auto quick
+013 rw auto
+014 rw auto
+015 rw snapshot auto
+016 rw auto quick
+017 rw backing auto quick
+018 rw backing auto quick
+019 rw backing auto quick
+020 rw backing auto quick
+021 io auto quick
+022 rw snapshot auto
+023 rw auto
+024 rw backing auto quick
+025 rw auto quick
+026 rw blkdbg auto
+027 rw auto quick
+028 rw backing auto quick
+029 rw auto quick
+030 rw auto backing
+031 rw auto quick
+032 rw auto quick
+033 rw auto quick
+034 rw auto backing quick
+035 rw auto quick
+# 036 rw auto quick -- requires qcow2 v3 (feature bits)
+037 rw auto backing quick
+038 rw auto backing quick
+# 039 rw auto quick -- required qcow2 v3 (lazy refcounts)
+040 rw auto
+041 rw auto backing
+042 rw auto quick
+043 rw auto backing
+044 rw auto
+# 045 rw auto quick -- requires add-fd
+# 046 rw auto aio quick -- requires blkdebug break/resume
+# 047 rw auto quick -- requires discard in qemu-io
+048 img auto quick
+049 rw auto
+# 050 rw auto backing quick -- requires qcow2 v3 (zero clusters)
+# 051 rw auto -- requires driver-specific options
+052 rw auto backing quick
+# 053 rw auto quick -- compressed images are unsupported
+054 rw auto quick
+# 055 rw auto -- requires drive-backup
+# 056 rw auto backing -- requires drive-backup
+# 057 rw auto -- requires QMP support for internal snapshots
+# 058 rw auto quick -- requires qemu-nbd support for internal snapshots
+# 059 rw auto quick -- requires sample images
+060 rw auto quick
+# 061 rw auto quick -- requires qemu-img amend
+# 062 rw auto quick -- requires qcow2 v3 (zero clusters)
+# 063 rw auto quick -- requires qemu-img convert -n
+# 064 rw auto quick -- requires sample images
+# 065 rw auto quick -- requires driver-specific qemu-img info fields
+# 066 rw auto quick -- requires qcow2 v3 (zero clusters)
+067 rw auto quick
+068 rw auto quick
+069 rw auto quick
+# 070 rw auto quick -- requires sample images
+# 071 rw auto quick -- requires driver-specific options in blkdebug/blkverify
+# 072 rw auto quick -- requires blockdev (nested image formats)
+073 rw auto quick
+074 rw auto quick
+# 075 rw auto quick -- requires sample images
+# 076 auto -- requires sample images
+# 077 rw auto quick -- requires blkdebug break/resume and 4k sector support
+# 078 rw auto quick -- requires sample images
+079 rw auto
+080 rw auto
+081 rw auto quick
+# 082 rw auto quick -- requires qemu-img support for multiple -o
+083 rw auto
+084 img auto quick
+085 rw auto
+086 rw auto quick
+# 087 rw auto quick -- requires blockdev-add
+088 rw auto quick
+# 089 rw auto quick -- requires json: pseudo-protocol
+# 090 rw auto quick -- requires discard in qemu-io
+# 091 rw auto quick -- required 'qemu-io' HMP command
+092 rw auto quick
+095 rw auto quick

@@ -839,4 +839,6 @@ extern int vmstate_register(DeviceState *dev, int instance_id,
                             const VMStateDescription *vmsd, void *base);
 void vmstate_unregister(DeviceState *dev, const VMStateDescription *vmsd,
                         void *opaque);
+void dump_vmstate_json_to_file(FILE *out_fp, const char *name);
+
 #endif

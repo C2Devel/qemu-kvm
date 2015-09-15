@@ -1,0 +1,6185 @@
+{
+  "vmschkmachine": {
+    "Name": "rhel6.2.0"
+  },
+  "pcnet": {
+    "Name": "pcnet",
+    "version_id": 3,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "pcnet",
+      "version_id": 3,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "pci_dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "state",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4568,
+          "Description": {
+            "name": "pcnet",
+            "version_id": 3,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "rap",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "isr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "lnkst",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "rdra",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "tdra",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "prom",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 16
+              },
+              {
+                "field": "csr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "bcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "timer",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "xmit_pos",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buffer",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4096
+              },
+              {
+                "field": "unused",
+                "version_id": 0,
+                "field_exists": true,
+                "size": 4
+              },
+              {
+                "field": "tx_busy",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "poll_timer",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "rtl8139": {
+    "Name": "rtl8139",
+    "version_id": 4,
+    "minimum_version_id": 3,
+    "Description": {
+      "name": "rtl8139",
+      "version_id": 4,
+      "minimum_version_id": 3,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "phys",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 6
+        },
+        {
+          "field": "mult",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "TxStatus",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "TxAddr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxBuf",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxBufferSize",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxBufPtr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxBufAddr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "IntrStatus",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "IntrMask",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "TxConfig",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxConfig",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxMissed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "CSCR",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "Cfg9346",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "Config0",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "Config1",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "Config3",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "Config4",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "Config5",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "clock_enabled",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "bChipCmdState",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "MultiIntr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "BasicModeCtrl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "BasicModeStatus",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "NWayAdvert",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "NWayLPAR",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "NWayExpansion",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "CpCmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "TxThresh",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "unused",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "conf.macaddr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 6
+        },
+        {
+          "field": "rtl8139_mmio_io_addr_dummy",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "currTxDesc",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "currCPlusRxDesc",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "currCPlusTxDesc",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxRingAddrLO",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "RxRingAddrHI",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "eeprom.contents",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eeprom.mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "eeprom.tick",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "eeprom.address",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eeprom.input",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eeprom.output",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eeprom.eecs",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eeprom.eesk",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eeprom.eedi",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eeprom.eedo",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "TCTR",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "TimerInt",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "TCTR_base",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "tally_counters",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 64,
+          "Description": {
+            "name": "tally_counters",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "TxOk",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "RxOk",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "TxERR",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "RxERR",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "MissPkt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "FAE",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "Tx1Col",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "TxMCol",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "RxOkPhy",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "RxOkBrd",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "TxAbt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "TxUndrn",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cplus_enabled",
+          "version_id": 4,
+          "field_exists": false,
+          "size": 4
+        }
+      ],
+      "Subsections": [
+        {
+          "name": "rtl8139/hotplug_ready",
+          "version_id": 1,
+          "minimum_version_id": 1,
+          "Fields": [
+
+          ]
+        }
+      ]
+    }
+  },
+  "e1000": {
+    "Name": "e1000",
+    "version_id": 2,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "e1000",
+      "version_id": 2,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "unused",
+          "version_id": 0,
+          "field_exists": true,
+          "size": 4
+        },
+        {
+          "field": "unused",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rxbuf_size",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rxbuf_min_shift",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "eecd_state.val_in",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "eecd_state.bitnum_in",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eecd_state.bitnum_out",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eecd_state.reading",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "eecd_state.old_eecd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "tx.ipcss",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.ipcso",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.ipcse",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "tx.tucss",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.tucso",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.tucse",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "tx.paylen",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "tx.hdr_len",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.mss",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "tx.size",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "tx.tso_frames",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "tx.sum_needed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.ip",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.tcp",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tx.header",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 256
+        },
+        {
+          "field": "tx.data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 65536
+        },
+        {
+          "field": "eeprom_data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "phy_reg",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "mac_reg[CTRL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[EECD]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[EERD]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[GPRC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[GPTC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[ICR]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[ICS]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[IMC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[IMS]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[LEDCTL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[MANC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[MDIC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[MPC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[PBA]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RCTL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RDBAH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RDBAL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RDH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RDLEN]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[RDT]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[STATUS]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[SWSM]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TCTL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TDBAH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TDBAL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TDH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TDLEN]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TDT]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TORH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TORL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TOTH]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TOTL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TPR]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TPT]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[TXDCTL]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[WUFC]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg[VET]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mac_reg",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "usb-hub": {
+    "Name": "usb-hub",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-hub",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "ports",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "usb-hub-port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "wPortStatus",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "wPortChange",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "usb-host": {
+    "Name": "usb-host",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-host",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "usb-kbd": {
+    "Name": "usb-kbd",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-kbd",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "kbd.keycodes",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "head",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "n",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "kbd.modifiers",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "kbd.leds",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "kbd.key",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "kbd.keys",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "protocol",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "idle",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "usb-mouse": {
+    "Name": "usb-mouse",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-ptr",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "ptr.queue",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 16,
+          "Description": {
+            "name": "usb-ptr-queue",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "xdx",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "ydy",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "dz",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buttons_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "head",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "n",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "protocol",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "idle",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "usb-tablet": {
+    "Name": "usb-tablet",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-ptr",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "ptr.queue",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 16,
+          "Description": {
+            "name": "usb-ptr-queue",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "xdx",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "ydy",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "dz",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buttons_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "head",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "n",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "protocol",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "idle",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "usb-storage": {
+    "Name": "usb-storage",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-storage",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "scsi_len",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "scsi_off",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "data_len",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "csw.sig",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "csw.tag",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "csw.residue",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "csw.status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "scsi-disk": {
+    "Name": "scsi-disk",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "scsi-disk",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "qdev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 320,
+          "Description": {
+            "name": "SCSIDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "unit_attention.key",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.asc",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.ascq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_is_ua",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "requests",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "media_changed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "media_event",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eject_request",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_open",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_locked",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "scsi-block": {
+    "Name": "scsi-block",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "scsi-disk",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "qdev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 320,
+          "Description": {
+            "name": "SCSIDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "unit_attention.key",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.asc",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.ascq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_is_ua",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "requests",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "media_changed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "media_event",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eject_request",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_open",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_locked",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "scsi-cd": {
+    "Name": "scsi-cd",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "scsi-disk",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "qdev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 320,
+          "Description": {
+            "name": "SCSIDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "unit_attention.key",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.asc",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.ascq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_is_ua",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "requests",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "media_changed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "media_event",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eject_request",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_open",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_locked",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "scsi-hd": {
+    "Name": "scsi-hd",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "scsi-disk",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "qdev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 320,
+          "Description": {
+            "name": "SCSIDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "unit_attention.key",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.asc",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "unit_attention.ascq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_is_ua",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sense_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "requests",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "media_changed",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "media_event",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "eject_request",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_open",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "tray_locked",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "scsi-generic": {
+    "Name": "scsi-generic",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "SCSIDevice",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "unit_attention.key",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "unit_attention.asc",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "unit_attention.ascq",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "sense_is_ua",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "sense",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "sense_len",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "requests",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 0
+        }
+      ]
+    }
+  },
+  "usb-ccid": {
+    "Name": "usb-ccid",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-ccid",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "usb_device",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "data_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4096
+              }
+            ]
+          }
+        },
+        {
+          "field": "debug",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "bulk_out_data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 65536
+        },
+        {
+          "field": "bulk_out_pos",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "bmSlotICCState",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "powered",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "notify_slot_change",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "last_answer_error",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "bError",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "bmCommandStatus",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "bProtocolNum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "abProtocolDataStructure.data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 7
+        },
+        {
+          "field": "ulProtocolDataStructureSize",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "bulk_in_pending",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 392,
+          "Description": {
+            "name": "CCID BulkIn state",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "data",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 384
+              },
+              {
+                "field": "len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "pos",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "bulk_in_pending_start",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "bulk_in_pending_end",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "pending_answers",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 2,
+          "Description": {
+            "name": "CCID Answer state",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "slot",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "seq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "pending_answers_num",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "migration_state",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "state_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "ccid-card-passthru": {
+    "Name": "ccid-card-passthru",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "ccid-card-passthru",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "vscard_in_data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 65536
+        },
+        {
+          "field": "vscard_in_pos",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "vscard_in_hdr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "atr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 40
+        },
+        {
+          "field": "atr_length",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "usb-redir": {
+    "Name": "usb-redir",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "usb-redir",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4360,
+          "Description": {
+            "name": "USBDevice",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "remote_wakeup",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "setup_buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        },
+        {
+          "field": "attach_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "parser",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 0
+        },
+        {
+          "field": "endpoint",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 40,
+          "Description": {
+            "name": "usb-redir-ep",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "type",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interval",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interface",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "max_packet_size",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "iso_started",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "iso_error",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interrupt_started",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interrupt_error",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bufpq_prefilled",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bufpq_dropping_packets",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bufpq",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              },
+              {
+                "field": "bufpq_target_size",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "cancelled",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 40,
+          "Description": {
+            "name": "usb-redir-packet-id-queue",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "queue",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "already_in_flight",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 40,
+          "Description": {
+            "name": "usb-redir-packet-id-queue",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "queue",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 0
+              }
+            ]
+          }
+        },
+        {
+          "field": "device_info",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 10,
+          "Description": {
+            "name": "usb-redir-device-info",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "speed",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "device_class",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "device_subclass",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "device_protocol",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vendor_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "product_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "device_version_bcd",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "interface_info",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 132,
+          "Description": {
+            "name": "usb-redir-interface-info",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "interface_count",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "interface",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interface_class",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interface_subclass",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "interface_protocol",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "ich9-usb-ehci1": {
+    "Name": "ich9-usb-ehci1",
+    "version_id": 2,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "ehci",
+      "version_id": 2,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "usbcmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts_pending",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts_frindex",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbintr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "frindex",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "ctrldssegment",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "periodiclistbase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "asynclistaddr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "configflag",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[0]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[1]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[2]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[3]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[4]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[5]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "last_run_ns",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "async_stepdown",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "astate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "pstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "a_fetch_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "p_fetch_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "usb-ehci": {
+    "Name": "usb-ehci",
+    "version_id": 2,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "ehci",
+      "version_id": 2,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "usbcmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts_pending",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbsts_frindex",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "usbintr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "frindex",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "ctrldssegment",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "periodiclistbase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "asynclistaddr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "configflag",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[0]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[1]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[2]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[3]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[4]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "portsc[5]",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "last_run_ns",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "async_stepdown",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "astate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "pstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "a_fetch_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "p_fetch_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "i6300esb": {
+    "Name": "i6300esb",
+    "version_id": 680,
+    "minimum_version_id": 680,
+    "Description": {
+      "name": "i6300esb_wdt",
+      "version_id": 680,
+      "minimum_version_id": 680,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "reboot_enabled",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "clock_scale",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "int_type",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "free_run",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "locked",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "enabled",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "timer1_preload",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "timer2_preload",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "stage",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "unlock_state",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "previous_reboot_flag",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "ne2k_pci": {
+    "Name": "ne2k_pci",
+    "version_id": 3,
+    "minimum_version_id": 3,
+    "Description": {
+      "name": "ne2000",
+      "version_id": 3,
+      "minimum_version_id": 3,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "ne2000",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 49248,
+          "Description": {
+            "name": "ne2000",
+            "version_id": 2,
+            "minimum_version_id": 0,
+            "Fields": [
+              {
+                "field": "rxcr",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cmd",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "start",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "stop",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "boundary",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "tsr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "tpsr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "tcnt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "rcnt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "rsar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "rsr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "isr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dcfg",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "imr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "phys",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 6
+              },
+              {
+                "field": "curpag",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mult",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "unused",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mem",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 49152
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "i8042": {
+    "Name": "i8042",
+    "version_id": 3,
+    "minimum_version_id": 3,
+    "Description": {
+      "name": "pckbd",
+      "version_id": 3,
+      "minimum_version_id": 3,
+      "Fields": [
+        {
+          "field": "kbd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 48,
+          "Description": {
+            "name": "pckbd",
+            "version_id": 3,
+            "minimum_version_id": 3,
+            "Fields": [
+              {
+                "field": "write_cmd",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "status",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mode",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "pending",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "ES1370": {
+    "Name": "ES1370",
+    "version_id": 2,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "es1370",
+      "version_id": 2,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "chan",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 20,
+          "Description": {
+            "name": "es1370_channel",
+            "version_id": 2,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "shift",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "leftover",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "scount",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "frame_addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "frame_cnt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "ctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mempage",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "codec",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "AC97": {
+    "Name": "AC97",
+    "version_id": 3,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "ac97",
+      "version_id": 3,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "glob_cnt",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "glob_sta",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "cas",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "bm_regs",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 24,
+          "Description": {
+            "name": "ac97_bm_regs",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "bdbar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "civ",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "lvi",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "picb",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "piv",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bd_valid",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "bd.addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "bd.ctl_len",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "mixer_data",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 256
+        },
+        {
+          "field": "unused",
+          "version_id": 0,
+          "field_exists": true,
+          "size": 3
+        }
+      ]
+    }
+  },
+  "intel-hda": {
+    "Name": "intel-hda",
+    "version_id": 1,
+    "minimum_version_id": 0,
+    "Description": {
+      "name": "intel-hda",
+      "version_id": 1,
+      "minimum_version_id": 0,
+      "Fields": [
+        {
+          "field": "pci",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "g_ctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "wake_en",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "state_sts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "int_ctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "int_sts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "wall_clk",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_lbase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_ubase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_rp",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_wp",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_ctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_sts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "corb_size",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_lbase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_ubase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_wp",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_cnt",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_ctl",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_sts",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "rirb_size",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "dp_lbase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "dp_ubase",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "icw",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "irr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "ics",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "st",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 56,
+          "Description": {
+            "name": "intel-hda-stream",
+            "version_id": 1,
+            "minimum_version_id": 0,
+            "Fields": [
+              {
+                "field": "ctl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "lpib",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "cbl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "lvi",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "fmt",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "bdlp_lbase",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "bdlp_ubase",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "rirb_count",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "wall_base_ns",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "hda-micro": {
+    "Name": "hda-micro",
+    "version_id": 2,
+    "minimum_version_id": 0,
+    "Description": {
+      "name": "hda-audio",
+      "version_id": 2,
+      "minimum_version_id": 0,
+      "Fields": [
+        {
+          "field": "st",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 336,
+          "Description": {
+            "name": "hda-audio-stream",
+            "version_id": 1,
+            "minimum_version_id": 0,
+            "Fields": [
+              {
+                "field": "stream",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "channel",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "format",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mute_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mute_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bpos",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              }
+            ]
+          }
+        },
+        {
+          "field": "running_compat",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "running_real",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "hda-duplex": {
+    "Name": "hda-duplex",
+    "version_id": 2,
+    "minimum_version_id": 0,
+    "Description": {
+      "name": "hda-audio",
+      "version_id": 2,
+      "minimum_version_id": 0,
+      "Fields": [
+        {
+          "field": "st",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 336,
+          "Description": {
+            "name": "hda-audio-stream",
+            "version_id": 1,
+            "minimum_version_id": 0,
+            "Fields": [
+              {
+                "field": "stream",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "channel",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "format",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mute_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mute_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bpos",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              }
+            ]
+          }
+        },
+        {
+          "field": "running_compat",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "running_real",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "hda-output": {
+    "Name": "hda-output",
+    "version_id": 2,
+    "minimum_version_id": 0,
+    "Description": {
+      "name": "hda-audio",
+      "version_id": 2,
+      "minimum_version_id": 0,
+      "Fields": [
+        {
+          "field": "st",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 336,
+          "Description": {
+            "name": "hda-audio-stream",
+            "version_id": 1,
+            "minimum_version_id": 0,
+            "Fields": [
+              {
+                "field": "stream",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "channel",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "format",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "gain_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mute_left",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mute_right",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "bpos",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "buf",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              }
+            ]
+          }
+        },
+        {
+          "field": "running_compat",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "running_real",
+          "version_id": 2,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "VGA": {
+    "Name": "VGA",
+    "version_id": 2,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "vga",
+      "version_id": 2,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "vga",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 67184,
+          "Description": {
+            "name": "vga",
+            "version_id": 2,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "latch",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "sr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "gr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "gr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 16
+              },
+              {
+                "field": "ar_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "ar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 21
+              },
+              {
+                "field": "ar_flip_flop",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "cr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "msr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "fcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st00",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st01",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_sub_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_read_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_write_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_cache",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 3
+              },
+              {
+                "field": "palette",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 768
+              },
+              {
+                "field": "bank_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "is_vbe_vmstate",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vbe_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_regs",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_start_addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_line_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_bank_mask",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "pci-serial": {
+    "Name": "pci-serial",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "pci-serial",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "state",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 160,
+          "Description": {
+            "name": "serial",
+            "version_id": 3,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "divider",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "rbr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "ier",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "iir",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "lcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "mcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "lsr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "msr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "scr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "fcr_vmstate",
+                "version_id": 3,
+                "field_exists": false,
+                "size": 1
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "cirrus-vga": {
+    "Name": "cirrus-vga",
+    "version_id": 2,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "cirrus_vga",
+      "version_id": 2,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "cirrus_vga",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 75576,
+          "Description": {
+            "name": "cirrus_vga",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "vga.latch",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vga.sr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.sr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "vga.gr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cirrus_shadow_gr0",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cirrus_shadow_gr1",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.gr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 254
+              },
+              {
+                "field": "vga.ar_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.ar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 21
+              },
+              {
+                "field": "vga.ar_flip_flop",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vga.cr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.cr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "vga.msr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.fcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.st00",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.st01",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.dac_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.dac_sub_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.dac_read_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.dac_write_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vga.dac_cache",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 3
+              },
+              {
+                "field": "vga.palette",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 768
+              },
+              {
+                "field": "vga.bank_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "cirrus_hidden_dac_lockindex",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cirrus_hidden_dac_data",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "hw_cursor_x",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "hw_cursor_y",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "PIIX3": {
+    "Name": "PIIX3",
+    "version_id": 3,
+    "minimum_version_id": 2,
+    "Description": {
+      "name": "PIIX3",
+      "version_id": 3,
+      "minimum_version_id": 2,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "pci_irq_levels",
+          "version_id": 3,
+          "field_exists": false,
+          "size": 4
+        }
+      ]
+    }
+  },
+  "i440FX": {
+    "Name": "i440FX",
+    "version_id": 3,
+    "minimum_version_id": 3,
+    "Description": {
+      "name": "I440FX",
+      "version_id": 3,
+      "minimum_version_id": 3,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "smm_enabled",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        }
+      ]
+    }
+  },
+  "ich9-usb-uhci3": {
+    "Name": "ich9-usb-uhci3",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "uhci",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_ports_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "ports",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "uhci port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "ctrl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "intr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "frnum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "fl_base_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sof_timing",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "status2",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "ich9-usb-uhci2": {
+    "Name": "ich9-usb-uhci2",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "uhci",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_ports_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "ports",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "uhci port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "ctrl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "intr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "frnum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "fl_base_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sof_timing",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "status2",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "ich9-usb-uhci1": {
+    "Name": "ich9-usb-uhci1",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "uhci",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_ports_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "ports",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "uhci port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "ctrl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "intr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "frnum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "fl_base_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sof_timing",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "status2",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "piix4-usb-uhci": {
+    "Name": "piix4-usb-uhci",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "uhci",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_ports_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "ports",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "uhci port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "ctrl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "intr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "frnum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "fl_base_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sof_timing",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "status2",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "piix3-usb-uhci": {
+    "Name": "piix3-usb-uhci",
+    "version_id": 1,
+    "minimum_version_id": 1,
+    "Description": {
+      "name": "uhci",
+      "version_id": 1,
+      "minimum_version_id": 1,
+      "Fields": [
+        {
+          "field": "dev",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_ports_vmstate",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "ports",
+          "version_id": 1,
+          "field_exists": false,
+          "size": 80,
+          "Description": {
+            "name": "uhci port",
+            "version_id": 1,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "ctrl",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              }
+            ]
+          }
+        },
+        {
+          "field": "cmd",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "status",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "intr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "frnum",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 2
+        },
+        {
+          "field": "fl_base_addr",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "sof_timing",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "status2",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 1
+        },
+        {
+          "field": "frame_timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "ib700": {
+    "Name": "ib700",
+    "version_id": 0,
+    "minimum_version_id": 0,
+    "Description": {
+      "name": "ib700_wdt",
+      "version_id": 0,
+      "minimum_version_id": 0,
+      "Fields": [
+        {
+          "field": "timer",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ]
+    }
+  },
+  "qxl": {
+    "Name": "qxl",
+    "version_id": 21,
+    "minimum_version_id": 21,
+    "Description": {
+      "name": "qxl",
+      "version_id": 21,
+      "minimum_version_id": 21,
+      "Fields": [
+        {
+          "field": "pci",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "vga",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 67184,
+          "Description": {
+            "name": "vga",
+            "version_id": 2,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "latch",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "sr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "gr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "gr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 16
+              },
+              {
+                "field": "ar_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "ar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 21
+              },
+              {
+                "field": "ar_flip_flop",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "cr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "msr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "fcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st00",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st01",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_sub_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_read_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_write_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_cache",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 3
+              },
+              {
+                "field": "palette",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 768
+              },
+              {
+                "field": "bank_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "is_vbe_vmstate",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vbe_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_regs",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_start_addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_line_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_bank_mask",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "shadow_rom.mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "num_free_res",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "last_release_offset",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "ssd.unique",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "num_memslots",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "guest_slots",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 48,
+          "Description": {
+            "name": "qxl-memslot",
+            "version_id": 21,
+            "minimum_version_id": 21,
+            "Fields": [
+              {
+                "field": "slot.mem_start",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "slot.mem_end",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "active",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "guest_primary.surface",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 40,
+          "Description": {
+            "name": "qxl-surface",
+            "version_id": 21,
+            "minimum_version_id": 21,
+            "Fields": [
+              {
+                "field": "width",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "height",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "stride",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "format",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "position",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mouse_mode",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "flags",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "type",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mem",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_surfaces",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "guest_surfaces.cmds",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "guest_cursor",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ],
+      "Subsections": [
+        {
+          "name": "qxl/monitors-config",
+          "version_id": 1,
+          "minimum_version_id": 1,
+          "Fields": [
+            {
+              "field": "guest_monitors_config",
+              "version_id": 0,
+              "field_exists": false,
+              "size": 8
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "qxl-vga": {
+    "Name": "qxl-vga",
+    "version_id": 21,
+    "minimum_version_id": 21,
+    "Description": {
+      "name": "qxl",
+      "version_id": 21,
+      "minimum_version_id": 21,
+      "Fields": [
+        {
+          "field": "pci",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 624,
+          "Description": {
+            "name": "PCIDevice",
+            "version_id": 2,
+            "minimum_version_id": 1,
+            "Fields": [
+              {
+                "field": "version_id",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "config",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "irq_state",
+                "version_id": 2,
+                "field_exists": false,
+                "size": 16
+              }
+            ]
+          }
+        },
+        {
+          "field": "vga",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 67184,
+          "Description": {
+            "name": "vga",
+            "version_id": 2,
+            "minimum_version_id": 2,
+            "Fields": [
+              {
+                "field": "latch",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "sr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "sr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "gr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "gr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 16
+              },
+              {
+                "field": "ar_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "ar",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 21
+              },
+              {
+                "field": "ar_flip_flop",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "cr_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "cr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 256
+              },
+              {
+                "field": "msr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "fcr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st00",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "st01",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_state",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_sub_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_read_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_write_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "dac_cache",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 3
+              },
+              {
+                "field": "palette",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 768
+              },
+              {
+                "field": "bank_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "is_vbe_vmstate",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 1
+              },
+              {
+                "field": "vbe_index",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_regs",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 2
+              },
+              {
+                "field": "vbe_start_addr",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_line_offset",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "vbe_bank_mask",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "shadow_rom.mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "num_free_res",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "last_release_offset",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "mode",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "ssd.unique",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "num_memslots",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "guest_slots",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 48,
+          "Description": {
+            "name": "qxl-memslot",
+            "version_id": 21,
+            "minimum_version_id": 21,
+            "Fields": [
+              {
+                "field": "slot.mem_start",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "slot.mem_end",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              },
+              {
+                "field": "active",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              }
+            ]
+          }
+        },
+        {
+          "field": "guest_primary.surface",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 40,
+          "Description": {
+            "name": "qxl-surface",
+            "version_id": 21,
+            "minimum_version_id": 21,
+            "Fields": [
+              {
+                "field": "width",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "height",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "stride",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "format",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "position",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mouse_mode",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "flags",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "type",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 4
+              },
+              {
+                "field": "mem",
+                "version_id": 0,
+                "field_exists": false,
+                "size": 8
+              }
+            ]
+          }
+        },
+        {
+          "field": "num_surfaces",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 4
+        },
+        {
+          "field": "guest_surfaces.cmds",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        },
+        {
+          "field": "guest_cursor",
+          "version_id": 0,
+          "field_exists": false,
+          "size": 8
+        }
+      ],
+      "Subsections": [
+        {
+          "name": "qxl/monitors-config",
+          "version_id": 1,
+          "minimum_version_id": 1,
+          "Fields": [
+            {
+              "field": "guest_monitors_config",
+              "version_id": 0,
+              "field_exists": false,
+              "size": 8
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

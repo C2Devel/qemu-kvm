@@ -117,6 +117,8 @@ struct SCSIDeviceInfo {
     DeviceInfo qdev;
     scsi_qdev_initfn init;
     void (*destroy)(SCSIDevice *s);
+    int (*parse_cdb)(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf,
+                     void *hba_private);
     SCSIRequest *(*alloc_req)(SCSIDevice *s, uint32_t tag, uint32_t lun,
                               uint8_t *buf, void *hba_private);
     void (*unit_attention_reported)(SCSIDevice *s);
@@ -125,6 +127,8 @@ struct SCSIDeviceInfo {
 struct SCSIBusInfo {
     int tcq;
     int max_channel, max_target, max_lun;
+    int (*parse_cdb)(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf,
+                     void *hba_private);
     void (*transfer_data)(SCSIRequest *req, uint32_t arg);
     void (*complete)(SCSIRequest *req, uint32_t arg, int32_t len);
     void (*cancel)(SCSIRequest *req);
@@ -222,6 +226,9 @@ void scsi_req_free(SCSIRequest *req);
 SCSIRequest *scsi_req_ref(SCSIRequest *req);
 void scsi_req_unref(SCSIRequest *req);
 
+int scsi_bus_parse_cdb(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf,
+                       void *hba_private);
+int scsi_req_parse_cdb(SCSIDevice *dev, SCSICommand *cmd, uint8_t *buf);
 void scsi_req_build_sense(SCSIRequest *req, SCSISense sense);
 void scsi_req_print(SCSIRequest *req);
 void scsi_req_continue(SCSIRequest *req);

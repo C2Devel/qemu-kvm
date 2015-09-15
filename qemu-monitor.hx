@@ -1200,8 +1200,8 @@ EQMP
 
     {
         .name       = "dump-guest-memory",
-        .args_type  = "paging:b,protocol:s,begin:i?,end:i?",
-        .params     = "-p protocol [begin] [length]",
+        .args_type  = "paging:b,protocol:s,begin:i?,end:i?,format:s?",
+        .params     = "-p protocol [begin] [length] [format]",
         .help       = "dump guest memory to file",
         .user_print = monitor_user_noop,
         .mhandler.cmd_new = qmp_marshal_input_dump_guest_memory,
@@ -1222,6 +1222,9 @@ Arguments:
            with length together (json-int)
 - "length": the memory size, in bytes. It's optional, and should be specified
             with begin together (json-int)
+- "format": the format of guest memory dump. It's optional, and can be
+            elf|kdump-zlib|kdump-lzo|kdump-snappy, but non-elf formats will
+            conflict with paging and filter, ie. begin and length (json-string)
 
 Example:
 
@@ -1231,6 +1234,28 @@ Example:
 Notes:
 
 (1) All boolean arguments default to false
+
+EQMP
+
+    {
+        .name       = "query-dump-guest-memory-capability",
+        .args_type  = "",
+        .user_print = monitor_user_noop,
+    .mhandler.cmd_new = qmp_marshal_input_query_dump_guest_memory_capability,
+        .flags = MONITOR_CMD_QMP_ONLY
+    },
+
+SQMP
+query-dump-guest-memory-capability
+----------
+
+Show available formats for 'dump-guest-memory'
+
+Example:
+
+-> { "execute": "query-dump-guest-memory-capability" }
+<- { "return": { "formats":
+                    ["elf", "kdump-zlib", "kdump-lzo", "kdump-snappy"] }
 
 EQMP
 
@@ -2141,10 +2166,11 @@ EQMP
     {
         .name       = "human-monitor-command",
         .args_type  = "command-line:s,cpu-index:i?",
-        .params     = "",
-        .help       = "",
+        .params     = "command-line [cpu-index]",
+        .help       = "execute a command on the human monitor",
         .user_print = monitor_user_noop,
-        .mhandler.cmd_new = do_hmp_passthrough,
+        .mhandler.cmd_new = qmp_marshal_input_human_monitor_command,
+        .flags = MONITOR_CMD_QMP_ONLY
     },
 
 SQMP
@@ -2881,6 +2907,227 @@ ETEXI
 STEXI
 @item info pci
 show emulated PCI device info
+ETEXI
+SQMP
+query-pci
+---------
+
+PCI buses and devices information.
+
+The returned value is a json-array of all buses. Each bus is represented by
+a json-object, which has a key with a json-array of all PCI devices attached
+to it. Each device is represented by a json-object.
+
+The bus json-object contains the following:
+
+- "bus": bus number (json-int)
+- "devices": a json-array of json-objects, each json-object represents a
+             PCI device
+
+The PCI device json-object contains the following:
+
+- "bus": identical to the parent's bus number (json-int)
+- "slot": slot number (json-int)
+- "function": function number (json-int)
+- "class_info": a json-object containing:
+     - "desc": device class description (json-string, optional)
+     - "class": device class number (json-int)
+- "id": a json-object containing:
+     - "device": device ID (json-int)
+     - "vendor": vendor ID (json-int)
+- "irq": device's IRQ if assigned (json-int, optional)
+- "qdev_id": qdev id string (json-string)
+- "pci_bridge": It's a json-object, only present if this device is a
+                PCI bridge, contains:
+     - "bus": bus number (json-int)
+     - "secondary": secondary bus number (json-int)
+     - "subordinate": subordinate bus number (json-int)
+     - "io_range": I/O memory range information, a json-object with the
+                   following members:
+                 - "base": base address, in bytes (json-int)
+                 - "limit": limit address, in bytes (json-int)
+     - "memory_range": memory range information, a json-object with the
+                       following members:
+                 - "base": base address, in bytes (json-int)
+                 - "limit": limit address, in bytes (json-int)
+     - "prefetchable_range": Prefetchable memory range information, a
+                             json-object with the following members:
+                 - "base": base address, in bytes (json-int)
+                 - "limit": limit address, in bytes (json-int)
+     - "devices": a json-array of PCI devices if there's any attached, each
+                  each element is represented by a json-object, which contains
+                  the same members of the 'PCI device json-object' described
+                  above (optional)
+- "regions": a json-array of json-objects, each json-object represents a
+             memory region of this device
+
+The memory range json-object contains the following:
+
+- "base": base memory address (json-int)
+- "limit": limit value (json-int)
+
+The region json-object can be an I/O region or a memory region, an I/O region
+json-object contains the following:
+
+- "type": "io" (json-string, fixed)
+- "bar": BAR number (json-int)
+- "address": memory address (json-int)
+- "size": memory size (json-int)
+
+A memory region json-object contains the following:
+
+- "type": "memory" (json-string, fixed)
+- "bar": BAR number (json-int)
+- "address": memory address (json-int)
+- "size": memory size (json-int)
+- "mem_type_64": true or false (json-bool)
+- "prefetch": true or false (json-bool)
+
+Example:
+
+-> { "execute": "query-pci" }
+<- {
+      "return":[
+         {
+            "bus":0,
+            "devices":[
+               {
+                  "bus":0,
+                  "qdev_id":"",
+                  "slot":0,
+                  "class_info":{
+                     "class":1536,
+                     "desc":"Host bridge"
+                  },
+                  "id":{
+                     "device":32902,
+                     "vendor":4663
+                  },
+                  "function":0,
+                  "regions":[
+
+                  ]
+               },
+               {
+                  "bus":0,
+                  "qdev_id":"",
+                  "slot":1,
+                  "class_info":{
+                     "class":1537,
+                     "desc":"ISA bridge"
+                  },
+                  "id":{
+                     "device":32902,
+                     "vendor":28672
+                  },
+                  "function":0,
+                  "regions":[
+
+                  ]
+               },
+               {
+                  "bus":0,
+                  "qdev_id":"",
+                  "slot":1,
+                  "class_info":{
+                     "class":257,
+                     "desc":"IDE controller"
+                  },
+                  "id":{
+                     "device":32902,
+                     "vendor":28688
+                  },
+                  "function":1,
+                  "regions":[
+                     {
+                        "bar":4,
+                        "size":16,
+                        "address":49152,
+                        "type":"io"
+                     }
+                  ]
+               },
+               {
+                  "bus":0,
+                  "qdev_id":"",
+                  "slot":2,
+                  "class_info":{
+                     "class":768,
+                     "desc":"VGA controller"
+                  },
+                  "id":{
+                     "device":4115,
+                     "vendor":184
+                  },
+                  "function":0,
+                  "regions":[
+                     {
+                        "prefetch":true,
+                        "mem_type_64":false,
+                        "bar":0,
+                        "size":33554432,
+                        "address":4026531840,
+                        "type":"memory"
+                     },
+                     {
+                        "prefetch":false,
+                        "mem_type_64":false,
+                        "bar":1,
+                        "size":4096,
+                        "address":4060086272,
+                        "type":"memory"
+                     },
+                     {
+                        "prefetch":false,
+                        "mem_type_64":false,
+                        "bar":6,
+                        "size":65536,
+                        "address":-1,
+                        "type":"memory"
+                     }
+                  ]
+               },
+               {
+                  "bus":0,
+                  "qdev_id":"",
+                  "irq":11,
+                  "slot":4,
+                  "class_info":{
+                     "class":1280,
+                     "desc":"RAM controller"
+                  },
+                  "id":{
+                     "device":6900,
+                     "vendor":4098
+                  },
+                  "function":0,
+                  "regions":[
+                     {
+                        "bar":0,
+                        "size":32,
+                        "address":49280,
+                        "type":"io"
+                     }
+                  ]
+               }
+            ]
+         }
+      ]
+   }
+
+Note: This example has been shortened as the real response is too long.
+
+EQMP
+
+    {
+        .name       = "query-pci",
+        .args_type  = "",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_query_pci,
+        .flags = MONITOR_CMD_QMP_ONLY
+    },
+
+STEXI
 @item info tlb
 show virtual to physical memory mappings (i386 only)
 @item info mem

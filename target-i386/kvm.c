@@ -24,6 +24,7 @@
 #include "cpu.h"
 #include "gdbstub.h"
 #include "host-utils.h"
+#include "migration.h"
 
 static void kvm_clear_vapic(CPUState *env)
 {

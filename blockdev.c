@@ -453,18 +453,9 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
     }
 
     if ((buf = qemu_opt_get(opts, "cache")) != NULL) {
-        if (!strcmp(buf, "off") || !strcmp(buf, "none")) {
-            bdrv_flags |= BDRV_O_NOCACHE | BDRV_O_CACHE_WB;
-        } else if (!strcmp(buf, "writeback")) {
-            bdrv_flags |= BDRV_O_CACHE_WB;
-        } else if (!strcmp(buf, "unsafe")) {
-            bdrv_flags |= BDRV_O_CACHE_WB;
-            bdrv_flags |= BDRV_O_NO_FLUSH;
-        } else if (!strcmp(buf, "writethrough")) {
-            /* this is the default */
-        } else {
-           error_report("invalid cache option");
-           return NULL;
+        if (bdrv_parse_cache_flags(buf, &bdrv_flags) != 0) {
+            error_report("invalid cache option");
+            return NULL;
         }
     }
 
@@ -624,6 +615,8 @@ DriveInfo *drive_init(QemuOpts *opts, int default_to_scsi)
                      devname, mediastr, unit_id);
     }
     dinfo->bdrv = bdrv_new(dinfo->id);
+    dinfo->bdrv->open_flags = snapshot ? BDRV_O_SNAPSHOT : 0;
+    dinfo->bdrv->read_only = ro;
     dinfo->devaddr = devaddr;
     dinfo->type = type;
     dinfo->bus = bus_id;
@@ -1039,10 +1032,10 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
             goto delete_and_fail;
         }
 
+        bdrv_get_geometry(states->old_bs, &size);
+        size *= 512;
         if (full && mode != NEW_IMAGE_MODE_EXISTING) {
             assert(format && drv);
-            bdrv_get_geometry(states->old_bs, &size);
-            size *= 512;
             bdrv_img_create(new_image_file, format,
                             NULL, NULL, NULL, size, flags, &local_err);
         } else {
@@ -1054,7 +1047,7 @@ void qmp_transaction(BlockdevActionList *dev_list, Error **errp)
                 bdrv_img_create(new_image_file, format,
                                 source->filename,
                                 source->drv->format_name,
-                                NULL, -1, flags, &local_err);
+                                NULL, size, flags, &local_err);
                 break;
             default:
                 error_setg(&local_err, "%s: invalid NewImageMode %u",
@@ -1242,7 +1235,7 @@ int do_change_block(Monitor *mon, const char *device,
     if (eject_device(mon, bs, 0) < 0) {
         return -1;
     }
-    bdrv_flags = bdrv_get_type_hint(bs) == BDRV_TYPE_CDROM ? 0 : BDRV_O_RDWR;
+    bdrv_flags = bdrv_is_read_only(bs) ? 0 : BDRV_O_RDWR;
     bdrv_flags |= bdrv_is_snapshot(bs) ? BDRV_O_SNAPSHOT : 0;
     ret = bdrv_open(bs, filename, bdrv_flags, drv);
     if (ret < 0) {

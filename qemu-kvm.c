@@ -113,12 +113,22 @@ static int kvm_debug(CPUState *env,
 }
 #endif
 
-static int handle_unhandled(uint64_t reason)
+static int handle_unknown(uint64_t reason)
 {
-    fprintf(stderr, "kvm: unhandled exit %" PRIx64 "\n", reason);
+    fprintf(stderr, "KVM: unknown exit, hardware reason 0x%" PRIx64 "\n",
+                    reason);
     return -EINVAL;
 }
 
+static int handle_fail_entry(uint64_t code)
+{
+    /*
+     * See "VM-Instruction Error Numbers" in the Intel SDM
+     */
+    fprintf(stderr, "KVM: entry failed, hardware error 0x%" PRIx64 "\n",
+                    code);
+    return -EINVAL;
+}
 
 static inline void set_gsi(kvm_context_t kvm, unsigned int gsi)
 {
@@ -948,16 +958,18 @@ static int kvm_handle_internal_error(kvm_context_t kvm,
                                      CPUState *env,
                                      struct kvm_run *run)
 {
-    fprintf(stderr, "KVM internal error. Suberror: %d\n",
-            run->internal.suberror);
 #ifdef KVM_CAP_INTERNAL_ERROR_DATA
+    fprintf(stderr, "KVM internal error.");
     if (kvm_check_extension(kvm_state, KVM_CAP_INTERNAL_ERROR_DATA)) {
         int i;
 
+        fprintf(stderr, "Suberror: %d\n", run->internal.suberror);
         for (i = 0; i < run->internal.ndata; ++i) {
             fprintf(stderr, "extra data[%d]: %"PRIx64"\n",
                     i, (uint64_t)run->internal.data[i]);
         }
+    } else {
+        fprintf(stderr, "\n");
     }
 #endif
     kvm_show_regs(env);
@@ -1033,14 +1045,14 @@ int kvm_run(CPUState *env)
         trace_kvm_run_exit(env->cpu_index, run->exit_reason);
         switch (run->exit_reason) {
         case KVM_EXIT_UNKNOWN:
-            r = handle_unhandled(run->hw.hardware_exit_reason);
+            r = handle_unknown(run->hw.hardware_exit_reason);
             break;
         case KVM_EXIT_FAIL_ENTRY:
-            r = handle_unhandled(run->fail_entry.hardware_entry_failure_reason);
+            r = handle_fail_entry(run->fail_entry.hardware_entry_failure_reason);
             break;
         case KVM_EXIT_EXCEPTION:
-            fprintf(stderr, "exception %d (%x)\n", run->ex.exception,
-                    run->ex.error_code);
+            fprintf(stderr, "KVM: exception %d exit (error code 0x%x)\n",
+                    run->ex.exception, run->ex.error_code);
             kvm_show_regs(env);
             kvm_show_code(env);
             abort();
@@ -1744,6 +1756,7 @@ int kvm_cpu_exec(CPUState *env)
     r = kvm_run(env);
     if (r < 0) {
         printf("kvm_run returned %d\n", r);
+        kvm_show_regs(env);
         vm_stop(RUN_STATE_INTERNAL_ERROR);
     }
 

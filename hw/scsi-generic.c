@@ -493,6 +493,12 @@ static SCSIRequest *scsi_new_request(SCSIDevice *d, uint32_t tag, uint32_t lun,
     return req;
 }
 
+static int scsi_generic_parse_cdb(SCSIDevice *dev, SCSICommand *cmd,
+                                  uint8_t *buf, void *hba_private)
+{
+    return scsi_bus_parse_cdb(dev, cmd, buf, hba_private);
+}
+
 static SCSIDeviceInfo scsi_generic_info = {
     .qdev.name    = "scsi-generic",
     .qdev.fw_name = "disk",
@@ -503,6 +509,7 @@ static SCSIDeviceInfo scsi_generic_info = {
     .init         = scsi_generic_initfn,
     .destroy      = scsi_destroy,
     .alloc_req    = scsi_new_request,
+    .parse_cdb    = scsi_generic_parse_cdb,
     .qdev.props   = (Property[]) {
         DEFINE_PROP_DRIVE("drive", SCSIDevice, conf.bs),
         DEFINE_PROP_INT32("bootindex", SCSIDevice, conf.bootindex, -1),

@@ -154,6 +154,7 @@ disable usb_desc_device_qualifier(int addr, int len, int ret) "dev %d query devi
 disable usb_desc_config(int addr, int index, int len, int ret) "dev %d query config %d, len %d, ret %d"
 disable usb_desc_other_speed_config(int addr, int index, int len, int ret) "dev %d query config %d, len %d, ret %d"
 disable usb_desc_string(int addr, int index, int len, int ret) "dev %d query string %d, len %d, ret %d"
+disable usb_desc_msos(int addr, int index, int len, int ret) "dev %d msos, index 0x%x, len %d, ret %d"
 disable usb_set_addr(int addr) "dev %d"
 disable usb_set_config(int addr, int config, int ret) "dev %d, config %d, ret %d"
 disable usb_clear_device_feature(int addr, int feature, int ret) "dev %d, feature %d, ret %d"
@@ -283,6 +284,10 @@ disable qxl_spice_update_area(int qid, uint32_t surface_id, uint32_t left, uint3
 disable qxl_spice_update_area_rest(int qid, uint32_t num_dirty_rects, uint32_t clear_dirty_region) "%d #d=%d clear=%d"
 disable qxl_surfaces_dirty(int qid, int surface, int addr, int offset, int size) "%d surface=%d addr=%d offset=%d size=%d"
 disable qxl_set_client_capabilities_unsupported_by_revision(int qid, int revision) "%d revision=%d"
+disable qxl_interrupt_client_monitors_config(int qid, int num_heads, void *heads) "%d %d %p"
+disable qxl_client_monitors_config_unsupported_by_guest(int qid, uint32_t int_mask, void *client_monitors_config) "%d %X %p"
+disable qxl_client_monitors_config_capped(int qid, int requested, int limit) "%d %d %d"
+disable qxl_client_monitors_config_crc(int qid, unsigned size, uint32_t crc32) "%d %u %u"
 
 # hw/qxl-render.c
 disable qxl_render_blit_guest_primary_initialized(void) ""
@@ -312,3 +317,7 @@ disable kvm_ioctl(int type, void *arg) "type %d, arg %p"
 disable kvm_vm_ioctl(int type, void *arg) "type %d, arg %p"
 disable kvm_vcpu_ioctl(int cpu_index, int type, void *arg) "cpu_index %d, type %d, arg %p"
 disable kvm_run_exit(int cpu_index, uint32_t reason) "cpu_index %d, reason %d"
+
+# qom/object.c
+object_dynamic_cast_assert(const char *type, const char *target, const char *file, int line, const char *func) "%s->%s (%s:%d:%s)"
+object_class_dynamic_cast_assert(const char *type, const char *target, const char *file, int line, const char *func) "%s->%s (%s:%d:%s)"

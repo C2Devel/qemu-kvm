@@ -20,12 +20,15 @@
 #include "virtio-net.h"
 #include "virtio-serial.h"
 #include "virtio-scsi.h"
+#include "virtio-rng.h"
 #include "pci.h"
 #include "qemu-error.h"
 #include "msix.h"
 #include "net.h"
 #include "loader.h"
 #include "kvm.h"
+#include "qom/object.h"
+#include "hw/qdev-core.h"
 
 /* from Linux's linux/virtio_pci.h */
 
@@ -119,6 +122,7 @@ typedef struct {
     uint32_t host_features;
     virtio_serial_conf serial;
     virtio_net_conf net;
+    VirtIORNGConf rng;
     bool ioeventfd_disabled;
     bool ioeventfd_started;
 } VirtIOPCIProxy;
@@ -671,7 +675,7 @@ static int virtio_pci_set_guest_notifiers(void *opaque, bool assign)
 
     /* Must unset mask notifier while guest notifier
      * is still assigned */
-    if (!assign) {
+    if (kvm_irqchip_in_kernel() && !assign) {
 	    r = msix_unset_mask_notifier(&proxy->pci_dev);
             assert(r >= 0);
     }
@@ -689,7 +693,7 @@ static int virtio_pci_set_guest_notifiers(void *opaque, bool assign)
 
     /* Must set mask notifier after guest notifier
      * has been assigned */
-    if (assign) {
+    if (kvm_irqchip_in_kernel() && assign) {
         r = msix_set_mask_notifier(&proxy->pci_dev,
                                    virtio_pci_mask_notifier);
         if (r < 0) {
@@ -945,6 +949,45 @@ static int virtio_balloon_exit_pci(PCIDevice *pci_dev)
     return virtio_exit_pci(pci_dev);
 }
 
+static int virtio_rng_init_pci(PCIDevice *pci_dev)
+{
+    VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
+    VirtIODevice *vdev;
+    char *path;
+
+    path = g_strdup_printf("/objects/%s", proxy->rng.name);
+    proxy->rng.rng = RNG_BACKEND(object_resolve_path_type(path,
+                                 TYPE_RNG_BACKEND, NULL));
+    g_free(path);
+
+    if (proxy->rng.name == NULL) {
+        Object *obj = object_new(TYPE_RNG_RANDOM);
+        proxy->rng.default_backend = RNG_RANDOM(obj);
+        proxy->rng.rng = RNG_BACKEND(obj);
+    }
+
+    vdev = virtio_rng_init(&pci_dev->qdev, &proxy->rng);
+    if (!vdev) {
+        return -1;
+    }
+    virtio_init_pci(proxy, vdev,
+                    PCI_VENDOR_ID_REDHAT_QUMRANET,
+                    PCI_DEVICE_ID_VIRTIO_RNG,
+                    PCI_CLASS_OTHERS,
+                    0x00);
+    return 0;
+}
+
+static int virtio_rng_exit_pci(PCIDevice *pci_dev)
+{
+    VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
+
+    virtio_pci_stop_ioeventfd(proxy);
+    virtio_rng_exit(proxy->vdev);
+    virtio_exit_pci(pci_dev);
+    return 0;
+}
+
 static int virtio_scsi_init_pci(PCIDevice *pci_dev)
 {
     VirtIOPCIProxy *proxy = DO_UPCAST(VirtIOPCIProxy, pci_dev, pci_dev);
@@ -1056,10 +1099,34 @@ static PCIDeviceInfo virtio_info[] = {
         .init      = virtio_scsi_init_pci,
         .exit      = virtio_scsi_exit_pci,
         .qdev.props = (Property[]) {
+            DEFINE_PROP_BIT("ioeventfd", VirtIOPCIProxy, flags,
+                            VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT, true),
             DEFINE_PROP_UINT32("vectors", VirtIOPCIProxy, nvectors, 4),
             DEFINE_VIRTIO_SCSI_PROPERTIES(VirtIOPCIProxy, host_features, scsi),
             DEFINE_PROP_END_OF_LIST(),
         },
+        .qdev.reset = virtio_pci_reset,
+    },{
+        .qdev.name = "virtio-rng-pci",
+        .qdev.size = sizeof(VirtIOPCIProxy),
+        .init      = virtio_rng_init_pci,
+        .exit      = virtio_rng_exit_pci,
+        .qdev.props = (Property[]) {
+            DEFINE_VIRTIO_COMMON_FEATURES(VirtIOPCIProxy, host_features),
+            DEFINE_PROP_STRING("rng", VirtIOPCIProxy, rng.name),
+            /* Set a default rate limit of 2^47 bytes per minute or roughly
+             * 2TB/s.  If you have an entropy source capable of generating more
+             * entropy than this and you can pass it through via virtio-rng,
+             * then hats off to you.  Until then, this is unlimited for all
+             * practical purposes.
+             */
+            DEFINE_PROP_UINT64("max-bytes", VirtIOPCIProxy, rng.max_bytes,
+                               INT64_MAX),
+            DEFINE_PROP_UINT32("period", VirtIOPCIProxy, rng.period_ms,
+                               1 << 16),
+            DEFINE_PROP_END_OF_LIST(),
+        },
+        .qdev.reset = virtio_pci_reset,
     }, {
         /* end of list */
     }

@@ -39,6 +39,7 @@ typedef enum MonitorEvent {
     QEVENT_SPICE_CONNECTED,
     QEVENT_SPICE_INITIALIZED,
     QEVENT_SPICE_DISCONNECTED,
+    QEVENT_DEVICE_DELETED,
     QEVENT_DEVICE_TRAY_MOVED,
     QEVENT_BLOCK_JOB_COMPLETED,
     QEVENT_BLOCK_JOB_CANCELLED,
@@ -50,6 +51,7 @@ typedef enum MonitorEvent {
     QEVENT_BALLOON_CHANGE,
     QEVENT_SPICE_MIGRATE_COMPLETED,
     QEVENT_GUEST_PANICKED,
+    QEVENT_BLOCK_IMAGE_CORRUPTED,
 
     /* Add to 'monitor_event_names' array in monitor.c when
      * defining new events here */
@@ -76,6 +78,7 @@ void monitor_printf(Monitor *mon, const char *fmt, ...)
     __attribute__ ((__format__ (__printf__, 2, 3)));
 void monitor_print_filename(Monitor *mon, const char *filename);
 void monitor_flush(Monitor *mon);
+int monitor_set_cpu(int cpu_index);
 
 typedef void (MonitorCompletion)(void *opaque, QObject *ret_data);
 

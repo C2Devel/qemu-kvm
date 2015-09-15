@@ -46,6 +46,8 @@ static const char *auth = "spice";
 static char *auth_passwd;
 static time_t auth_expires = TIME_MAX;
 static int spice_migration_completed;
+static int spice_display_is_running;
+static int spice_have_target_host;
 int using_spice = 0;
 
 static pthread_t me;
@@ -521,7 +523,7 @@ void do_info_spice(Monitor *mon, QObject **ret_data)
     qdict_put(server, "enabled", qbool_from_int(true));
     qdict_put(server, "migrated", qbool_from_int(spice_migration_completed));
     qdict_put(server, "auth", qstring_from_str(auth));
-    qdict_put(server, "host", qstring_from_str(addr ? addr : "0.0.0.0"));
+    qdict_put(server, "host", qstring_from_str(addr ? addr : "*"));
     if (port) {
         qdict_put(server, "port", qint_from_int(port));
     }
@@ -538,6 +540,10 @@ void do_info_spice(Monitor *mon, QObject **ret_data)
 static void migration_state_notifier(Notifier *notifier, void *data)
 {
     int state = get_migration_state();
+
+    if (!spice_have_target_host) {
+        return;
+    }
     if (state == MIG_STATE_ACTIVE) {
 #ifdef SPICE_INTERFACE_MIGRATION
         spice_server_migrate_start(spice_server);
@@ -547,10 +553,13 @@ static void migration_state_notifier(Notifier *notifier, void *data)
         spice_server_migrate_switch(spice_server);
         monitor_protocol_event(QEVENT_SPICE_MIGRATE_COMPLETED, NULL);
         spice_migration_completed = true;
+        spice_have_target_host = false;
 #else
         spice_server_migrate_end(spice_server, true);
+        spice_have_target_host = false;
     } else if (state == MIG_STATE_CANCELLED || state == MIG_STATE_ERROR) {
         spice_server_migrate_end(spice_server, false);
+        spice_have_target_host = false;
 #endif
     }
 }
@@ -570,6 +579,7 @@ int qemu_spice_migrate_info(const char *hostname, int port, int tls_port,
                                     port, tls_port, subject);
     cb(opaque, NULL);
 #endif
+    spice_have_target_host = true;
     return ret;
 }
 
@@ -611,9 +621,7 @@ static void vm_change_state_handler(void *opaque, int running,
 #if SPICE_SERVER_VERSION >= 0x000b02 /* 0.11.2 */
     if (running) {
         qemu_spice_display_start();
-        spice_server_vm_start(spice_server);
     } else {
-        spice_server_vm_stop(spice_server);
         qemu_spice_display_stop();
     }
 #endif
@@ -718,6 +726,18 @@ void qemu_spice_init(void)
     }
     if (password) {
         spice_server_set_ticket(spice_server, password, 0, 0, 0);
+    }
+    if (qemu_opt_get_bool(opts, "sasl", 0)) {
+#if SPICE_SERVER_VERSION >= 0x000900 /* 0.9.0 */
+        if (spice_server_set_sasl_appname(spice_server, "qemu-kvm") == -1 ||
+            spice_server_set_sasl(spice_server, 1) == -1) {
+            fprintf(stderr, "spice: failed to enable sasl\n");
+            exit(1);
+        }
+#else
+        fprintf(stderr, "spice: sasl is not available (spice >= 0.9 required)\n");
+        exit(1);
+#endif
     }
     if (qemu_opt_get_bool(opts, "disable-ticketing", 0)) {
         auth = "none";
@@ -858,6 +878,23 @@ int qemu_spice_set_pw_expire(time_t expires)
 {
     auth_expires = expires;
     return qemu_spice_set_ticket(false, false);
+}
+
+void qemu_spice_display_start(void)
+{
+    spice_display_is_running = true;
+    spice_server_vm_start(spice_server);
+}
+
+void qemu_spice_display_stop(void)
+{
+    spice_server_vm_stop(spice_server);
+    spice_display_is_running = false;
+}
+
+int qemu_spice_display_is_running(SimpleSpiceDisplay *ssd)
+{
+    return spice_display_is_running;
 }
 
 static void spice_initialize(void)

@@ -77,30 +77,6 @@ static int coroutine_fn mirror_populate(BlockDriverState *source,
     return bdrv_co_writev(target, sector_num, nb_sectors, &qiov);
 }
 
-static int is_any_allocated(BlockDriverState *bs, int64_t sector_num,
-                            int nb_sectors, int *pnum)
-{
-    BlockDriverState *intermediate;
-    int ret, n, unalloc = nb_sectors;
-
-    intermediate = bs;
-    while (intermediate) {
-        ret = bdrv_is_allocated(intermediate, sector_num, nb_sectors, &n);
-        if (ret < 0) {
-            return ret;
-        } else if (ret) {
-            break;
-        } else {
-            unalloc = MIN(unalloc, n);
-        }
-
-        intermediate = intermediate->backing_hd;
-    }
-
-    *pnum = ret ? n : unalloc;
-    return ret;
-}
-
 static void coroutine_fn mirror_run(void *opaque)
 {
     MirrorBlockJob *s = opaque;
@@ -130,7 +106,8 @@ static void coroutine_fn mirror_run(void *opaque)
     for (sector_num = 0; sector_num < end; ) {
         int64_t next = (sector_num | (sectors_per_chunk - 1)) + 1;
         if (s->full) {
-            ret = is_any_allocated(bs, sector_num, next - sector_num, &n);
+            ret = bdrv_is_allocated_above(bs, NULL, sector_num,
+                                          next - sector_num, &n);
         } else {
             ret = bdrv_is_allocated(bs, sector_num, next - sector_num, &n);
         }

@@ -24,7 +24,7 @@ block-obj-$(CONFIG_POSIX) += compatfd.o
 block-nested-y += raw.o cow.o qcow.o vdi.o vmdk.o cloop.o dmg.o bochs.o vpc.o vvfat.o
 block-nested-y += qcow2.o qcow2-refcount.o qcow2-cluster.o qcow2-snapshot.o qcow2-cache.o
 block-nested-y += qed.o qed-gencb.o qed-l2-cache.o qed-table.o qed-cluster.o
-block-nested-y += vhdx.o
+block-nested-$(CONFIG_VHDX) += vhdx.o vhdx-endian.o vhdx-log.o
 block-nested-y += qed-check.o
 block-nested-y += parallels.o nbd.o blkdebug.o
 block-nested-y += stream.o mirror.o commit.o
@@ -70,6 +70,7 @@ common-obj-y = $(shared-obj-y)
 common-obj-y += qemu-thread.o
 common-obj-y += blockdev.o
 common-obj-y += $(net-obj-y)
+common-obj-y += qom/
 common-obj-y += readline.o console.o cursor.o
 
 common-obj-y += tcg-runtime.o host-utils.o
@@ -91,7 +92,7 @@ common-obj-y += i2c.o smbus.o smbus_eeprom.o
 common-obj-y += eeprom93xx.o
 common-obj-y += cdrom.o
 common-obj-y += usb.o usb-hub.o usb-$(HOST_USB).o usb-hid.o
-common-obj-y += usb-bus.o usb-desc.o
+common-obj-y += usb-bus.o usb-desc.o usb-desc-msos.o
 common-obj-y += usb-msd.o scsi-bus.o scsi-disk.o scsi-generic.o
 common-obj-$(CONFIG_SSI) += ssi.o
 common-obj-$(CONFIG_SSI_SD) += ssi-sd.o
@@ -148,6 +149,8 @@ common-obj-$(CONFIG_SLIRP) += $(addprefix slirp/, $(slirp-obj-y))
 common-obj-$(CONFIG_XEN) += xen_backend.o xen_devconfig.o
 common-obj-$(CONFIG_XEN) += xen_console.o xenfb.o xen_disk.o xen_nic.o
 
+common-obj-y += backends/
+
 ######################################################################
 # libuser
 
@@ -162,7 +165,7 @@ user-obj-y += cutils.o cache-utils.o
 hw-obj-y =
 hw-obj-y += loader.o
 hw-obj-y += iov.o
-hw-obj-y += virtio.o virtio-console.o
+hw-obj-y += virtio.o virtio-console.o virtio-rng.o
 hw-obj-y += fw_cfg.o
 hw-obj-y += watchdog.o
 hw-obj-y += usb-ehci.o
@@ -197,7 +200,7 @@ hw-obj-$(CONFIG_QDEV_ADDR) += qdev-addr.o
 # qapi
 
 qapi-nested-y = qapi-visit-core.o qmp-input-visitor.o qmp-output-visitor.o qapi-dealloc-visitor.o
-qapi-nested-y += qmp-registry.o qmp-dispatch.o
+qapi-nested-y += qmp-registry.o qmp-dispatch.o string-input-visitor.o string-output-visitor.o
 
 ifeq ($(CONFIG_LIVE_SNAPSHOTS),y)
 qapi-generated-y += rhev-qapi-visit.o rhev-qapi-types.o rhev-qmp-marshal.o
@@ -228,3 +231,7 @@ vl.o: QEMU_CFLAGS+=$(SDL_CFLAGS)
 
 all: $(HWLIB)
 QEMU_CFLAGS+=$(GLIB_CFLAGS)
+
+nested-vars += \
+        common-obj-y
+dummy := $(call unnest-vars)

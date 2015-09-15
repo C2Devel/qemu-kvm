@@ -1207,6 +1207,22 @@ static int scsi_disk_emulate_start_stop(SCSIDiskReq *r)
     return 0;
 }
 
+static inline bool check_lba_range(SCSIDiskState *s,
+                                   uint64_t sector_num, uint32_t nb_sectors)
+{
+    /*
+     * The first line tests that no overflow happens when computing the last
+     * sector.  The second line tests that the last accessed sector is in
+     * range.
+     *
+     * Careful, the computations should not underflow for nb_sectors == 0,
+     * and a 0-block read to the first LBA beyond the end of device is
+     * valid.
+     */
+    return (sector_num <= sector_num + nb_sectors &&
+            sector_num + nb_sectors <= s->qdev.max_lba + 1);
+}
+
 static int scsi_disk_emulate_command(SCSIDiskReq *r)
 {
     SCSIRequest *req = &r->req;
@@ -1492,7 +1508,10 @@ static int32_t scsi_send_command(SCSIRequest *req, uint8_t *buf)
     case READ_16:
         len = r->req.cmd.xfer / s->qdev.blocksize;
         DPRINTF("Read (sector %" PRId64 ", count %d)\n", r->req.cmd.lba, len);
-        if (r->req.cmd.lba > s->qdev.max_lba) {
+        if (r->req.cmd.buf[1] & 0xe0) {
+            goto illegal_request;
+        }
+        if (!check_lba_range(s, r->req.cmd.lba, len)) {
             goto illegal_lba;
         }
         r->sector = r->req.cmd.lba * (s->qdev.blocksize / 512);
@@ -1517,7 +1536,10 @@ static int32_t scsi_send_command(SCSIRequest *req, uint8_t *buf)
         DPRINTF("Write %s(sector %" PRId64 ", count %d)\n",
                 (command & 0xe) == 0xe ? "And Verify " : "",
                 r->req.cmd.lba, len);
-        if (r->req.cmd.lba > s->qdev.max_lba) {
+        if (r->req.cmd.buf[1] & 0xe0) {
+            goto illegal_request;
+        }
+        if (!check_lba_range(s, r->req.cmd.lba, len)) {
             goto illegal_lba;
         }
         r->sector = r->req.cmd.lba * (s->qdev.blocksize / 512);
@@ -1551,7 +1573,11 @@ static int32_t scsi_send_command(SCSIRequest *req, uint8_t *buf)
         DPRINTF("WRITE SAME(16) (sector %" PRId64 ", count %d)\n",
                 r->req.cmd.lba, len);
 
-        if (r->req.cmd.lba > s->qdev.max_lba) {
+        if (bdrv_is_read_only(s->qdev.conf.bs)) {
+            scsi_check_condition(r, SENSE_CODE(WRITE_PROTECTED));
+            return 0;
+        }
+        if (!check_lba_range(s, r->req.cmd.lba, len)) {
             goto illegal_lba;
         }
 
@@ -1576,6 +1602,7 @@ static int32_t scsi_send_command(SCSIRequest *req, uint8_t *buf)
         scsi_check_condition(r, SENSE_CODE(INVALID_OPCODE));
         return 0;
     fail:
+    illegal_request:
         scsi_check_condition(r, SENSE_CODE(INVALID_FIELD));
         return 0;
     illegal_lba:
@@ -1876,12 +1903,8 @@ static int scsi_block_initfn(SCSIDevice *dev)
     return scsi_initfn(&s->qdev);
 }
 
-static SCSIRequest *scsi_block_new_request(SCSIDevice *d, uint32_t tag,
-                                           uint32_t lun, uint8_t *buf,
-                                           void *hba_private)
+static bool scsi_block_is_passthrough(SCSIDiskState *s, uint8_t *buf)
 {
-    SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, d);
-
     switch (buf[0]) {
     case READ_6:
     case READ_10:
@@ -1917,14 +1940,45 @@ static SCSIRequest *scsi_block_new_request(SCSIDevice *d, uint32_t tag,
          * just make scsi-block operate the same as scsi-generic for them.
          */
         if (s->qdev.type != TYPE_ROM) {
-            return scsi_req_alloc(&scsi_disk_reqops, &s->qdev, tag, lun,
-                                  hba_private);
+            return false;
         }
+        break;
+
+    default:
+        break;
     }
 
-    return scsi_req_alloc(&scsi_generic_req_ops, &s->qdev, tag, lun,
-                          hba_private);
+    return true;
 }
+
+
+static SCSIRequest *scsi_block_new_request(SCSIDevice *d, uint32_t tag,
+                                           uint32_t lun, uint8_t *buf,
+                                           void *hba_private)
+{
+    SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, d);
+
+    if (scsi_block_is_passthrough(s, buf)) {
+        return scsi_req_alloc(&scsi_generic_req_ops, &s->qdev, tag, lun,
+                              hba_private);
+    } else {
+        return scsi_req_alloc(&scsi_disk_reqops, &s->qdev, tag, lun,
+                              hba_private);
+    }
+}
+
+static int scsi_block_parse_cdb(SCSIDevice *d, SCSICommand *cmd,
+                                  uint8_t *buf, void *hba_private)
+{
+    SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, d);
+
+    if (scsi_block_is_passthrough(s, buf)) {
+        return scsi_bus_parse_cdb(&s->qdev, cmd, buf, hba_private);
+    } else {
+        return scsi_req_parse_cdb(&s->qdev, cmd, buf);
+    }
+}
+
 #endif
 
 #define DEFINE_SCSI_DISK_PROPERTIES()                           \
@@ -1993,6 +2047,7 @@ static SCSIDeviceInfo scsi_disk_info[] = {
         .init         = scsi_block_initfn,
         .destroy      = scsi_destroy,
         .alloc_req    = scsi_block_new_request,
+        .parse_cdb    = scsi_block_parse_cdb,
         .qdev.props   = (Property[]) {
             DEFINE_PROP_DRIVE("drive", SCSIDiskState, qdev.conf.bs),
             DEFINE_PROP_INT32("bootindex", SCSIDiskState, qdev.conf.bootindex, -1),

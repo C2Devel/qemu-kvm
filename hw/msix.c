@@ -14,6 +14,7 @@
 #include "hw.h"
 #include "msix.h"
 #include "pci.h"
+#include "range.h"
 #define QEMU_KVM_NO_CPU
 #include "qemu-kvm.h"
 

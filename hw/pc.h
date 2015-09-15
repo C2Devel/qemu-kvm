@@ -186,5 +186,6 @@ void disable_tsc_deadline(void);
 void disable_kvm_sep(void);
 void set_cpu_model_level(const char *name, int level);
 extern bool migrate_steal_time_msr;
+extern bool migrate_pmu;
 
 #endif

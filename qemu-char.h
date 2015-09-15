@@ -260,12 +260,6 @@ CharDriverState *qemu_chr_find(const char *name);
 
 extern int term_escape_char;
 
-/* memory chardev */
-void qemu_chr_init_mem(CharDriverState *chr);
-void qemu_chr_close_mem(CharDriverState *chr);
-QString *qemu_chr_mem_to_qs(CharDriverState *chr);
-size_t qemu_chr_mem_osize(const CharDriverState *chr);
-
 /* async I/O support */
 
 int qemu_set_fd_handler2(int fd,

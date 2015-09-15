@@ -38,6 +38,9 @@ static int lm_capable_kernel;
 static bool has_msr_pv_eoi_en;
 static bool has_msr_kvm_steal_time;
 
+static bool has_msr_architectural_pmu;
+static uint32_t num_architectural_pmu_counters;
+
 int kvm_set_tss_addr(kvm_context_t kvm, unsigned long addr)
 {
 #ifdef KVM_CAP_SET_TSS_ADDR
@@ -842,7 +845,8 @@ static void set_msr_entry(struct kvm_msr_entry *entry, uint32_t index,
 /* returns 0 on success, non-0 on failure */
 static int get_msr_entry(struct kvm_msr_entry *entry, CPUState *env)
 {
-        switch (entry->index) {
+        uint32_t index = entry->index;
+        switch (index) {
         case MSR_IA32_SYSENTER_CS:
             env->sysenter_cs  = entry->data;
             break;
@@ -886,6 +890,27 @@ static int get_msr_entry(struct kvm_msr_entry *entry, CPUState *env)
             break;
         case MSR_KVM_STEAL_TIME:
             env->steal_time_msr = entry->data;
+            break;
+        case MSR_CORE_PERF_FIXED_CTR_CTRL:
+            env->msr_fixed_ctr_ctrl = entry->data;
+            break;
+        case MSR_CORE_PERF_GLOBAL_CTRL:
+            env->msr_global_ctrl = entry->data;
+            break;
+        case MSR_CORE_PERF_GLOBAL_STATUS:
+            env->msr_global_status = entry->data;
+            break;
+        case MSR_CORE_PERF_GLOBAL_OVF_CTRL:
+            env->msr_global_ovf_ctrl = entry->data;
+            break;
+        case MSR_CORE_PERF_FIXED_CTR0 ... MSR_CORE_PERF_FIXED_CTR0 + MAX_FIXED_COUNTERS - 1:
+            env->msr_fixed_counters[index - MSR_CORE_PERF_FIXED_CTR0] = entry->data;
+            break;
+        case MSR_P6_PERFCTR0 ... MSR_P6_PERFCTR0 + MAX_GP_COUNTERS - 1:
+            env->msr_gp_counters[index - MSR_P6_PERFCTR0] = entry->data;
+            break;
+        case MSR_P6_EVNTSEL0 ... MSR_P6_EVNTSEL0 + MAX_GP_COUNTERS - 1:
+            env->msr_gp_evtsel[index - MSR_P6_EVNTSEL0] = entry->data;
             break;
         case HV_X64_MSR_GUEST_OS_ID:
             env->hyperv_guest_os_id = entry->data;
@@ -1116,6 +1141,33 @@ void kvm_arch_load_regs(CPUState *env)
     set_msr_entry(&msrs[n++], MSR_KVM_WALL_CLOCK,  env->wall_clock_msr);
     if (has_msr_kvm_steal_time)
         set_msr_entry(&msrs[n++], MSR_KVM_STEAL_TIME,  env->steal_time_msr);
+    if (has_msr_architectural_pmu) {
+        /* Stop the counter.  */
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_FIXED_CTR_CTRL, 0);
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_GLOBAL_CTRL, 0);
+
+        /* Set the counter values.  */
+        for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+            set_msr_entry(&msrs[n++], MSR_CORE_PERF_FIXED_CTR0 + i,
+                          env->msr_fixed_counters[i]);
+        }
+        for (i = 0; i < num_architectural_pmu_counters; i++) {
+            set_msr_entry(&msrs[n++], MSR_P6_PERFCTR0 + i,
+                          env->msr_gp_counters[i]);
+            set_msr_entry(&msrs[n++], MSR_P6_EVNTSEL0 + i,
+                          env->msr_gp_evtsel[i]);
+        }
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_GLOBAL_STATUS,
+                      env->msr_global_status);
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_GLOBAL_OVF_CTRL,
+                      env->msr_global_ovf_ctrl);
+
+        /* Now start the PMU.  */
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_FIXED_CTR_CTRL,
+                      env->msr_fixed_ctr_ctrl);
+        set_msr_entry(&msrs[n++], MSR_CORE_PERF_GLOBAL_CTRL,
+                      env->msr_global_ctrl);
+    }
     if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
         set_msr_entry(&msrs[n++], HV_X64_MSR_GUEST_OS_ID, env->hyperv_guest_os_id);
         set_msr_entry(&msrs[n++], HV_X64_MSR_HYPERCALL, env->hyperv_hypercall);
@@ -1362,6 +1414,20 @@ void kvm_arch_save_regs(CPUState *env)
     msrs[n++].index = MSR_KVM_WALL_CLOCK;
     if (has_msr_kvm_steal_time)
         msrs[n++].index = MSR_KVM_STEAL_TIME;
+    if (has_msr_architectural_pmu) {
+        msrs[n++].index = MSR_CORE_PERF_FIXED_CTR_CTRL;
+        msrs[n++].index = MSR_CORE_PERF_GLOBAL_CTRL;
+        msrs[n++].index = MSR_CORE_PERF_GLOBAL_STATUS;
+        msrs[n++].index = MSR_CORE_PERF_GLOBAL_OVF_CTRL;
+        for (i = 0; i < MAX_FIXED_COUNTERS; i++) {
+            msrs[n++].index = MSR_CORE_PERF_FIXED_CTR0 + i;
+        }
+        for (i = 0; i < num_architectural_pmu_counters; i++) {
+            msrs[n++].index = MSR_P6_PERFCTR0 + i;
+            msrs[n++].index = MSR_P6_EVNTSEL0 + i;
+        }
+    }
+
     if (kvm_check_extension(kvm_state, KVM_CAP_HYPERV)) {
         msrs[n++].index = HV_X64_MSR_GUEST_OS_ID;
         msrs[n++].index = HV_X64_MSR_HYPERCALL;
@@ -1435,9 +1501,43 @@ unsigned long kvm_arch_vcpu_id(CPUArchState *env)
     return env->cpuid_apic_id;
 }
 
+/*
+ * Find matching entry for function/index on kvm_cpuid2 struct
+ */
+static struct kvm_cpuid_entry2 *cpuid_find_entry(struct kvm_cpuid_entry2 *entries,
+                                                 int nent,
+                                                 uint32_t function,
+                                                 uint32_t index)
+{
+    int i;
+    for (i = 0; i < nent; ++i) {
+        if (entries[i].function == function &&
+            entries[i].index == index) {
+            return &entries[i];
+        }
+    }
+    /* not found: */
+    return NULL;
+}
+
+static Error *invtsc_mig_blocker;
+
+static const VMStateDescription vmstate_cpu_invtsc = {
+    .name = "cpu_invtsc",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .minimum_version_id_old = 1,
+    .unmigratable = 1,
+    .fields      = (VMStateField []) {
+        VMSTATE_UINT32(halted, CPUState), /* dummy */
+        VMSTATE_END_OF_LIST()
+    }
+};
+
 int kvm_arch_init_vcpu(CPUState *cenv)
 {
     struct kvm_cpuid_entry2 cpuid_ent[100];
+    struct kvm_cpuid_entry2 *c;
 #ifdef KVM_CPUID_SIGNATURE
     struct kvm_cpuid_entry2 *pv_ent;
     uint32_t signature[3];
@@ -1527,12 +1627,43 @@ int kvm_arch_init_vcpu(CPUState *cenv)
             do_cpuid_ent(&cpuid_ent[cpuid_nent++], i, 0, &copy);
     }
 
+    if (limit >= 0x0a) {
+        uint32_t ver;
+
+        copy.regs[R_EAX] = 0x0a;
+        qemu_kvm_cpuid_on_env(&copy);
+        ver = copy.regs[R_EAX];
+        if ((ver & 0xff) > 0) {
+            has_msr_architectural_pmu = true;
+            num_architectural_pmu_counters = (ver & 0xff00) >> 8;
+
+            /* Shouldn't be more than 32, since that's the number of bits
+             * available in EBX to tell us _which_ counters are available.
+             * Play it safe.
+             */
+            if (num_architectural_pmu_counters > MAX_GP_COUNTERS) {
+                num_architectural_pmu_counters = MAX_GP_COUNTERS;
+            }
+        }
+    }
+
     copy.regs[R_EAX] = 0x80000000;
     qemu_kvm_cpuid_on_env(&copy);
     limit = copy.regs[R_EAX];
 
     for (i = 0x80000000; i <= limit; ++i)
 	do_cpuid_ent(&cpuid_ent[cpuid_nent++], i, 0, &copy);
+
+    c = cpuid_find_entry(cpuid_ent, cpuid_nent, 0x80000007, 0);
+    if (c && (c->edx & 1<<8) && invtsc_mig_blocker == NULL) {
+        /* migration */
+        error_setg(&invtsc_mig_blocker,
+                   "State blocked by non-migratable CPU device"
+                   " (invtsc flag)");
+        migrate_add_blocker(invtsc_mig_blocker);
+        /* savevm */
+        vmstate_register(NULL, 1, &vmstate_cpu_invtsc, cenv);
+    }
 
     kvm_setup_cpuid2(cenv, cpuid_nent, cpuid_ent);
 

@@ -20,6 +20,8 @@ static struct BusInfo usb_bus_info = {
     .props      = (Property[]) {
         DEFINE_PROP_STRING("port", USBDevice, port_path),
         DEFINE_PROP_UINT32("create_unique_serial", USBDevice, create_unique_serial, 1),
+        DEFINE_PROP_BIT("msos-desc", USBDevice, flags,
+                        USB_DEV_FLAG_MSOS_DESC_ENABLE, true),
         DEFINE_PROP_END_OF_LIST()
     },
 };

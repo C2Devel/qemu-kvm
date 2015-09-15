@@ -111,6 +111,11 @@ static int qcow2_read_extensions(BlockDriverState *bs, uint64_t start_offset,
 #ifdef DEBUG_EXT
         printf("ext.magic = 0x%x\n", ext.magic);
 #endif
+        if (ext.len > end_offset - offset) {
+            error_report("Header extension too large");
+            return -EINVAL;
+        }
+
         switch (ext.magic) {
         case QCOW2_EXT_MAGIC_END:
             return 0;
@@ -399,6 +404,8 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     /* Initialise locks */
     qemu_co_mutex_init(&s->lock);
 
+    s->overlap_check = QCOW2_OL_CACHED;
+
 #ifdef DEBUG_ALLOC
     qcow2_check_refcounts(bs);
 #endif
@@ -409,6 +416,8 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     qcow2_free_snapshots(bs);
     qcow2_refcount_close(bs);
     g_free(s->l1_table);
+    /* else pre-write overlap checks in cache_destroy may crash */
+    s->l1_table = NULL;
     if (s->l2_table_cache) {
         qcow2_cache_destroy(bs, s->l2_table_cache);
     }
@@ -473,6 +482,7 @@ static int64_t coroutine_fn qcow2_co_get_block_status(BlockDriverState *bs,
     BDRVQcowState *s = bs->opaque;
     uint64_t cluster_offset;
     int index_in_cluster, ret;
+    int64_t status = 0;
 
     *pnum = nb_sectors;
     qemu_co_mutex_lock(&s->lock);
@@ -481,15 +491,17 @@ static int64_t coroutine_fn qcow2_co_get_block_status(BlockDriverState *bs,
     if (ret < 0) {
         return ret;
     }
-    if (!cluster_offset) {
-        return 0;
+
+    if (cluster_offset != 0 && ret != QCOW2_CLUSTER_COMPRESSED &&
+        !s->crypt_method) {
+        index_in_cluster = sector_num & (s->cluster_sectors - 1);
+        cluster_offset |= (index_in_cluster << BDRV_SECTOR_BITS);
+        status |= BDRV_BLOCK_OFFSET_VALID | cluster_offset;
     }
-    if ((cluster_offset & QCOW_OFLAG_COMPRESSED) || s->crypt_method) {
-        return BDRV_BLOCK_DATA;
+    if (ret != QCOW2_CLUSTER_UNALLOCATED) {
+        status |= BDRV_BLOCK_DATA;
     }
-    index_in_cluster = sector_num & (s->cluster_sectors - 1);
-    cluster_offset |= (index_in_cluster << BDRV_SECTOR_BITS);
-    return BDRV_BLOCK_DATA | BDRV_BLOCK_OFFSET_VALID | cluster_offset;
+    return status;
 }
 
 /* handle reading after the end of the backing file */
@@ -546,7 +558,8 @@ static int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
         qemu_iovec_copy(&hd_qiov, qiov, bytes_done,
             cur_nr_sectors * 512);
 
-        if (!cluster_offset) {
+        switch (ret) {
+        case QCOW2_CLUSTER_UNALLOCATED:
 
             if (bs->backing_hd) {
                 /* read from the base image */
@@ -566,7 +579,9 @@ static int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
                 /* Note: in this case, no need to wait */
                 qemu_iovec_memset(&hd_qiov, 0, 512 * cur_nr_sectors);
             }
-        } else if (cluster_offset & QCOW_OFLAG_COMPRESSED) {
+            break;
+
+        case QCOW2_CLUSTER_COMPRESSED:
             /* add AIO support for compressed blocks ? */
             ret = qcow2_decompress_cluster(bs, cluster_offset);
             if (ret < 0) {
@@ -576,7 +591,9 @@ static int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
             qemu_iovec_from_buffer(&hd_qiov,
                 s->cluster_cache + index_in_cluster * 512,
                 512 * cur_nr_sectors);
-        } else {
+            break;
+
+        case QCOW2_CLUSTER_NORMAL:
             if ((cluster_offset & 511) != 0) {
                 ret = -EIO;
                 goto fail;
@@ -617,6 +634,12 @@ static int qcow2_co_readv(BlockDriverState *bs, int64_t sector_num,
                 qemu_iovec_from_buffer(&hd_qiov, cluster_data,
                     512 * cur_nr_sectors);
             }
+            break;
+
+        default:
+            g_assert_not_reached();
+            ret = -EIO;
+            goto fail;
         }
 
         remaining_sectors -= cur_nr_sectors;
@@ -715,6 +738,13 @@ static int qcow2_co_writev(BlockDriverState *bs,
                 cur_nr_sectors * 512);
         }
 
+        ret = qcow2_pre_write_overlap_check(bs, 0,
+                cluster_offset + index_in_cluster * BDRV_SECTOR_SIZE,
+                cur_nr_sectors * BDRV_SECTOR_SIZE);
+        if (ret < 0) {
+            goto fail;
+        }
+
         BLKDBG_EVENT(bs->file, BLKDBG_WRITE_AIO);
         qemu_co_mutex_unlock(&s->lock);
         ret = bdrv_co_writev(bs->file,
@@ -753,6 +783,8 @@ static void qcow2_close(BlockDriverState *bs)
 {
     BDRVQcowState *s = bs->opaque;
     g_free(s->l1_table);
+    /* else pre-write overlap checks in cache_destroy may crash */
+    s->l1_table = NULL;
 
     qcow2_cache_flush(bs, s->l2_table_cache);
     qcow2_cache_flush(bs, s->refcount_block_cache);
@@ -1312,6 +1344,12 @@ static int qcow2_write_compressed(BlockDriverState *bs, int64_t sector_num,
             goto fail;
         }
         cluster_offset &= s->cluster_offset_mask;
+
+        ret = qcow2_pre_write_overlap_check(bs, 0, cluster_offset, out_len);
+        if (ret < 0) {
+            goto fail;
+        }
+
         BLKDBG_EVENT(bs->file, BLKDBG_WRITE_COMPRESSED);
         ret = bdrv_pwrite(bs->file, cluster_offset, out_buf, out_len);
         if (ret < 0) {

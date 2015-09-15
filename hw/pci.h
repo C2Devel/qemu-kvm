@@ -2,6 +2,7 @@
 #define QEMU_PCI_H
 
 #include "qemu-common.h"
+#include "hw/qdev-core.h"
 
 #include "qdev.h"
 
@@ -77,6 +78,7 @@ extern target_phys_addr_t pci_mem_base;
 #define PCI_DEVICE_ID_VIRTIO_BALLOON     0x1002
 #define PCI_DEVICE_ID_VIRTIO_CONSOLE     0x1003
 #define PCI_DEVICE_ID_VIRTIO_SCSI        0x1004
+#define PCI_DEVICE_ID_VIRTIO_RNG         0x1005
 
 #define PCI_VENDOR_ID_REDHAT             0x1b36
 #define PCI_DEVICE_ID_REDHAT_SERIAL      0x0002
@@ -267,7 +269,6 @@ int pci_read_devaddr(Monitor *mon, const char *addr, int *domp, int *busp,
 int pci_parse_host_devaddr(const char *addr, int *segp, int *busp,
                            int *slotp, int *funcp);
 
-void pci_info(Monitor *mon);
 PCIBus *pci_bridge_init(PCIBus *bus, int devfn, bool multifunction,
                         uint16_t vid, uint16_t did,
                         pci_map_irq_fn map_irq, const char *name);
@@ -379,35 +380,6 @@ static inline int pci_is_express(PCIDevice *d)
 static inline uint32_t pci_config_size(PCIDevice *d)
 {
     return pci_is_express(d) ? PCIE_CONFIG_SPACE_SIZE : PCI_CONFIG_SPACE_SIZE;
-}
-
-/* These are not pci specific. Should move into a separate header.
- * Only pci.c uses them, so keep them here for now.
- */
-
-/* Get last byte of a range from offset + length.
- * Undefined for ranges that wrap around 0. */
-static inline uint64_t range_get_last(uint64_t offset, uint64_t len)
-{
-    return offset + len - 1;
-}
-
-/* Check whether a given range covers a given byte. */
-static inline int range_covers_byte(uint64_t offset, uint64_t len,
-                                    uint64_t byte)
-{
-    return offset <= byte && byte <= range_get_last(offset, len);
-}
-
-/* Check whether 2 given ranges overlap.
- * Undefined if ranges that wrap around 0. */
-static inline int ranges_overlap(uint64_t first1, uint64_t len1,
-                                 uint64_t first2, uint64_t len2)
-{
-    uint64_t last1 = range_get_last(first1, len1);
-    uint64_t last2 = range_get_last(first2, len2);
-
-    return !(last2 < first1 || last1 < first2);
 }
 
 #endif

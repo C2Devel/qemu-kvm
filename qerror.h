@@ -52,6 +52,9 @@ QError *qobject_to_qerror(const QObject *obj);
  * Please keep the definitions in alphabetical order.
  * Use "grep '^#define QERR_' qerror.h | sort -c" to check.
  */
+#define QERR_AMBIGUOUS_PATH \
+    "{ 'class': 'AmbiguousPath', 'data': { 'path': %s } }"
+
 #define QERR_BAD_BUS_FOR_DEVICE \
     "{ 'class': 'BadBusForDevice', 'data': { 'device': %s, 'bad_bus_type': %s } }"
 
@@ -175,6 +178,9 @@ QError *qobject_to_qerror(const QObject *obj);
 
 #define QERR_OPEN_FILE_FAILED \
     "{ 'class': 'OpenFileFailed', 'data': { 'filename': %s, '__com.redhat_error_message': %s } }"
+
+#define QERR_PERMISSION_DENIED \
+    "{ 'class': 'PermissionDenied', 'data': {} }"
 
 #define QERR_PROPERTY_NOT_FOUND \
     "{ 'class': 'PropertyNotFound', 'data': { 'device': %s, 'property': %s } }"

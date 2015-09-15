@@ -7,12 +7,12 @@ HXCOMM HXCOMM can be used for comments, discarded from both texi and C
 
 STEXI
 @table @option
-STEXI
+ETEXI
 
 DEF("check", img_check,
-    "check [-f fmt] [--output=ofmt] [-r [leaks | all]] filename")
+    "check [-f fmt] [--output=ofmt] [-r [leaks | all]] [-T src_cache] filename")
 STEXI
-@item check [-f @var{fmt}] [--output=@var{ofmt}] [-r [leaks | all]] @var{filename}
+@item check [-f @var{fmt}] [--output=@var{ofmt}] [-r [leaks | all]] [-T @var{src_cache}] @var{filename}
 ETEXI
 
 DEF("create", img_create,
@@ -27,10 +27,16 @@ STEXI
 @item commit [-f @var{fmt}] [-t @var{cache}] @var{filename}
 ETEXI
 
-DEF("convert", img_convert,
-    "convert [-c] [-p] [-f fmt] [-t cache] [-O output_fmt] [-o options] [-S sparse_size] filename [filename2 [...]] output_filename")
+DEF("compare", img_compare,
+    "compare [-f fmt] [-F fmt] [-T src_cache] [-p] [-s] filename1 filename2")
 STEXI
-@item convert [-c] [-p] [-f @var{fmt}] [-t @var{cache}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
+@item compare [-f @var{fmt}] [-F @var{fmt}] [-T @var{src_cache}] [-p] [-s] @var{filename1} @var{filename2}
+ETEXI
+
+DEF("convert", img_convert,
+    "convert [-c] [-p] [-f fmt] [-t cache] [-T src_cache] [-O output_fmt] [-o options] [-S sparse_size] filename [filename2 [...]] output_filename")
+STEXI
+@item convert [-c] [-p] [-f @var{fmt}] [-t @var{cache}] [-T @var{src_cache}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
 ETEXI
 
 DEF("info", img_info,
@@ -52,9 +58,9 @@ STEXI
 ETEXI
 
 DEF("rebase", img_rebase,
-    "rebase [-f fmt] [-t cache] [-p] [-u] -b backing_file [-F backing_fmt] filename")
+    "rebase [-f fmt] [-t cache] [-T src_cache] [-p] [-u] -b backing_file [-F backing_fmt] filename")
 STEXI
-@item rebase [-f @var{fmt}] [-t @var{cache}] [-p] [-u] -b @var{backing_file} [-F @var{backing_fmt}] @var{filename}
+@item rebase [-f @var{fmt}] [-t @var{cache}] [-T @var{src_cache}] [-p] [-u] -b @var{backing_file} [-F @var{backing_fmt}] @var{filename}
 ETEXI
 
 DEF("resize", img_resize,

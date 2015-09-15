@@ -153,7 +153,11 @@ void virtqueue_fill(VirtQueue *vq, const VirtQueueElement *elem,
 void virtqueue_map_sg(struct iovec *sg, target_phys_addr_t *addr,
     size_t num_sg, int is_write);
 int virtqueue_pop(VirtQueue *vq, VirtQueueElement *elem);
-int virtqueue_avail_bytes(VirtQueue *vq, int in_bytes, int out_bytes);
+int virtqueue_avail_bytes(VirtQueue *vq, unsigned int in_bytes,
+                          unsigned int out_bytes);
+void virtqueue_get_avail_bytes(VirtQueue *vq, unsigned int *in_bytes,
+                               unsigned int *out_bytes,
+                               unsigned max_in_bytes, unsigned max_out_bytes);
 
 void virtio_notify(VirtIODevice *vdev, VirtQueue *vq);
 
@@ -206,12 +210,15 @@ VirtIODevice *virtio_serial_init(DeviceState *dev, virtio_serial_conf *serial);
 VirtIODevice *virtio_balloon_init(DeviceState *dev);
 typedef struct VirtIOSCSIConf VirtIOSCSIConf;
 VirtIODevice *virtio_scsi_init(DeviceState *dev, VirtIOSCSIConf *conf);
+typedef struct VirtIORNGConf VirtIORNGConf;
+VirtIODevice *virtio_rng_init(DeviceState *dev, VirtIORNGConf *conf);
 
 void virtio_net_exit(VirtIODevice *vdev);
 void virtio_blk_exit(VirtIODevice *vdev);
 void virtio_serial_exit(VirtIODevice *vdev);
 void virtio_balloon_exit(VirtIODevice *vdev);
 void virtio_scsi_exit(VirtIODevice *vdev);
+void virtio_rng_exit(VirtIODevice *vdev);
 
 #define DEFINE_VIRTIO_COMMON_FEATURES(_state, _field) \
 	DEFINE_PROP_BIT("indirect_desc", _state, _field, \

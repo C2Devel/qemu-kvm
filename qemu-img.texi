@@ -39,7 +39,9 @@ indicates that target image must be compressed (qcow format only)
 @item -h
 with or without a command shows help and lists the supported formats
 @item -p
-display progress bar (convert and rebase commands only)
+display progress bar (compare, convert and rebase commands only).
+If the @var{-p} option is not used for a command that supports it, the
+progress is reported when the process receives a @code{SIGUSR1} signal.
 @item -S @var{size}
 indicates the consecutive number of bytes that must contain only zeros
 for qemu-img to create a sparse image during conversion. This value is rounded
@@ -49,6 +51,9 @@ down to the nearest 512 bytes. You may use the common size suffixes like
 specifies the cache mode that should be used with the (destination) file. See
 the documentation of the emulator's @code{-drive cache=...} option for allowed
 values.
+@item -T @var{src_cache}
+in contrast specifies the cache mode that should be used with the source
+file(s).
 @end table
 
 Parameters to snapshot subcommand:
@@ -67,10 +72,22 @@ deletes a snapshot
 lists all snapshots in the given image
 @end table
 
+Parameters to compare subcommand:
+
+@table @option
+
+@item -f
+First image format
+@item -F
+Second image format
+@item -s
+Strict mode - fail on on different image size or sector allocation
+@end table
+
 Command description:
 
 @table @option
-@item check [-f @var{fmt}] [--output=@var{ofmt}] [-r [leaks | all]] @var{filename}
+@item check [-f @var{fmt}] [--output=@var{ofmt}] [-r [leaks | all]] [-T @var{src_cache}] @var{filename}
 
 Perform a consistency check on the disk image @var{filename}. The command can
 output in the format @var{ofmt} which is either @code{human} or @code{json}.
@@ -82,6 +99,29 @@ wrong fix or hiding corruption that has already occured.
 
 Only the formats @code{qcow2}, @code{qed} and @code{vdi} support
 consistency checks.
+
+In case the image does not have any inconsistencies, check exits with @code{0}.
+Other exit codes indicate the kind of inconsistency found or if another error
+occurred. The following table summarizes all exit codes of the check subcommand:
+
+@table @option
+
+@item 0
+Check completed, the image is (now) consistent
+@item 1
+Check not completed because of internal errors
+@item 2
+Check completed, image is corrupted
+@item 3
+Check completed, image has leaked clusters, but is not corrupted
+@item 63
+Checks are not supported by the image format
+
+@end table
+
+If @code{-r} is specified, exit codes representing the image state refer to the
+state after (the attempt at) repairing it. That is, a successful @code{-r all}
+will yield the exit code 0, independently of the image state before.
 
 @item create [-f @var{fmt}] [-o @var{options}] @var{filename} [@var{size}]
 
@@ -101,7 +141,48 @@ it doesn't need to be specified separately in this case.
 
 Commit the changes recorded in @var{filename} in its base image.
 
-@item convert [-c] [-p] [-f @var{fmt}] [-t @var{cache}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
+@item compare [-f @var{fmt}] [-F @var{fmt}] [-T @var{src_cache}] [-p] [-s] @var{filename1} @var{filename2}
+
+Check if two images have the same content. You can compare images with
+different format or settings.
+
+The format is probed unless you specify it by @var{-f} (used for
+@var{filename1}) and/or @var{-F} (used for @var{filename2}) option.
+
+By default, images with different size are considered identical if the larger
+image contains only unallocated and/or zeroed sectors in the area after the end
+of the other image. In addition, if any sector is not allocated in one image
+and contains only zero bytes in the second one, it is evaluated as equal. You
+can use Strict mode by specifying the @var{-s} option. When compare runs in
+Strict mode, it fails in case image size differs or a sector is allocated in
+one image and is not allocated in the second one.
+
+By default, compare prints out a result message. This message displays
+information that both images are same or the position of the first different
+byte. In addition, result message can report different image size in case
+Strict mode is used.
+
+Compare exits with @code{0} in case the images are equal and with @code{1}
+in case the images differ. Other exit codes mean an error occurred during
+execution and standard error output should contain an error message.
+The following table sumarizes all exit codes of the compare subcommand:
+
+@table @option
+
+@item 0
+Images are identical
+@item 1
+Images differ
+@item 2
+Error on opening an image
+@item 3
+Error on checking a sector allocation
+@item 4
+Error on reading data
+
+@end table
+
+@item convert [-c] [-p] [-f @var{fmt}] [-t @var{cache}] [-T @var{src_cache}] [-O @var{output_fmt}] [-o @var{options}] [-S @var{sparse_size}] @var{filename} [@var{filename2} [...]] @var{output_filename}
 
 Convert the disk image @var{filename} to disk image @var{output_filename}
 using format @var{output_fmt}. It can be optionally compressed (@code{-c}
@@ -187,7 +268,7 @@ source code.
 
 List, apply, create or delete snapshots in image @var{filename}.
 
-@item rebase [-f @var{fmt}] [-t @var{cache}] [-p] [-u] -b @var{backing_file} [-F @var{backing_fmt}] @var{filename}
+@item rebase [-f @var{fmt}] [-t @var{cache}] [-T @var{src_cache}] [-p] [-u] -b @var{backing_file} [-F @var{backing_fmt}] @var{filename}
 
 Changes the backing file of an image. Only the formats @code{qcow2} and
 @code{qed} support changing the backing file.
@@ -197,6 +278,9 @@ The backing file is changed to @var{backing_file} and (if the image format of
 @var{backing_fmt}. If @var{backing_file} is specified as ``'' (the empty
 string), then the image is rebased onto no backing file (i.e. it will exist
 independently of any backing file).
+
+@var{cache} specifies the cache mode to be used for @var{filename}, whereas
+@var{src_cache} specifies the cache mode for reading the new backing file.
 
 There are two different modes in which @code{rebase} can operate:
 @table @option
@@ -312,6 +396,9 @@ Create a VMDK version 6 image (instead of version 4)
 
 @item vpc
 VirtualPC compatible image format (VHD).
+
+@item vhdx
+Hyper-V compatible image format (VHDX).
 
 @item cloop
 Linux Compressed Loop image, useful only to reuse directly compressed
