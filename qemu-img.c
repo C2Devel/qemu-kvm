@@ -2269,6 +2269,7 @@ static int get_block_status(BlockDriverState *bs, int64_t sector_num,
 {
     int64_t ret;
     int depth;
+    bool has_offset;
 
     /* As an optimization, we could cache the current range of unallocated
      * clusters in each file of the chain, and avoid querying the same
@@ -2294,17 +2295,19 @@ static int get_block_status(BlockDriverState *bs, int64_t sector_num,
         depth++;
     }
 
-    e->start = sector_num * BDRV_SECTOR_SIZE;
-    e->length = nb_sectors * BDRV_SECTOR_SIZE;
-    e->data = !!(ret & BDRV_BLOCK_DATA);
-    e->zero = !!(ret & BDRV_BLOCK_ZERO);
-    e->offset = ret & BDRV_BLOCK_OFFSET_MASK;
-    e->has_offset = !!(ret & BDRV_BLOCK_OFFSET_VALID);
-    e->depth = depth;
-    if (bs && e->has_offset) {
-        e->has_filename = true;
-        e->filename = bs->filename;
-    }
+    has_offset = !!(ret & BDRV_BLOCK_OFFSET_VALID);
+
+    *e = (MapEntry) {
+        .start = sector_num * BDRV_SECTOR_SIZE,
+        .length = nb_sectors * BDRV_SECTOR_SIZE,
+        .data = !!(ret & BDRV_BLOCK_DATA),
+        .zero = !!(ret & BDRV_BLOCK_ZERO),
+        .offset = ret & BDRV_BLOCK_OFFSET_MASK,
+        .has_offset = has_offset,
+        .depth = depth,
+        .has_filename = bs && has_offset,
+        .filename = bs && has_offset ? bs->filename : NULL,
+    };
     return 0;
 }
 
