@@ -53,7 +53,7 @@ struct qemu_paiocb {
 };
 
 typedef struct PosixAioState {
-    int fd;
+    int rfd, wfd;
     struct qemu_paiocb *first_aio;
 } PosixAioState;
 
@@ -181,7 +181,6 @@ qemu_pwritev(int fd, const struct iovec *iov, int nr_iov, off_t offset)
 
 static ssize_t handle_aiocb_rw_vector(struct qemu_paiocb *aiocb)
 {
-    size_t offset = 0;
     ssize_t len;
 
     do {
@@ -189,12 +188,12 @@ static ssize_t handle_aiocb_rw_vector(struct qemu_paiocb *aiocb)
             len = qemu_pwritev(aiocb->aio_fildes,
                                aiocb->aio_iov,
                                aiocb->aio_niov,
-                               aiocb->aio_offset + offset);
+                               aiocb->aio_offset);
          else
             len = qemu_preadv(aiocb->aio_fildes,
                               aiocb->aio_iov,
                               aiocb->aio_niov,
-                              aiocb->aio_offset + offset);
+                              aiocb->aio_offset);
     } while (len == -1 && errno == EINTR);
 
     if (len == -1)
@@ -309,12 +308,10 @@ static ssize_t handle_aiocb_rw(struct qemu_paiocb *aiocb)
     return nbytes;
 }
 
+static void posix_aio_notify_event(void);
+
 static void *aio_thread(void *unused)
 {
-    pid_t pid;
-
-    pid = getpid();
-
     mutex_lock(&lock);
     pending_threads--;
     mutex_unlock(&lock);
@@ -381,7 +378,7 @@ static void *aio_thread(void *unused)
         idle_threads++;
         mutex_unlock(&lock);
 
-        if (kill(pid, SIGUSR2)) die("kill failed");
+        posix_aio_notify_event();
     }
 
     idle_threads--;
@@ -475,31 +472,21 @@ static int qemu_paio_error(struct qemu_paiocb *aiocb)
 static void posix_aio_read(void *opaque)
 {
     PosixAioState *s = opaque;
-    union {
-        struct qemu_signalfd_siginfo siginfo;
-        char buf[128];
-    } sig;
     struct qemu_paiocb *acb, **pacb;
     int ret;
-    size_t offset;
 
-    /* try to read from signalfd, don't freak out if we can't read anything */
-    offset = 0;
-    while (offset < 128) {
-        ssize_t len;
+    ssize_t len;
 
-        len = read(s->fd, sig.buf + offset, 128 - offset);
+    /* read all bytes from signal pipe */
+    for (;;) {
+        char bytes[16];
+
+        len = read(s->rfd, bytes, sizeof(bytes));
         if (len == -1 && errno == EINTR)
-            continue;
-        if (len == -1 && errno == EAGAIN) {
-            /* there is no natural reason for this to happen,
-             * so we'll spin hard until we get everything just
-             * to be on the safe side. */
-            if (offset > 0)
-                continue;
-        }
-
-        offset += len;
+            continue; /* try again */
+        if (len == sizeof(bytes))
+            continue; /* more to read */
+        break;
     }
 
     for(;;) {
@@ -545,6 +532,17 @@ static int posix_aio_flush(void *opaque)
 }
 
 static PosixAioState *posix_aio_state;
+
+static void posix_aio_notify_event(void)
+{
+    char byte = 0;
+    ssize_t ret;
+
+    qemu_service_io();
+    ret = write(posix_aio_state->wfd, &byte, sizeof(byte));
+    if (ret < 0 && errno != EAGAIN)
+        die("write()");
+}
 
 static AIOCBInfo raw_aiocb_info = {
     .aiocb_size         = sizeof(struct qemu_paiocb),
@@ -599,8 +597,8 @@ BlockDriverAIOCB *paio_ioctl(BlockDriverState *bs, int fd,
 
 int paio_init(void)
 {
-    sigset_t mask;
     PosixAioState *s;
+    int fds[2];
     int ret;
 
     if (posix_aio_state)
@@ -608,22 +606,20 @@ int paio_init(void)
 
     s = qemu_malloc(sizeof(PosixAioState));
 
-    /* Make sure to block AIO signal */
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGUSR2);
-    sigprocmask(SIG_BLOCK, &mask, NULL);
-
     s->first_aio = NULL;
-    s->fd = qemu_signalfd(&mask);
-    if (s->fd == -1) {
-        fprintf(stderr, "failed to create signalfd\n");
-        qemu_free(s);
+    if (qemu_pipe(fds) == -1) {
+        fprintf(stderr, "failed to create pipe\n");
+        g_free(s);
         return -1;
     }
 
-    fcntl(s->fd, F_SETFL, O_NONBLOCK);
+    s->rfd = fds[0];
+    s->wfd = fds[1];
 
-    qemu_aio_set_fd_handler(s->fd, posix_aio_read, NULL, posix_aio_flush, s);
+    fcntl(s->rfd, F_SETFL, O_NONBLOCK);
+    fcntl(s->wfd, F_SETFL, O_NONBLOCK);
+
+    qemu_aio_set_fd_handler(s->rfd, posix_aio_read, NULL, posix_aio_flush, s);
 
     ret = pthread_attr_init(&attr);
     if (ret)

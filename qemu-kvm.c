@@ -1971,7 +1971,6 @@ static void setup_kernel_sigmask(CPUState *env)
     sigset_t set;
 
     sigemptyset(&set);
-    sigaddset(&set, SIGUSR2);
     sigaddset(&set, SIGIO);
     sigaddset(&set, SIGALRM);
     sigprocmask(SIG_BLOCK, &set, NULL);

@@ -41,7 +41,6 @@ int audio_pt_init (struct audio_pt *p, void *(*func) (void *),
     }
 
     sigemptyset(&set);
-    sigaddset(&set, SIGUSR2);
     sigaddset(&set, SIGIO);
     sigaddset(&set, SIGALRM);
 
