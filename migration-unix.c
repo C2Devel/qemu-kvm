@@ -78,7 +78,7 @@ static void unix_wait_for_connect(void *opaque)
 
 MigrationState *unix_start_outgoing_migration(Monitor *mon,
                                               const char *path,
-					      int64_t bandwidth_limit,
+					      size_t bandwidth_limit,
 					      int detach,
 					      int blk,
 					      int inc)

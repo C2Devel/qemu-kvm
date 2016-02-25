@@ -2466,6 +2466,31 @@ Example:
 
 EQMP
 
+#if defined TARGET_I386
+    {
+        .name       = "rtc-reset-reinjection",
+        .args_type  = "",
+        .user_print = monitor_user_noop,
+        .mhandler.cmd_new = qmp_marshal_input_rtc_reset_reinjection,
+        .flags = MONITOR_CMD_QMP_ONLY
+    },
+#endif
+
+SQMP
+rtc-reset-reinjection
+---------------------
+
+Reset the RTC interrupt reinjection backlog.
+
+Arguments: None.
+
+Example:
+
+-> { "execute": "rtc-reset-reinjection" }
+<- { "return": {} }
+
+EQMP
+
 HXCOMM Keep the 'info' command at the end!
 HXCOMM This is required for the QMP documentation layout.
 

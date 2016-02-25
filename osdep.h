@@ -99,6 +99,7 @@
 #define MADV_DONTDUMP 16
 #endif
 
+void *qemu_try_memalign(size_t alignment, size_t size);
 void *qemu_memalign(size_t alignment, size_t size);
 void *qemu_vmalloc(size_t size);
 void qemu_vfree(void *ptr);

@@ -85,6 +85,11 @@ void qemu_mod_timer(QEMUTimer *ts, int64_t expire_time)
 {
 }
 
+int qemu_timer_pending(QEMUTimer *ts)
+{
+    return 0;
+}
+
 int qemu_set_fd_handler2(int fd,
                          IOCanReadHandler *fd_read_poll,
                          IOHandler *fd_read,

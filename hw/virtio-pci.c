@@ -212,6 +212,10 @@ static int virtio_pci_set_host_notifier_internal(VirtIOPCIProxy *proxy,
             event_notifier_cleanup(notifier);
         }
     } else {
+        /* Skip repeat deassigning of notifier */
+        if (event_notifier_get_fd(notifier) == -1) {
+            return 0;
+        }
         r = kvm_set_ioeventfd_pio_word(event_notifier_get_fd(notifier),
                                        proxy->addr + VIRTIO_PCI_QUEUE_NOTIFY,
                                        n, assign);
@@ -984,6 +988,7 @@ static int virtio_rng_exit_pci(PCIDevice *pci_dev)
 
     virtio_pci_stop_ioeventfd(proxy);
     virtio_rng_exit(proxy->vdev);
+    object_unref(OBJECT(proxy->rng.rng));
     virtio_exit_pci(pci_dev);
     return 0;
 }

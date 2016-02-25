@@ -155,6 +155,7 @@ typedef struct {
     /* Buffer for new allocated block. */
     void *block_buffer;
     void *orig_buf;
+    bool is_write;
     int header_modified;
     BlockDriverAIOCB *hd_aiocb;
     struct iovec hd_iov;
@@ -494,20 +495,8 @@ static int64_t coroutine_fn vdi_co_get_block_status(BlockDriverState *bs,
     return BDRV_BLOCK_DATA | BDRV_BLOCK_OFFSET_VALID | offset;
 }
 
-static void vdi_aio_cancel(BlockDriverAIOCB *blockacb)
-{
-    /* TODO: This code is untested. How can I get it executed? */
-    VdiAIOCB *acb = container_of(blockacb, VdiAIOCB, common);
-    logout("\n");
-    if (acb->hd_aiocb) {
-        bdrv_aio_cancel(acb->hd_aiocb);
-    }
-    qemu_aio_release(acb);
-}
-
-static AIOPool vdi_aio_pool = {
+static AIOCBInfo vdi_aiocb_info = {
     .aiocb_size = sizeof(VdiAIOCB),
-    .cancel = vdi_aio_cancel,
 };
 
 static VdiAIOCB *vdi_aio_setup(BlockDriverState *bs, int64_t sector_num,
@@ -519,11 +508,14 @@ static VdiAIOCB *vdi_aio_setup(BlockDriverState *bs, int64_t sector_num,
     logout("%p, %" PRId64 ", %p, %d, %p, %p, %d\n",
            bs, sector_num, qiov, nb_sectors, cb, opaque, is_write);
 
-    acb = qemu_aio_get(&vdi_aio_pool, bs, cb, opaque);
+    acb = qemu_aio_get(&vdi_aiocb_info, bs, cb, opaque);
     if (acb) {
         acb->hd_aiocb = NULL;
         acb->sector_num = sector_num;
         acb->qiov = qiov;
+        acb->is_write = is_write;
+        acb->bh = NULL;
+
         if (qiov->niov > 1) {
             acb->buf = qemu_blockalign(bs, qiov->size);
             acb->orig_buf = acb->buf;
@@ -562,14 +554,20 @@ static int vdi_schedule_bh(QEMUBHFunc *cb, VdiAIOCB *acb)
 }
 
 static void vdi_aio_read_cb(void *opaque, int ret);
+static void vdi_aio_write_cb(void *opaque, int ret);
 
-static void vdi_aio_read_bh(void *opaque)
+static void vdi_aio_rw_bh(void *opaque)
 {
     VdiAIOCB *acb = opaque;
     logout("\n");
     qemu_bh_delete(acb->bh);
     acb->bh = NULL;
-    vdi_aio_read_cb(opaque, 0);
+
+    if (acb->is_write) {
+        vdi_aio_write_cb(opaque, 0);
+    } else {
+        vdi_aio_read_cb(opaque, 0);
+    }
 }
 
 static void vdi_aio_read_cb(void *opaque, int ret)
@@ -617,7 +615,7 @@ static void vdi_aio_read_cb(void *opaque, int ret)
     if (bmap_entry == VDI_UNALLOCATED) {
         /* Block not allocated, return zeros, no need to wait. */
         memset(acb->buf, 0, n_sectors * SECTOR_SIZE);
-        ret = vdi_schedule_bh(vdi_aio_read_bh, acb);
+        ret = vdi_schedule_bh(vdi_aio_rw_bh, acb);
         if (ret < 0) {
             goto done;
         }
@@ -641,7 +639,7 @@ done:
         qemu_vfree(acb->orig_buf);
     }
     acb->common.cb(acb->common.opaque, ret);
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
 }
 
 static BlockDriverAIOCB *vdi_aio_readv(BlockDriverState *bs,
@@ -649,12 +647,23 @@ static BlockDriverAIOCB *vdi_aio_readv(BlockDriverState *bs,
         BlockDriverCompletionFunc *cb, void *opaque)
 {
     VdiAIOCB *acb;
+    int ret;
+
     logout("\n");
     acb = vdi_aio_setup(bs, sector_num, qiov, nb_sectors, cb, opaque, 0);
     if (!acb) {
         return NULL;
     }
-    vdi_aio_read_cb(acb, 0);
+
+    ret = vdi_schedule_bh(vdi_aio_rw_bh, acb);
+    if (ret < 0) {
+        if (acb->qiov->niov > 1) {
+            qemu_vfree(acb->orig_buf);
+        }
+        qemu_aio_unref(acb);
+        return NULL;
+    }
+
     return &acb->common;
 }
 
@@ -796,7 +805,7 @@ done:
         qemu_vfree(acb->orig_buf);
     }
     acb->common.cb(acb->common.opaque, ret);
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
 }
 
 static BlockDriverAIOCB *vdi_aio_writev(BlockDriverState *bs,
@@ -804,12 +813,23 @@ static BlockDriverAIOCB *vdi_aio_writev(BlockDriverState *bs,
         BlockDriverCompletionFunc *cb, void *opaque)
 {
     VdiAIOCB *acb;
+    int ret;
+
     logout("\n");
     acb = vdi_aio_setup(bs, sector_num, qiov, nb_sectors, cb, opaque, 1);
     if (!acb) {
         return NULL;
     }
-    vdi_aio_write_cb(acb, 0);
+
+    ret = vdi_schedule_bh(vdi_aio_rw_bh, acb);
+    if (ret < 0) {
+        if (acb->qiov->niov > 1) {
+            qemu_vfree(acb->orig_buf);
+        }
+        qemu_aio_unref(acb);
+        return NULL;
+    }
+
     return &acb->common;
 }
 

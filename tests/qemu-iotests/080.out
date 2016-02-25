@@ -8,6 +8,9 @@ no file open, try 'help open'
 Header extension too large
 qemu-io: can't open device TEST_DIR/t.qcow2
 no file open, try 'help open'
+Header extension too large
+qemu-io: can't open device TEST_DIR/t.qcow2
+no file open, try 'help open'
 
 == Huge refcount table size ==
 Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 

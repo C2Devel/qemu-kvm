@@ -12,6 +12,7 @@
 
 #include "ioport.h"
 #include "irq.h"
+#include "qemu-aio.h"
 
 /* VM Load/Save */
 

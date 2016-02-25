@@ -54,7 +54,8 @@ QemuOptsList qemu_drive_opts = {
         },{
             .name = "cache",
             .type = QEMU_OPT_STRING,
-            .help = "host cache usage (none, writeback, writethrough, unsafe)",
+            .help = "host cache usage (none, writeback, writethrough, "
+                    "directsync, unsafe)",
         },{
             .name = "aio",
             .type = QEMU_OPT_STRING,

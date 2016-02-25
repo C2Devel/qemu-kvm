@@ -113,6 +113,11 @@ static int ide_drive_initfn(IDEDevice *dev)
 {
     IDEBus *bus = DO_UPCAST(IDEBus, qbus, dev->qdev.parent_bus);
 
+    if (dev->conf.logical_block_size != 512) {
+        error_report("logical_block_size must be 512 for IDE");
+        return -1;
+    }
+
     if (ide_init_drive(bus->ifs + dev->unit, dev->conf.bs, dev->version, dev->wwn) < 0) {
         return -1;
     }

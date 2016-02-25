@@ -20,6 +20,7 @@
 
 #include <netdb.h>
 #include <pthread.h>
+#include "sysemu.h"
 
 #include "qemu-common.h"
 #include "qemu-spice.h"
@@ -449,6 +450,20 @@ static void info_spice_iter(QObject *obj, void *opaque)
 {
     QDict *client;
     Monitor *mon = opaque;
+    int channel_type;
+    const char *channel_name = "unknown";
+    const char * const channel_names[] = {
+        [SPICE_CHANNEL_MAIN] = "main",
+        [SPICE_CHANNEL_DISPLAY] = "display",
+        [SPICE_CHANNEL_INPUTS] = "inputs",
+        [SPICE_CHANNEL_CURSOR] = "cursor",
+        [SPICE_CHANNEL_PLAYBACK] = "playback",
+        [SPICE_CHANNEL_RECORD] = "record",
+        [SPICE_CHANNEL_TUNNEL] = "tunnel",
+        [SPICE_CHANNEL_SMARTCARD] = "smartcard",
+        [SPICE_CHANNEL_USBREDIR] = "usbredir",
+        [SPICE_CHANNEL_PORT] = "port",
+    };
 
     client = qobject_to_qdict(obj);
     monitor_printf(mon, "Channel:\n");
@@ -461,6 +476,14 @@ static void info_spice_iter(QObject *obj, void *opaque)
     monitor_printf(mon, "     channel: %d:%d\n",
                    (int)qdict_get_int(client, "channel-type"),
                    (int)qdict_get_int(client, "channel-id"));
+
+    channel_type = (int)qdict_get_int(client, "channel-type");
+    if (channel_type > 0 &&
+        channel_type < ARRAY_SIZE(channel_names) &&
+        channel_names[channel_type]) {
+        channel_name = channel_names[channel_type];
+    }
+    monitor_printf(mon, "     channel name: %s\n", channel_name);
 }
 
 void do_info_spice_print(Monitor *mon, const QObject *data)
@@ -725,7 +748,7 @@ void qemu_spice_init(void)
                              tls_ciphers);
     }
     if (password) {
-        spice_server_set_ticket(spice_server, password, 0, 0, 0);
+        qemu_spice_set_passwd(password, false, false);
     }
     if (qemu_opt_get_bool(opts, "sasl", 0)) {
 #if SPICE_SERVER_VERSION >= 0x000900 /* 0.9.0 */
@@ -734,6 +757,7 @@ void qemu_spice_init(void)
             fprintf(stderr, "spice: failed to enable sasl\n");
             exit(1);
         }
+        auth = "sasl";
 #else
         fprintf(stderr, "spice: sasl is not available (spice >= 0.9 required)\n");
         exit(1);
@@ -799,6 +823,10 @@ void qemu_spice_init(void)
 #if SPICE_SERVER_VERSION >= 0x000b02 /* 0.11.2 */
     seamless_migration = qemu_opt_get_bool(opts, "seamless-migration", 0);
     spice_server_set_seamless_migration(spice_server, seamless_migration);
+#endif
+#if SPICE_SERVER_VERSION >= 0x000a02 /* 0.10.2 */
+    spice_server_set_name(spice_server, qemu_name);
+    spice_server_set_uuid(spice_server, qemu_uuid);
 #endif
 
     if (0 != spice_server_init(spice_server, &core_interface)) {
@@ -869,6 +897,10 @@ static int qemu_spice_set_ticket(bool fail_if_conn, bool disconnect_if_conn)
 int qemu_spice_set_passwd(const char *passwd,
                           bool fail_if_conn, bool disconnect_if_conn)
 {
+    if (strcmp(auth, "spice") != 0) {
+        return -1;
+    }
+
     free(auth_passwd);
     auth_passwd = strdup(passwd);
     return qemu_spice_set_ticket(fail_if_conn, disconnect_if_conn);

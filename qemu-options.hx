@@ -102,10 +102,12 @@ ETEXI
 DEF("drive", HAS_ARG, QEMU_OPTION_drive,
     "-drive [file=file][,if=type][,bus=n][,unit=m][,media=d][,index=i]\n"
     "       [,cyls=c,heads=h,secs=s[,trans=t]][,snapshot=on|off]\n"
-    "       [,cache=writethrough|writeback|none|unsafe][,format=f]\n"
+    "       [,cache=writethrough|writeback|none|directsync|unsafe][,format=f]\n"
     "       [,serial=s][,addr=A][,id=name][,aio=threads|native]\n"
     "       [,readonly=on|off][,copy-on-read=on|off]\n"
+#ifdef CONFIG_BLOCK_IO_THROTTLING
     "       [[,bps=b]|[[,bps_rd=r][,bps_wr=w]]][[,iops=i]|[[,iops_rd=r][,iops_wr=w]]\n"
+#endif
     "                use 'file' as a drive image\n")
 STEXI
 @item -drive @var{option}[,@var{option}[,@var{option}[,...]]]
@@ -133,7 +135,7 @@ These options have the same definition as they have in @option{-hdachs}.
 @item snapshot=@var{snapshot}
 @var{snapshot} is "on" or "off" and allows to enable snapshot for given drive (see @option{-snapshot}).
 @item cache=@var{cache}
-@var{cache} is "none", "writeback", "unsafe", or "writethrough" and controls how the host cache is used to access block data.
+@var{cache} is "none", "writeback", "unsafe", "directsync" or "writethrough" and controls how the host cache is used to access block data.
 @item aio=@var{aio}
 @var{aio} is "threads", or "native" and selects between pthread based disk I/O and native Linux AIO.
 @item format=@var{format}
@@ -171,6 +173,10 @@ used by default.
 The host page cache can be avoided entirely with @option{cache=none}.  This will
 attempt to do disk IO directly to the guests memory.  QEMU may still perform
 an internal copy of the data.
+
+The host page cache can be avoided while only sending write notifications to
+the guest when the data has been reported as written by the storage subsystem
+using @option{cache=directsync}.
 
 Some block drivers perform badly with @option{cache=writethrough}, most notably,
 qcow2.  If performance is more important than correctness,
@@ -447,10 +453,6 @@ Pass through the host device identified by @var{vendor_id}:@var{product_id}
 @item serial:[vendorid=@var{vendor_id}][,productid=@var{product_id}]:@var{dev}
 Serial converter to host character device @var{dev}, see @code{-serial} for the
 available devices.
-
-@item braille
-Braille device.  This will use BrlAPI to display the braille output on a real
-or fake device.
 
 @item net:@var{options}
 Network adapter that supports CDC ethernet and RNDIS protocols.
@@ -1082,6 +1084,7 @@ Valid values for @var{type} are
 Not all devices are supported on all targets.  Use -net nic,model=?
 for a list of available devices for your target.
 
+@item -netdev user,id=@var{id}[,@var{option}][,@var{option}][,...]
 @item -net user[,@var{option}][,@var{option}][,...]
 Use the user mode network stack which requires no administrator
 privilege to run. Valid options are:
@@ -1090,6 +1093,7 @@ privilege to run. Valid options are:
 @item vlan=@var{n}
 Connect user mode stack to VLAN @var{n} (@var{n} = 0 is the default).
 
+@item id=@var{id}
 @item name=@var{name}
 Assign symbolic name for use in monitor commands.
 
@@ -1195,6 +1199,7 @@ processed and applied to -net user. Mixing them with the new configuration
 syntax gives undefined results. Their use for new applications is discouraged
 as they will be removed from future versions.
 
+@item -netdev tap,id=@var{id}[,fd=@var{h}][,ifname=@var{name}][,script=@var{file}][,downscript=@var{dfile}][,helper=@var{helper}]
 @item -net tap[,vlan=@var{n}][,name=@var{name}][,fd=@var{h}][,ifname=@var{name}][,script=@var{file}][,downscript=@var{dfile}]
 Connect the host TAP network interface @var{name} to VLAN @var{n}, use
 the network script @var{file} to configure it and the network script
@@ -1215,6 +1220,7 @@ qemu linux.img -net nic,vlan=0 -net tap,vlan=0,ifname=tap0 \
                -net nic,vlan=1 -net tap,vlan=1,ifname=tap1
 @end example
 
+@item -netdev socket,id=@var{id}[,fd=@var{h}][,listen=[@var{host}]:@var{port}][,connect=@var{host}:@var{port}]
 @item -net socket[,vlan=@var{n}][,name=@var{name}][,fd=@var{h}][,listen=[@var{host}]:@var{port}][,connect=@var{host}:@var{port}]
 
 Connect the VLAN @var{n} to a remote VLAN in another QEMU virtual
@@ -1235,6 +1241,7 @@ qemu linux.img -net nic,macaddr=52:54:00:12:34:57 \
                -net socket,connect=127.0.0.1:1234
 @end example
 
+@item -netdev socket,id=@var{id}[,fd=@var{h}][,mcast=@var{maddr}:@var{port}]
 @item -net socket[,vlan=@var{n}][,name=@var{name}][,fd=@var{h}][,mcast=@var{maddr}:@var{port}]
 
 Create a VLAN @var{n} shared with another QEMU virtual
@@ -1275,6 +1282,7 @@ qemu linux.img -net nic,macaddr=52:54:00:12:34:56 \
 /path/to/linux ubd0=/path/to/root_fs eth0=mcast
 @end example
 
+@item -netdev vde,id=@var{id}[,sock=@var{socketpath}][,port=@var{n}][,group=@var{groupname}][,mode=@var{octalmode}]
 @item -net vde[,vlan=@var{n}][,name=@var{name}][,sock=@var{socketpath}][,port=@var{n}][,group=@var{groupname}][,mode=@var{octalmode}]
 Connect VLAN @var{n} to PORT @var{n} of a vde switch running on host and
 listening for incoming connections on @var{socketpath}. Use GROUP @var{groupname}
@@ -1324,9 +1332,6 @@ DEF("chardev", HAS_ARG, QEMU_OPTION_chardev,
 #else
     "-chardev pty,id=id\n"
     "-chardev stdio,id=id\n"
-#endif
-#ifdef CONFIG_BRLAPI
-    "-chardev braille,id=id\n"
 #endif
 #if defined(__linux__) || defined(__sun__) || defined(__FreeBSD__) \
         || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
@@ -1510,10 +1515,6 @@ not take any options.
 Connect to standard input and standard output of the qemu process.
 @option{stdio} does not take any options. @option{stdio} is not available on
 Windows hosts.
-
-@item -chardev braille ,id=@var{id}
-
-Connect to a local BrlAPI server. @option{braille} does not take any options.
 
 @item -chardev tty ,id=@var{id} ,path=@var{path}
 
@@ -1785,10 +1786,6 @@ listening on port 4444 would be:
 @table @code
 @item -serial mon:telnet::4444,server,nowait
 @end table
-
-@item braille
-Braille device.  This will use BrlAPI to display the braille output on a real
-or fake device.
 
 @item msmouse
 Three button serial mouse. Configure the guest to use Microsoft protocol.

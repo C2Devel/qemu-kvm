@@ -250,7 +250,7 @@ static void qemu_gluster_complete_aio(GlusterAIOCB *acb, BDRVGlusterState *s)
     }
 
     s->qemu_aio_count--;
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
     cb(opaque, ret);
     if (finished) {
         *finished = true;
@@ -334,7 +334,7 @@ static int qemu_gluster_open(BlockDriverState *bs, const char *filename,
     }
     fcntl(s->fds[GLUSTER_FD_READ], F_SETFL, O_NONBLOCK);
     qemu_aio_set_fd_handler(s->fds[GLUSTER_FD_READ],
-        qemu_gluster_aio_event_reader, NULL, qemu_gluster_aio_flush_cb, NULL, s);
+        qemu_gluster_aio_event_reader, NULL, qemu_gluster_aio_flush_cb, s);
 
 out:
     qemu_gluster_gconf_free(gconf);
@@ -482,20 +482,8 @@ out:
     return ret;
 }
 
-static void qemu_gluster_aio_cancel(BlockDriverAIOCB *blockacb)
-{
-    GlusterAIOCB *acb = (GlusterAIOCB *)blockacb;
-    bool finished = false;
-
-    acb->finished = &finished;
-    while (!finished) {
-        qemu_aio_wait();
-    }
-}
-
-static AIOPool gluster_aio_pool = {
+static const AIOCBInfo gluster_aiocb_info = {
     .aiocb_size = sizeof(GlusterAIOCB),
-    .cancel = qemu_gluster_aio_cancel,
 };
 
 static void gluster_finish_aiocb(struct glfs_fd *fd, ssize_t ret, void *arg)
@@ -531,7 +519,7 @@ static BlockDriverAIOCB *qemu_gluster_aio_rw(BlockDriverState *bs,
     size = nb_sectors * BDRV_SECTOR_SIZE;
     s->qemu_aio_count++;
 
-    acb = qemu_aio_get(&gluster_aio_pool, bs, cb, opaque);
+    acb = qemu_aio_get(&gluster_aiocb_info, bs, cb, opaque);
     acb->size = size;
     acb->ret = 0;
     acb->finished = NULL;
@@ -551,7 +539,7 @@ static BlockDriverAIOCB *qemu_gluster_aio_rw(BlockDriverState *bs,
 
 out:
     s->qemu_aio_count--;
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
     return NULL;
 }
 
@@ -589,7 +577,7 @@ static BlockDriverAIOCB *qemu_gluster_aio_flush(BlockDriverState *bs,
     GlusterAIOCB *acb;
     BDRVGlusterState *s = bs->opaque;
 
-    acb = qemu_aio_get(&gluster_aio_pool, bs, cb, opaque);
+    acb = qemu_aio_get(&gluster_aiocb_info, bs, cb, opaque);
     acb->size = 0;
     acb->ret = 0;
     acb->finished = NULL;
@@ -603,7 +591,7 @@ static BlockDriverAIOCB *qemu_gluster_aio_flush(BlockDriverState *bs,
 
 out:
     s->qemu_aio_count--;
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
     return NULL;
 }
 
@@ -640,7 +628,7 @@ static void qemu_gluster_close(BlockDriverState *bs)
 
     close(s->fds[GLUSTER_FD_READ]);
     close(s->fds[GLUSTER_FD_WRITE]);
-    qemu_aio_set_fd_handler(s->fds[GLUSTER_FD_READ], NULL, NULL, NULL, NULL, NULL);
+    qemu_aio_set_fd_handler(s->fds[GLUSTER_FD_READ], NULL, NULL, NULL, NULL);
 
     if (s->fd) {
         glfs_close(s->fd);

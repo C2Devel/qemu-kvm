@@ -103,7 +103,6 @@ typedef struct QEMUBH QEMUBH;
 typedef void QEMUBHFunc(void *opaque);
 
 QEMUBH *qemu_bh_new(QEMUBHFunc *cb, void *opaque);
-void qemu_bh_schedule(QEMUBH *bh);
 /* Bottom halfs that are scheduled from a bottom half handler are instantly
  * invoked.  This can create an infinite loop if a bottom half handler
  * schedules itself.  qemu_bh_schedule_idle() avoids this infinite loop by
@@ -111,10 +110,8 @@ void qemu_bh_schedule(QEMUBH *bh);
  * iteration.
  */
 void qemu_bh_schedule_idle(QEMUBH *bh);
-void qemu_bh_cancel(QEMUBH *bh);
-void qemu_bh_delete(QEMUBH *bh);
 int qemu_bh_poll(void);
-void qemu_bh_update_timeout(int *timeout);
+void qemu_bh_update_timeout(uint32_t *timeout);
 
 uint64_t muldiv64(uint64_t a, uint32_t b, uint32_t c);
 
@@ -189,7 +186,6 @@ void QEMU_NORETURN hw_error(const char *fmt, ...)
 /* IO callbacks.  */
 typedef void IOReadHandler(void *opaque, const uint8_t *buf, int size);
 typedef int IOCanReadHandler(void *opaque);
-typedef void IOHandler(void *opaque);
 
 struct ParallelIOArg {
     void *buffer;

@@ -5,6 +5,7 @@
 #include "qemu-queue.h"
 #include "qemu-option.h"
 #include "qemu-config.h"
+#include "qemu-aio.h"
 #include "qobject.h"
 #include "qstring.h"
 #include "qerror.h"
@@ -274,8 +275,5 @@ int qemu_set_fd_handler(int fd,
 
 /* msmouse */
 CharDriverState *qemu_chr_open_msmouse(void);
-
-/* baum.c */
-CharDriverState *chr_baum_init(void);
 
 #endif

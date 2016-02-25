@@ -150,6 +150,14 @@ typedef struct VirtIOSCSIReq {
     VirtQueue *vq;
     VirtQueueElement elem;
     QEMUSGList qsgl;
+
+    union {
+        /* Used for two-stage request submission */
+        QTAILQ_ENTRY(VirtIOSCSIReq) next;
+
+        /* Used for cancellation of request during TMFs */
+        int remaining;
+    };
     SCSIRequest *sreq;
     union {
         char                  *buf;
@@ -289,12 +297,33 @@ static void *virtio_scsi_load_request(QEMUFile *f, SCSIRequest *sreq)
     return req;
 }
 
-static void virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
+typedef struct {
+    Notifier        notifier;
+    VirtIOSCSIReq  *tmf_req;
+} VirtIOSCSICancelNotifier;
+
+static void virtio_scsi_cancel_notify(Notifier *notifier, void *data)
+{
+    VirtIOSCSICancelNotifier *n = container_of(notifier,
+                                               VirtIOSCSICancelNotifier,
+                                               notifier);
+
+    if (--n->tmf_req->remaining == 0) {
+        virtio_scsi_complete_req(n->tmf_req);
+    }
+    g_slice_free(VirtIOSCSICancelNotifier, n);
+}
+
+/* Return 0 if the request is ready to be completed and return to guest;
+ * -EINPROGRESS if the request is submitted and will be completed later, in the
+ *  case of async cancellation. */
+static int virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
 {
     SCSIDevice *d = virtio_scsi_device_find(s, req->req.tmf->lun);
     SCSIRequest *r, *next;
     DeviceState *qdev;
     int target;
+    int ret = 0;
 
     /* Here VIRTIO_SCSI_S_OK means "FUNCTION COMPLETE".  */
     req->resp.tmf->response = VIRTIO_SCSI_S_OK;
@@ -326,7 +355,14 @@ static void virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
                  */
                 req->resp.tmf->response = VIRTIO_SCSI_S_FUNCTION_SUCCEEDED;
             } else {
-                scsi_req_cancel(r);
+                VirtIOSCSICancelNotifier *notifier;
+
+                req->remaining = 1;
+                notifier = g_slice_new(VirtIOSCSICancelNotifier);
+                notifier->tmf_req = req;
+                notifier->notifier.notify = virtio_scsi_cancel_notify;
+                scsi_req_cancel_async(r, &notifier->notifier);
+                ret = -EINPROGRESS;
             }
         }
         break;
@@ -352,6 +388,13 @@ static void virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
         if (d->lun != virtio_scsi_get_lun(req->req.tmf->lun)) {
             goto incorrect_lun;
         }
+
+        /* Add 1 to "remaining" until virtio_scsi_do_tmf returns.
+         * This way, if the bus starts calling back to the notifiers
+         * even before we finish the loop, virtio_scsi_cancel_notify
+         * will not complete the TMF too early.
+         */
+        req->remaining = 1;
         QTAILQ_FOREACH_SAFE(r, &d->requests, next, next) {
             if (r->hba_private) {
                 if (req->req.tmf->subtype == VIRTIO_SCSI_T_TMF_QUERY_TASK_SET) {
@@ -361,9 +404,18 @@ static void virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
                     req->resp.tmf->response = VIRTIO_SCSI_S_FUNCTION_SUCCEEDED;
                     break;
                 } else {
-                    scsi_req_cancel(r);
+                    VirtIOSCSICancelNotifier *notifier;
+
+                    req->remaining++;
+                    notifier = g_slice_new(VirtIOSCSICancelNotifier);
+                    notifier->notifier.notify = virtio_scsi_cancel_notify;
+                    notifier->tmf_req = req;
+                    scsi_req_cancel_async(r, &notifier->notifier);
                 }
             }
+        }
+        if (--req->remaining > 0) {
+            ret = -EINPROGRESS;
         }
         break;
 
@@ -385,14 +437,15 @@ static void virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
         break;
     }
 
-    return;
+    return ret;
 
 incorrect_lun:
     req->resp.tmf->response = VIRTIO_SCSI_S_INCORRECT_LUN;
-    return;
+    return ret;
 
 fail:
     req->resp.tmf->response = VIRTIO_SCSI_S_BAD_TARGET;
+    return ret;
 }
 
 static void virtio_scsi_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
@@ -401,6 +454,7 @@ static void virtio_scsi_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
     VirtIOSCSIReq *req;
 
     while ((req = virtio_scsi_pop_req(s, vq))) {
+        int r = 0;
         int out_size, in_size;
         if (req->elem.out_num < 1 || req->elem.in_num < 1) {
             virtio_scsi_bad_req();
@@ -414,7 +468,7 @@ static void virtio_scsi_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
                 in_size < sizeof(VirtIOSCSICtrlTMFResp)) {
                 virtio_scsi_bad_req();
             }
-            virtio_scsi_do_tmf(s, req);
+            r = virtio_scsi_do_tmf(s, req);
 
         } else if (req->req.tmf->type == VIRTIO_SCSI_T_AN_QUERY ||
                    req->req.tmf->type == VIRTIO_SCSI_T_AN_SUBSCRIBE) {
@@ -425,7 +479,11 @@ static void virtio_scsi_handle_ctrl(VirtIODevice *vdev, VirtQueue *vq)
             req->resp.an->event_actual = 0;
             req->resp.an->response = VIRTIO_SCSI_S_OK;
         }
-        virtio_scsi_complete_req(req);
+        if (r == 0) {
+            virtio_scsi_complete_req(req);
+        } else {
+            assert(r == -EINPROGRESS);
+        }
     }
 }
 
@@ -595,6 +653,10 @@ static uint32_t virtio_scsi_get_features(VirtIODevice *vdev,
 static void virtio_scsi_reset(VirtIODevice *vdev)
 {
     VirtIOSCSI *s = (VirtIOSCSI *)vdev;
+
+    s->resetting++;
+    qbus_reset_all(&s->bus.qbus);
+    s->resetting--;
 
     s->sense_size = VIRTIO_SCSI_SENSE_SIZE;
     s->cdb_size = VIRTIO_SCSI_CDB_SIZE;

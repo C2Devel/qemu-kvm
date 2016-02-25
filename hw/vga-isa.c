@@ -29,13 +29,16 @@
 #include "qemu-timer.h"
 #include "loader.h"
 
+#define VGA_RAM_SIZE (16 * 1024 * 1024)
+
 int isa_vga_init(void)
 {
     VGACommonState *s;
 
     s = qemu_mallocz(sizeof(*s));
 
-    vga_common_init(s, VGA_RAM_SIZE);
+    s->vram_size_mb = VGA_RAM_SIZE >> 20;
+    vga_common_init(s);
     vga_init(s);
     vmstate_register(NULL, 0, &vmstate_vga_common, s);
 

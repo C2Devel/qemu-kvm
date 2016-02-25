@@ -29,6 +29,10 @@
 #include "block/qcow2.h"
 #include "qemu-error.h"
 #include "qerror.h"
+#include "qapi/util.h"
+#include "qapi-visit.h"
+#include "qemu-objects.h"
+#include "monitor.h"
 
 /*
   Differences with QCOW:
@@ -111,7 +115,7 @@ static int qcow2_read_extensions(BlockDriverState *bs, uint64_t start_offset,
 #ifdef DEBUG_EXT
         printf("ext.magic = 0x%x\n", ext.magic);
 #endif
-        if (ext.len > end_offset - offset) {
+        if (offset > end_offset || ext.len > end_offset - offset) {
             error_report("Header extension too large");
             return -EINVAL;
         }
@@ -256,6 +260,10 @@ static int qcow2_open(BlockDriverState *bs, int flags)
     s->cluster_sectors = 1 << (s->cluster_bits - 9);
     s->l2_bits = s->cluster_bits - 3; /* L2 is always one cluster */
     s->l2_size = 1 << s->l2_bits;
+    /* 2^(refcount_order - 3) is the refcount width in bytes
+     * (and refcount_order == 4) */
+    s->refcount_block_bits = s->cluster_bits - (4 - 3);
+    s->refcount_block_size = 1 << s->refcount_block_bits;
     bs->total_sectors = header.size / 512;
     s->csize_shift = (62 - (s->cluster_bits - 8));
     s->csize_mask = (1 << (s->cluster_bits - 8)) - 1;
@@ -938,15 +946,7 @@ static int qcow2_change_backing_file(BlockDriverState *bs,
     return qcow2_update_header(bs);
 }
 
-enum prealloc_mode {
-    PREALLOC_OFF = 0,
-    PREALLOC_METADATA,
-    PREALLOC_FULL,
-};
-
-#define IO_BUF_SIZE (2 * 1024 * 1024)
-
-static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
+static int preallocate(BlockDriverState *bs)
 {
     uint64_t nb_sectors;
     uint64_t offset;
@@ -954,14 +954,11 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
     int ret;
     QCowL2Meta meta;
 
-    assert(mode != PREALLOC_OFF);
-
     nb_sectors = bdrv_getlength(bs) >> 9;
     offset = 0;
     qemu_co_queue_init(&meta.dependent_requests);
     meta.cluster_offset = 0;
 
-    /* First allocate metadata in _really_ big chunks */
     while (nb_sectors) {
         num = MIN(nb_sectors, INT_MAX >> 9);
         ret = qcow2_alloc_cluster_offset(bs, offset, 0, num, &num, &meta);
@@ -983,28 +980,6 @@ static int preallocate(BlockDriverState *bs, enum prealloc_mode mode)
 
         nb_sectors -= num;
         offset += num << 9;
-    }
-
-    /* Then write zeros to the cluster data, if requested */
-    if (mode == PREALLOC_FULL) {
-        void *buf = g_malloc0(IO_BUF_SIZE);
-
-        nb_sectors = bdrv_getlength(bs) >> BDRV_SECTOR_BITS;
-        offset = 0;
-
-        while (nb_sectors) {
-            num = MIN(nb_sectors, IO_BUF_SIZE / BDRV_SECTOR_SIZE);
-            ret = bdrv_write(bs, offset >> BDRV_SECTOR_BITS, buf, num);
-            if (ret < 0) {
-                g_free(buf);
-                return ret;
-            }
-
-            nb_sectors -= num;
-            offset += num << 9;
-        }
-
-        g_free(buf);
     }
 
     /*
@@ -1064,8 +1039,7 @@ static int qcow2_truncate(BlockDriverState *bs, int64_t offset)
 
 static int qcow2_create2(const char *filename, int64_t total_size,
                         const char *backing_file, const char *backing_format,
-                        int flags, size_t cluster_size, int prealloc,
-                        QEMUOptionParameter *options)
+                        int flags, size_t cluster_size, PreallocMode prealloc)
 {
     /* Calulate cluster_bits */
     int cluster_bits;
@@ -1095,8 +1069,70 @@ static int qcow2_create2(const char *filename, int64_t total_size,
     QCowHeader header;
     uint64_t* refcount_table;
     int ret;
+    QEMUOptionParameter *options = NULL;
+    BlockDriver *file_drv;
+
+    if (prealloc == PREALLOC_MODE_FULL || prealloc == PREALLOC_MODE_FALLOC) {
+        int64_t meta_size = 0;
+        uint64_t nreftablee, nrefblocke, nl1e, nl2e;
+        int64_t aligned_total_size = align_offset(total_size * BDRV_SECTOR_SIZE,
+                                                  cluster_size);
+
+        /* header: 1 cluster */
+        meta_size += cluster_size;
+
+        /* total size of L2 tables */
+        nl2e = aligned_total_size / cluster_size;
+        nl2e = align_offset(nl2e, cluster_size / sizeof(uint64_t));
+        meta_size += nl2e * sizeof(uint64_t);
+
+        /* total size of L1 tables */
+        nl1e = nl2e * sizeof(uint64_t) / cluster_size;
+        nl1e = align_offset(nl1e, cluster_size / sizeof(uint64_t));
+        meta_size += nl1e * sizeof(uint64_t);
+
+        /* total size of refcount blocks
+         *
+         * note: every host cluster is reference-counted, including metadata
+         * (even refcount blocks are recursively included).
+         * Let:
+         *   a = total_size (this is the guest disk size)
+         *   m = meta size not including refcount blocks and refcount tables
+         *   c = cluster size
+         *   y1 = number of refcount blocks entries
+         *   y2 = meta size including everything
+         * then,
+         *   y1 = (y2 + a)/c
+         *   y2 = y1 * sizeof(u16) + y1 * sizeof(u16) * sizeof(u64) / c + m
+         * we can get y1:
+         *   y1 = (a + m) / (c - sizeof(u16) - sizeof(u16) * sizeof(u64) / c)
+         */
+        nrefblocke = (aligned_total_size + meta_size + cluster_size) /
+            (cluster_size - sizeof(uint16_t) -
+             1.0 * sizeof(uint16_t) * sizeof(uint64_t) / cluster_size);
+        nrefblocke = align_offset(nrefblocke, cluster_size / sizeof(uint16_t));
+        meta_size += nrefblocke * sizeof(uint16_t);
+
+        /* total size of refcount tables */
+        nreftablee = nrefblocke * sizeof(uint16_t) / cluster_size;
+        nreftablee = align_offset(nreftablee, cluster_size / sizeof(uint64_t));
+        meta_size += nreftablee * sizeof(uint64_t);
+
+        file_drv = bdrv_find_protocol(filename, NULL);
+        if (file_drv == NULL) {
+            error_report("Could not find protocol for file '%s'", filename);
+            return -ENOENT;
+        }
+
+        options = append_option_parameters(options, file_drv->create_options);
+
+        set_option_parameter_int(options, BLOCK_OPT_SIZE,
+                                 aligned_total_size + meta_size);
+        set_option_parameter(options, BLOCK_OPT_PREALLOC, PreallocMode_lookup[prealloc]);
+    }
 
     ret = bdrv_create_file(filename, options);
+    free_option_parameters(options);
     if (ret < 0) {
         return ret;
     }
@@ -1177,8 +1213,8 @@ static int qcow2_create2(const char *filename, int64_t total_size,
     }
 
     /* And if we're supposed to preallocate metadata, do that now */
-    if (prealloc) {
-        ret = preallocate(bs, prealloc);
+    if (prealloc != PREALLOC_MODE_OFF) {
+        ret = preallocate(bs);
         if (ret < 0) {
             goto out;
         }
@@ -1205,7 +1241,8 @@ static int qcow2_create(const char *filename, QEMUOptionParameter *options)
     uint64_t sectors = 0;
     int flags = 0;
     size_t cluster_size = DEFAULT_CLUSTER_SIZE;
-    int prealloc = 0;
+    PreallocMode prealloc = PREALLOC_MODE_OFF;
+    Error *local_err = NULL;
 
     /* Read out options */
     while (options && options->name) {
@@ -1222,29 +1259,27 @@ static int qcow2_create(const char *filename, QEMUOptionParameter *options)
                 cluster_size = options->value.n;
             }
         } else if (!strcmp(options->name, BLOCK_OPT_PREALLOC)) {
-            if (!options->value.s || !strcmp(options->value.s, "off")) {
-                prealloc = PREALLOC_OFF;
-            } else if (!strcmp(options->value.s, "metadata")) {
-                prealloc = PREALLOC_METADATA;
-            } else if (!strcmp(options->value.s, "full")) {
-                prealloc = PREALLOC_FULL;
-            } else {
-                fprintf(stderr, "Invalid preallocation mode: '%s'\n",
-                    options->value.s);
+            prealloc = qapi_enum_parse(PreallocMode_lookup,
+                                       options->value.s, PREALLOC_MODE_MAX,
+                                       PREALLOC_MODE_OFF, &local_err);
+            if (local_err) {
+                qerror_report_err(local_err);
+                error_free(local_err);
                 return -EINVAL;
             }
         }
         options++;
     }
 
-    if (backing_file && prealloc) {
+    if (backing_file && prealloc != PREALLOC_MODE_OFF) {
         fprintf(stderr, "Backing file and preallocation cannot be used at "
             "the same time\n");
         return -EINVAL;
     }
 
+    assert(!options || !options->name);
     return qcow2_create2(filename, sectors, backing_file, backing_fmt, flags,
-        cluster_size, prealloc, options);
+                         cluster_size, prealloc);
 }
 
 static int qcow2_make_empty(BlockDriverState *bs)
@@ -1459,6 +1494,66 @@ static int qcow2_load_vmstate(BlockDriverState *bs, uint8_t *buf,
     return ret;
 }
 
+/*
+ * If offset or size are negative, respectively, they will not be included in
+ * the BLOCK_IMAGE_CORRUPTED event emitted.
+ * fatal will be ignored for read-only BDS; corruptions found there will always
+ * be considered non-fatal.
+ */
+void qcow2_signal_corruption(BlockDriverState *bs, bool fatal, int64_t offset,
+                             int64_t size, const char *message_format, ...)
+{
+    BDRVQcowState *s = bs->opaque;
+    char *message;
+    QObject *data;
+    va_list ap;
+
+    fatal = fatal && !bs->read_only;
+
+    if (fatal ? s->signaled_fatal_corruption : s->signaled_corruption) {
+        return;
+    }
+
+    va_start(ap, message_format);
+    message = g_strdup_vprintf(message_format, ap);
+    va_end(ap);
+
+    if (fatal) {
+        fprintf(stderr, "qcow2: Image is corrupt (further access will be "
+                "prevented): %s; please use qemu-img check -r. Further "
+                "corruption events will be suppressed\n", message);
+    } else {
+        fprintf(stderr, "qcow2: Image is corrupt: %s; please use qemu-img "
+                "check -r. Further non-fatal corruption events will be "
+                "suppressed\n", message);
+    }
+
+    assert((offset >= 0) == (size >= 0));
+
+    if (offset >= 0) {
+        data = qobject_from_jsonf("{ 'device': %s, 'msg': %s, 'offset': %"
+                                  PRId64 ", 'size': %" PRId64 ", 'fatal': %s }",
+                                  bdrv_get_device_name(bs), message,
+                                  offset, size, fatal ? "true" : "false");
+    } else {
+        data = qobject_from_jsonf("{ 'device': %s, 'msg': %s, 'fatal': %s }",
+                                  bdrv_get_device_name(bs), message,
+                                  fatal ? "true" : "false");
+    }
+
+    monitor_protocol_event(QEVENT_BLOCK_IMAGE_CORRUPTED, data);
+    qobject_decref(data);
+
+    g_free(message);
+
+    if (fatal) {
+        bs->drv = NULL; /* make BDS unusable */
+        s->signaled_fatal_corruption = true;
+    }
+
+    s->signaled_corruption = true;
+}
+
 static QEMUOptionParameter qcow2_create_options[] = {
     {
         .name = BLOCK_OPT_SIZE,
@@ -1489,7 +1584,8 @@ static QEMUOptionParameter qcow2_create_options[] = {
     {
         .name = BLOCK_OPT_PREALLOC,
         .type = OPT_STRING,
-        .help = "Preallocation mode (allowed values: off, metadata, full)"
+        .help = "Preallocation mode (allowed values: off, metadata, "
+                "falloc, full)"
     },
     { NULL }
 };

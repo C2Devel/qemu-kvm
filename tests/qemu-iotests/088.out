@@ -2,16 +2,22 @@ QA output created by 088
 
 == Invalid block size ==
 Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 0
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 0
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 128
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 128
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 305419896
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
-qemu-io: can't open device TEST_DIR/t.vpc: Invalid block size 305419896
+Invalid block size
+qemu-io: can't open device TEST_DIR/t.vpc
 no file open, try 'help open'
 *** done

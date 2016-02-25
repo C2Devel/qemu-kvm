@@ -63,7 +63,7 @@ static int exec_close(FdMigrationState *s)
 
 MigrationState *exec_start_outgoing_migration(Monitor *mon,
                                               const char *command,
-					      int64_t bandwidth_limit,
+					      size_t bandwidth_limit,
 					      int detach,
 					      int blk,
 					      int inc)

@@ -5230,3 +5230,11 @@ int monitor_read_bdrv_key_start(Monitor *mon, BlockDriverState *bs,
 
     return err;
 }
+
+#ifndef TARGET_I386
+void qmp_rtc_reset_reinjection(Error **errp)
+{
+    error_setg(errp, "The feature rtc-reset-reinjection is not enabled");
+}
+#endif
+

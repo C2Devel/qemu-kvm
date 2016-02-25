@@ -82,7 +82,7 @@ static int pci_vga_initfn(PCIDevice *dev)
      uint8_t *pci_conf = d->dev.config;
 
      // vga + console init
-     vga_common_init(s, VGA_RAM_SIZE);
+     vga_common_init(s);
      vga_init(s);
 
      s->ds = graphic_console_init(s->update, s->invalidate,
@@ -94,7 +94,7 @@ static int pci_vga_initfn(PCIDevice *dev)
      pci_config_set_class(pci_conf, PCI_CLASS_DISPLAY_VGA);
 
      /* XXX: VGA_RAM_SIZE must be a power of two */
-     pci_register_bar(&d->dev, 0, VGA_RAM_SIZE,
+     pci_register_bar(&d->dev, 0, s->vram_size,
                       PCI_BASE_ADDRESS_MEM_PREFETCH, vga_map);
 
      if (s->bios_size) {
@@ -141,6 +141,7 @@ static PCIDeviceInfo vga_info = {
     .qdev.props   = (Property[]) {
         DEFINE_PROP_HEX32("bios-offset", PCIVGAState, vga.bios_offset, 0),
         DEFINE_PROP_HEX32("bios-size",   PCIVGAState, vga.bios_size,   0),
+        DEFINE_PROP_UINT32("vgamem_mb", PCIVGAState, vga.vram_size_mb, 16),
         DEFINE_PROP_END_OF_LIST(),
     }
 };

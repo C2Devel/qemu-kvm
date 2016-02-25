@@ -77,6 +77,8 @@ QEMUOptionParameter *parse_option_parameters(const char *param,
 void free_option_parameters(QEMUOptionParameter *list);
 void print_option_parameters(QEMUOptionParameter *list);
 void print_option_help(QEMUOptionParameter *list);
+bool has_help_option(const char *param);
+bool is_valid_option_list(const char *param);
 
 /* ------------------------------------------------------------------ */
 

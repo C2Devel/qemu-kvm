@@ -90,11 +90,7 @@ static char *rng_random_get_filename(Object *obj, Error **errp)
 {
     RndRandom *s = RNG_RANDOM(obj);
 
-    if (s->filename) {
-        return g_strdup(s->filename);
-    }
-
-    return NULL;
+    return g_strdup(s->filename);
 }
 
 static void rng_random_set_filename(Object *obj, const char *filename,
@@ -125,15 +121,15 @@ static void rng_random_init(Object *obj)
                             NULL);
 
     s->filename = g_strdup("/dev/random");
+    s->fd = -1;
 }
 
 static void rng_random_finalize(Object *obj)
 {
     RndRandom *s = RNG_RANDOM(obj);
 
-    qemu_set_fd_handler(s->fd, NULL, NULL, NULL);
-
     if (s->fd != -1) {
+        qemu_set_fd_handler(s->fd, NULL, NULL, NULL);
         qemu_close(s->fd);
     }
 

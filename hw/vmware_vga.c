@@ -1150,7 +1150,7 @@ static const VMStateDescription vmstate_vmware_vga = {
     }
 };
 
-static void vmsvga_init(struct vmsvga_state_s *s, int vga_ram_size)
+static void vmsvga_init(struct vmsvga_state_s *s)
 {
     s->scratch_size = SVGA_SCRATCH_SIZE;
     s->scratch = qemu_malloc(s->scratch_size * 4);
@@ -1165,7 +1165,7 @@ static void vmsvga_init(struct vmsvga_state_s *s, int vga_ram_size)
     s->fifo_offset = qemu_ram_alloc(NULL, "vmsvga.fifo", s->fifo_size);
     s->fifo_ptr = qemu_get_ram_ptr(s->fifo_offset);
 
-    vga_common_init(&s->vga, vga_ram_size);
+    vga_common_init(&s->vga);
     vga_init(&s->vga);
     vmstate_register(NULL, 0, &vmstate_vga_common, &s->vga);
 
@@ -1244,15 +1244,15 @@ static int pci_vmsvga_initfn(PCIDevice *dev)
     s->card.config[0x2f]		= SVGA_PCI_DEVICE_ID >> 8;
     s->card.config[0x3c]		= 0xff;		/* End */
 
+    vmsvga_init(&s->chip);
+
     pci_register_bar(&s->card, 0, 0x10,
                     PCI_BASE_ADDRESS_SPACE_IO, pci_vmsvga_map_ioport);
-    pci_register_bar(&s->card, 1, VGA_RAM_SIZE,
+    pci_register_bar(&s->card, 1, s->chip.vga.vram_size,
                     PCI_BASE_ADDRESS_MEM_PREFETCH, pci_vmsvga_map_mem);
 
     pci_register_bar(&s->card, 2, SVGA_FIFO_SIZE,
 		     PCI_BASE_ADDRESS_MEM_PREFETCH, pci_vmsvga_map_fifo);
-
-    vmsvga_init(&s->chip, VGA_RAM_SIZE);
 
     if (!dev->rom_bar) {
         /* compatibility with pc-0.13 and older */
@@ -1274,6 +1274,11 @@ static PCIDeviceInfo vmsvga_info = {
     .no_hotplug   = 1,
     .init         = pci_vmsvga_initfn,
     .romfile      = "vgabios-vmware.bin",
+    .qdev.props = (Property[]) {
+        DEFINE_PROP_UINT32("vgamem_mb", struct pci_vmsvga_state_s,
+                           chip.vga.vram_size_mb, 16),
+        DEFINE_PROP_END_OF_LIST(),
+    },
 };
 
 static void vmsvga_register(void)

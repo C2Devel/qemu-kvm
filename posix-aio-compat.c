@@ -43,7 +43,6 @@ struct qemu_paiocb {
     int aio_niov;
     size_t aio_nbytes;
 #define aio_ioctl_cmd   aio_nbytes /* for QEMU_AIO_IOCTL */
-    int ev_signo;
     off_t aio_offset;
 
     QTAILQ_ENTRY(qemu_paiocb) node;
@@ -382,7 +381,7 @@ static void *aio_thread(void *unused)
         idle_threads++;
         mutex_unlock(&lock);
 
-        if (kill(pid, aiocb->ev_signo)) die("kill failed");
+        if (kill(pid, SIGUSR2)) die("kill failed");
     }
 
     idle_threads--;
@@ -473,53 +472,6 @@ static int qemu_paio_error(struct qemu_paiocb *aiocb)
     return ret;
 }
 
-static int posix_aio_process_queue(void *opaque)
-{
-    PosixAioState *s = opaque;
-    struct qemu_paiocb *acb, **pacb;
-    int ret;
-    int result = 0;
-
-    for(;;) {
-        pacb = &s->first_aio;
-        for(;;) {
-            acb = *pacb;
-            if (!acb)
-                return result;
-
-            ret = qemu_paio_error(acb);
-            if (ret == ECANCELED) {
-                /* remove the request */
-                *pacb = acb->next;
-                qemu_aio_release(acb);
-                result = 1;
-            } else if (ret != EINPROGRESS) {
-                /* end of aio */
-                if (ret == 0) {
-                    ret = qemu_paio_return(acb);
-                    if (ret == acb->aio_nbytes)
-                        ret = 0;
-                    else
-                        ret = -EINVAL;
-                } else {
-                    ret = -ret;
-                }
-                /* remove the request */
-                *pacb = acb->next;
-                /* call the callback */
-                acb->common.cb(acb->common.opaque, ret);
-                qemu_aio_release(acb);
-                result = 1;
-                break;
-            } else {
-                pacb = &acb->next;
-            }
-        }
-    }
-
-    return result;
-}
-
 static void posix_aio_read(void *opaque)
 {
     PosixAioState *s = opaque;
@@ -527,6 +479,8 @@ static void posix_aio_read(void *opaque)
         struct qemu_signalfd_siginfo siginfo;
         char buf[128];
     } sig;
+    struct qemu_paiocb *acb, **pacb;
+    int ret;
     size_t offset;
 
     /* try to read from signalfd, don't freak out if we can't read anything */
@@ -548,7 +502,40 @@ static void posix_aio_read(void *opaque)
         offset += len;
     }
 
-    posix_aio_process_queue(s);
+    for(;;) {
+        pacb = &s->first_aio;
+        for(;;) {
+            acb = *pacb;
+            if (!acb)
+                return;
+
+            ret = qemu_paio_error(acb);
+            if (ret == ECANCELED) {
+                /* remove the request */
+                *pacb = acb->next;
+                qemu_aio_unref(acb);
+            } else if (ret != EINPROGRESS) {
+                /* end of aio */
+                if (ret == 0) {
+                    ret = qemu_paio_return(acb);
+                    if (ret == acb->aio_nbytes)
+                        ret = 0;
+                    else
+                        ret = -EINVAL;
+                } else {
+                    ret = -ret;
+                }
+                /* remove the request */
+                *pacb = acb->next;
+                /* call the callback */
+                acb->common.cb(acb->common.opaque, ret);
+                qemu_aio_unref(acb);
+                break;
+            } else {
+                pacb = &acb->next;
+            }
+        }
+    }
 }
 
 static int posix_aio_flush(void *opaque)
@@ -559,52 +546,8 @@ static int posix_aio_flush(void *opaque)
 
 static PosixAioState *posix_aio_state;
 
-static void paio_remove(struct qemu_paiocb *acb)
-{
-    struct qemu_paiocb **pacb;
-
-    /* remove the callback from the queue */
-    pacb = &posix_aio_state->first_aio;
-    for(;;) {
-        if (*pacb == NULL) {
-            fprintf(stderr, "paio_remove: aio request not found!\n");
-            break;
-        } else if (*pacb == acb) {
-            *pacb = acb->next;
-            qemu_aio_release(acb);
-            break;
-        }
-        pacb = &(*pacb)->next;
-    }
-}
-
-static void paio_cancel(BlockDriverAIOCB *blockacb)
-{
-    struct qemu_paiocb *acb = (struct qemu_paiocb *)blockacb;
-    int active = 0;
-
-    mutex_lock(&lock);
-    if (!acb->active) {
-        QTAILQ_REMOVE(&request_list, acb, node);
-        acb->ret = -ECANCELED;
-    } else if (acb->ret == -EINPROGRESS) {
-        active = 1;
-    }
-    mutex_unlock(&lock);
-
-    if (active) {
-        /* fail safe: if the aio could not be canceled, we wait for
-           it */
-        while (qemu_paio_error(acb) == EINPROGRESS)
-            ;
-    }
-
-    paio_remove(acb);
-}
-
-static AIOPool raw_aio_pool = {
+static AIOCBInfo raw_aiocb_info = {
     .aiocb_size         = sizeof(struct qemu_paiocb),
-    .cancel             = paio_cancel,
 };
 
 BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
@@ -613,12 +556,9 @@ BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
 {
     struct qemu_paiocb *acb;
 
-    acb = qemu_aio_get(&raw_aio_pool, bs, cb, opaque);
-    if (!acb)
-        return NULL;
+    acb = qemu_aio_get(&raw_aiocb_info, bs, cb, opaque);
     acb->aio_type = type;
     acb->aio_fildes = fd;
-    acb->ev_signo = SIGUSR2;
 
     if (qiov) {
         acb->aio_iov = qiov->iov;
@@ -641,12 +581,11 @@ BlockDriverAIOCB *paio_ioctl(BlockDriverState *bs, int fd,
 {
     struct qemu_paiocb *acb;
 
-    acb = qemu_aio_get(&raw_aio_pool, bs, cb, opaque);
+    acb = qemu_aio_get(&raw_aiocb_info, bs, cb, opaque);
     if (!acb)
         return NULL;
     acb->aio_type = QEMU_AIO_IOCTL;
     acb->aio_fildes = fd;
-    acb->ev_signo = SIGUSR2;
     acb->aio_offset = 0;
     acb->aio_ioctl_buf = buf;
     acb->aio_ioctl_cmd = req;
@@ -684,8 +623,7 @@ int paio_init(void)
 
     fcntl(s->fd, F_SETFL, O_NONBLOCK);
 
-    qemu_aio_set_fd_handler(s->fd, posix_aio_read, NULL, posix_aio_flush,
-        posix_aio_process_queue, s);
+    qemu_aio_set_fd_handler(s->fd, posix_aio_read, NULL, posix_aio_flush, s);
 
     ret = pthread_attr_init(&attr);
     if (ret)

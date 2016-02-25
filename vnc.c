@@ -1955,6 +1955,16 @@ static void set_pixel_format(VncState *vs,
         return;
     }
 
+    switch (bits_per_pixel) {
+    case 8:
+    case 16:
+    case 32:
+        break;
+    default:
+        vnc_client_error(vs);
+        return;
+    }
+
     vs->clientds = *(vs->vd->guest.ds);
     vs->clientds.pf.rmax = red_max;
     count_bits(vs->clientds.pf.rbits, red_max);
@@ -2012,7 +2022,10 @@ static void pixel_format_message (VncState *vs) {
 
 static void vnc_dpy_setdata(DisplayState *ds)
 {
-    /* We don't have to do anything */
+    VncDisplay *vd = ds->opaque;
+
+    *(vd->guest.ds) = *(ds->surface);
+    vnc_dpy_update(ds, 0, 0, ds_get_width(ds), ds_get_height(ds));
 }
 
 static void vnc_colordepth(VncState *vs)
