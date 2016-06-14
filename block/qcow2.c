@@ -1066,7 +1066,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
      * size for any qcow2 image.
      */
     BlockDriverState* bs;
-    QCowHeader header;
+    QCowHeader *header;
     uint64_t* refcount_table;
     int ret;
     QEMUOptionParameter *options = NULL;
@@ -1143,23 +1143,27 @@ static int qcow2_create2(const char *filename, int64_t total_size,
     }
 
     /* Write the header */
-    memset(&header, 0, sizeof(header));
-    header.magic = cpu_to_be32(QCOW_MAGIC);
-    header.version = cpu_to_be32(QCOW_VERSION);
-    header.cluster_bits = cpu_to_be32(cluster_bits);
-    header.size = cpu_to_be64(0);
-    header.l1_table_offset = cpu_to_be64(0);
-    header.l1_size = cpu_to_be32(0);
-    header.refcount_table_offset = cpu_to_be64(cluster_size);
-    header.refcount_table_clusters = cpu_to_be32(1);
+    QEMU_BUILD_BUG_ON((1 << MIN_CLUSTER_BITS) < sizeof(*header));
+    header = g_malloc0(cluster_size);
+    *header = (QCowHeader) {
+        .magic                      = cpu_to_be32(QCOW_MAGIC),
+        .version                    = cpu_to_be32(QCOW_VERSION),
+        .cluster_bits               = cpu_to_be32(cluster_bits),
+        .size                       = cpu_to_be64(0),
+        .l1_table_offset            = cpu_to_be64(0),
+        .l1_size                    = cpu_to_be32(0),
+        .refcount_table_offset      = cpu_to_be64(cluster_size),
+        .refcount_table_clusters    = cpu_to_be32(1),
+    };
 
     if (flags & BLOCK_FLAG_ENCRYPT) {
-        header.crypt_method = cpu_to_be32(QCOW_CRYPT_AES);
+        header->crypt_method = cpu_to_be32(QCOW_CRYPT_AES);
     } else {
-        header.crypt_method = cpu_to_be32(QCOW_CRYPT_NONE);
+        header->crypt_method = cpu_to_be32(QCOW_CRYPT_NONE);
     }
 
-    ret = bdrv_pwrite(bs, 0, &header, sizeof(header));
+    ret = bdrv_pwrite(bs, 0, header, cluster_size);
+    g_free(header);
     if (ret < 0) {
         goto out;
     }
@@ -1418,11 +1422,6 @@ static int qcow2_co_flush(BlockDriverState *bs)
     qemu_co_mutex_unlock(&s->lock);
 
     return bdrv_co_flush(bs->file);
-}
-
-static int64_t qcow2_vm_state_offset(BDRVQcowState *s)
-{
-	return (int64_t)s->l1_vm_state_index << (s->cluster_bits + s->l2_bits);
 }
 
 static int qcow2_get_info(BlockDriverState *bs, BlockDriverInfo *bdi)

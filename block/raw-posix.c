@@ -644,7 +644,7 @@ static int raw_create(const char *filename, QEMUOptionParameter *options)
         options++;
     }
 
-    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY,
+    fd = open(filename, O_RDWR | O_CREAT | O_TRUNC | O_BINARY,
               0644);
     if (fd < 0) {
         result = -errno;

@@ -1755,15 +1755,9 @@ static void qxl_map(PCIDevice *pci, int region_num,
     }
 }
 
-static void pipe_read(void *opaque)
+static void qxl_update_irq_bh(void *opaque)
 {
     PCIQXLDevice *d = opaque;
-    char dummy;
-    int len;
-
-    do {
-        len = read(d->pipe[0], &dummy, sizeof(dummy));
-    } while (len == sizeof(dummy));
     qxl_update_irq(d);
 }
 
@@ -1772,36 +1766,17 @@ static void qxl_send_events(PCIQXLDevice *d, uint32_t events)
     uint32_t old_pending;
     uint32_t le_events = cpu_to_le32(events);
 
-    assert(qemu_spice_display_is_running(&d->ssd));
+    if (!qemu_spice_display_is_running(&d->ssd)) {
+        /* spice-server tracks guest running state and should not do this */
+        fprintf(stderr, "%s: spice-server bug: guest stopped, ignoring\n",
+                __func__);
+        return;
+    }
     old_pending = __sync_fetch_and_or(&d->ram->int_pending, le_events);
     if ((old_pending & le_events) == le_events) {
         return;
     }
-    if (pthread_self() == d->main) {
-        qxl_update_irq(d);
-    } else {
-        if (write(d->pipe[1], d, 1) != 1) {
-            dprint(d, 1, "%s: write to pipe failed\n", __FUNCTION__);
-        }
-    }
-}
-
-static void init_pipe_signaling(PCIQXLDevice *d)
-{
-   if (pipe(d->pipe) < 0) {
-       dprint(d, 1, "%s: pipe creation failed\n", __FUNCTION__);
-       return;
-   }
-#ifdef CONFIG_IOTHREAD
-   fcntl(d->pipe[0], F_SETFL, O_NONBLOCK);
-#else
-   fcntl(d->pipe[0], F_SETFL, O_NONBLOCK /* | O_ASYNC */);
-#endif
-   fcntl(d->pipe[1], F_SETFL, O_NONBLOCK);
-   fcntl(d->pipe[0], F_SETOWN, getpid());
-
-   d->main = pthread_self();
-   qemu_set_fd_handler(d->pipe[0], pipe_read, NULL, d);
+    qemu_bh_schedule(d->update_irq);
 }
 
 /* graphics console */
@@ -2058,7 +2033,7 @@ static int qxl_init_common(PCIQXLDevice *qxl)
     qemu_spice_add_interface(&qxl->ssd.qxl.base);
     qemu_add_vm_change_state_handler(qxl_vm_change_state_handler, qxl);
 
-    init_pipe_signaling(qxl);
+    qxl->update_irq = qemu_bh_new(qxl_update_irq_bh, qxl);
     qxl_reset_state(qxl);
 
     qxl->update_area_bh = qemu_bh_new(qxl_render_update_area_bh, qxl);

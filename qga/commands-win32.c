@@ -14,9 +14,12 @@
 #include <glib.h>
 #include <wtypes.h>
 #include <powrprof.h>
+#include <lm.h>
+
 #include "qga/guest-agent-core.h"
 #include "qga-qmp-commands.h"
 #include "qerror.h"
+#include "qemu/base64.h"
 
 #ifndef SHTDN_REASON_FLAG_PLANNED
 #define SHTDN_REASON_FLAG_PLANNED 0x80000000
@@ -361,6 +364,105 @@ int64_t qmp_guest_set_vcpus(GuestLogicalProcessorList *vcpus, Error **errp)
 {
     error_set(errp, QERR_UNSUPPORTED);
     return -1;
+}
+
+static gchar *
+get_net_error_message(gint error)
+{
+    HMODULE module = NULL;
+    gchar *retval = NULL;
+    wchar_t *msg = NULL;
+    int flags;
+    size_t nchars;
+
+    flags = FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_IGNORE_INSERTS |
+        FORMAT_MESSAGE_FROM_SYSTEM;
+
+    if (error >= NERR_BASE && error <= MAX_NERR) {
+        module = LoadLibraryExW(L"netmsg.dll", NULL, LOAD_LIBRARY_AS_DATAFILE);
+
+        if (module != NULL) {
+            flags |= FORMAT_MESSAGE_FROM_HMODULE;
+        }
+    }
+
+    FormatMessageW(flags, module, error, 0, (LPWSTR)&msg, 0, NULL);
+
+    if (msg != NULL) {
+        nchars = wcslen(msg);
+
+        if (nchars >= 2 &&
+            msg[nchars - 1] == L'\n' &&
+            msg[nchars - 2] == L'\r') {
+            msg[nchars - 2] = L'\0';
+        }
+
+        retval = g_utf16_to_utf8(msg, -1, NULL, NULL, NULL);
+
+        LocalFree(msg);
+    }
+
+    if (module != NULL) {
+        FreeLibrary(module);
+    }
+
+    return retval;
+}
+
+void qmp_guest_set_user_password(const char *username,
+                                 const char *password,
+                                 bool crypted,
+                                 Error **errp)
+{
+    NET_API_STATUS nas;
+    char *rawpasswddata = NULL;
+    size_t rawpasswdlen;
+    wchar_t *user = NULL, *wpass = NULL;
+    USER_INFO_1003 pi1003 = { 0, };
+    GError *gerr = NULL;
+
+    if (crypted) {
+        error_setg(errp, QERR_UNSUPPORTED);
+        return;
+    }
+
+    rawpasswddata = (char *)qbase64_decode(password, -1, &rawpasswdlen, errp);
+    if (!rawpasswddata) {
+        return;
+    }
+    rawpasswddata = g_renew(char, rawpasswddata, rawpasswdlen + 1);
+    rawpasswddata[rawpasswdlen] = '\0';
+
+    user = g_utf8_to_utf16(username, -1, NULL, NULL, &gerr);
+    if (!user) {
+        goto done;
+    }
+
+    wpass = g_utf8_to_utf16(rawpasswddata, -1, NULL, NULL, &gerr);
+    if (!wpass) {
+        goto done;
+    }
+
+    pi1003.usri1003_password = wpass;
+    nas = NetUserSetInfo(NULL, user,
+                         1003, (LPBYTE)&pi1003,
+                         NULL);
+
+    if (nas != NERR_Success) {
+        gchar *msg = get_net_error_message(nas);
+        error_setg(errp, "failed to set password: %s", msg);
+        g_free(msg);
+    }
+
+done:
+    if (gerr) {
+        error_setg(errp, QERR_QGA_COMMAND_FAILED, gerr->message);
+        g_error_free(gerr);
+    }
+    g_free(user);
+    g_free(wpass);
+    g_free(rawpasswddata);
 }
 
 /* register init/cleanup routines for stateful command groups */

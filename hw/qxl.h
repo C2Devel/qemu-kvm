@@ -71,8 +71,7 @@ typedef struct PCIQXLDevice {
     QemuMutex          track_lock;
 
     /* thread signaling */
-    pthread_t          main;
-    int                pipe[2];
+    QEMUBH             *update_irq;
 
     /* ram pci bar */
     QXLRam             *ram;

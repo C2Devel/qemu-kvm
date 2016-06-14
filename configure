@@ -33,6 +33,7 @@ prefix=""
 interp_prefix="/usr/gnemul/qemu-%M"
 static="no"
 sysconfdir=""
+confsuffix="qemu"
 local_statedir=""
 sparc_cpu=""
 cross_prefix=""
@@ -447,7 +448,7 @@ if test "$mingw32" = "yes" ; then
   EXESUF=".exe"
   QEMU_CFLAGS="-DWIN32_LEAN_AND_MEAN -DWINVER=0x501 $QEMU_CFLAGS"
   LIBS="-lwinmm -lws2_32 -liphlpapi $LIBS"
-  libs_qga="-lws2_32 -lwinmm -lpowrprof $libs_qga"
+  libs_qga="-lws2_32 -lwinmm -lpowrprof -lnetapi32 $libs_qga"
 fi
 
 # find source path
@@ -500,6 +501,8 @@ for opt do
   --static) static="yes"
   ;;
   --sysconfdir=*) sysconfdir="$optarg"
+  ;;
+  --with-confsuffix=*) confsuffix="$optarg"
   ;;
   --localstatedir=*) local_statedir="$optarg"
   ;;
@@ -814,6 +817,7 @@ echo "  --make=MAKE              use specified make [$make]"
 echo "  --install=INSTALL        use specified install [$install]"
 echo "  --static                 enable static build [$static]"
 echo "  --sysconfdir=PATH        install config in PATH"
+echo "  --with-confsuffix=SUFFIX suffix for Qemu data inside sysconfigdir [$confsuffix]"   
 echo "  --localstatedir=PATH     install local state in PATH (set at runtime on win32)"
 echo "  --enable-debug-tcg       enable TCG debugging"
 echo "  --disable-debug-tcg      disable TCG debugging (default)"
@@ -2475,7 +2479,7 @@ echo "CONFIG_QEMU_SHAREDIR=\"$prefix$datasuffix\"" >> $config_host_mak
 if test "$mingw32" = "yes" ; then
   echo "CONFIG_QEMU_CONFDIR=\"$sysconfdir\"" >> $config_host_mak
 else
-  echo "CONFIG_QEMU_CONFDIR=\"${sysconfdir}/qemu\"" >> $config_host_mak
+  echo "CONFIG_QEMU_CONFDIR=\"${sysconfdir}/${confsuffix}\"" >> $config_host_mak
 fi
 
 case "$cpu" in

@@ -31,6 +31,7 @@ static struct kvm_msr_list *kvm_msr_list;
 extern unsigned int kvm_shadow_memory;
 static int kvm_has_msr_star;
 static int kvm_has_vm_hsave_pa;
+static bool has_msr_tsc_aux;
 static int has_msr_tsc_deadline;
 
 static int lm_capable_kernel;
@@ -828,6 +829,8 @@ int kvm_arch_qemu_create_context(void)
 	    kvm_has_msr_star = 1;
         if (kvm_msr_list->indices[i] == MSR_VM_HSAVE_PA)
             kvm_has_vm_hsave_pa = 1;
+        if (kvm_msr_list->indices[i] == MSR_TSC_AUX)
+            has_msr_tsc_aux = true;
         if (kvm_msr_list->indices[i] == MSR_IA32_TSCDEADLINE)
             has_msr_tsc_deadline = 1;
     }
@@ -878,6 +881,9 @@ static int get_msr_entry(struct kvm_msr_entry *entry, CPUState *env)
             break;
         case MSR_VM_HSAVE_PA:
             env->vm_hsave     = entry->data;
+            break;
+        case MSR_TSC_AUX:
+            env->tsc_aux      = entry->data;
             break;
         case MSR_IA32_TSCDEADLINE:
             env->tsc_deadline = entry->data;
@@ -1127,6 +1133,8 @@ void kvm_arch_load_regs(CPUState *env)
 	set_msr_entry(&msrs[n++], MSR_STAR,              env->star);
     if (kvm_has_vm_hsave_pa)
         set_msr_entry(&msrs[n++], MSR_VM_HSAVE_PA, env->vm_hsave);
+    if (has_msr_tsc_aux)
+        set_msr_entry(&msrs[n++], MSR_TSC_AUX, env->tsc_aux);
     if (has_msr_tsc_deadline)
         set_msr_entry(&msrs[n++], MSR_IA32_TSCDEADLINE, env->tsc_deadline);
 #ifdef TARGET_X86_64
@@ -1400,6 +1408,8 @@ void kvm_arch_save_regs(CPUState *env)
 
     if (kvm_has_vm_hsave_pa)
         msrs[n++].index = MSR_VM_HSAVE_PA;
+    if (has_msr_tsc_aux)
+        msrs[n++].index = MSR_TSC_AUX;
     if (has_msr_tsc_deadline)
         msrs[n++].index = MSR_IA32_TSCDEADLINE;
 #ifdef TARGET_X86_64

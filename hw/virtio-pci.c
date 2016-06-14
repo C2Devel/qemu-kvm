@@ -959,15 +959,15 @@ static int virtio_rng_init_pci(PCIDevice *pci_dev)
     VirtIODevice *vdev;
     char *path;
 
-    path = g_strdup_printf("/objects/%s", proxy->rng.name);
-    proxy->rng.rng = RNG_BACKEND(object_resolve_path_type(path,
-                                 TYPE_RNG_BACKEND, NULL));
-    g_free(path);
-
     if (proxy->rng.name == NULL) {
         Object *obj = object_new(TYPE_RNG_RANDOM);
-        proxy->rng.default_backend = RNG_RANDOM(obj);
         proxy->rng.rng = RNG_BACKEND(obj);
+    } else {
+        path = g_strdup_printf("/objects/%s", proxy->rng.name);
+        proxy->rng.rng = RNG_BACKEND(object_resolve_path_type(path,
+                                     TYPE_RNG_BACKEND, NULL));
+        object_ref(OBJECT(proxy->rng.rng));
+        g_free(path);
     }
 
     vdev = virtio_rng_init(&pci_dev->qdev, &proxy->rng);

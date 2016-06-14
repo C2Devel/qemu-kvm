@@ -106,9 +106,9 @@
 
 %define buildid %{nil}
 
-%define zrelease 4
+%define zrelease 1
 %define sublevel 0.12.1.2
-%define pkgrelease 2.479
+%define pkgrelease 2.491
 
 %define rpmversion %{sublevel}
 %define full_release %{pkgrelease}%{?dist}.%{zrelease}%{?buildid}
@@ -8937,28 +8937,101 @@ Patch5154: kvm-vdi-Avoid-direct-AIO-callback.patch
 Patch5155: kvm-vdi-Initialize-acb-bh-in-vdi_aio_setup.patch
 # For bz#1233292 - 
 Patch5156: kvm-posix-aio-compat-fix-acb-ev_signo-race-condition.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5157: kvm-rtl8139-avoid-nested-ifs-in-IP-header-parsing-CVE-20.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5158: kvm-rtl8139-drop-tautologous-if-ip-.-statement-CVE-2015-.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5159: kvm-rtl8139-skip-offload-on-short-Ethernet-IP-header-CVE.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5160: kvm-rtl8139-check-IP-Header-Length-field-CVE-2015-5165.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5161: kvm-rtl8139-check-IP-Total-Length-field-CVE-2015-5165.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5162: kvm-rtl8139-skip-offload-on-short-TCP-header-CVE-2015-51.patch
-# For bz#1248761 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z]
-Patch5163: kvm-rtl8139-check-TCP-Data-Offset-field-CVE-2015-5165.patch
-# For bz#1263274 - CVE-2015-5279 qemu-kvm: qemu: Heap overflow vulnerability in ne2000_receive() function [rhel-6.7.z]
-Patch5164: kvm-net-add-checks-to-validate-ring-buffer-pointers-CVE-.patch
-# For bz#1287950 - CVE-2015-7504 CVE-2015-7512 qemu-kvm: various flaws [rhel-6.7.z]
-Patch5165: kvm-net-pcnet-add-check-to-validate-receive-data-size-CV.patch
-# For bz#1287950 - CVE-2015-7504 CVE-2015-7512 qemu-kvm: various flaws [rhel-6.7.z]
-Patch5166: kvm-pcnet-fix-rx-buffer-overflow-CVE-2015-7512.patch
-# For bz#1298045 - CVE-2016-1714 qemu-kvm: Qemu: nvram: OOB r/w access in processing firmware configurations [rhel-6.7.z]
-Patch5167: kvm-fw_cfg-add-check-to-validate-current-entry-value-CVE.patch
+# For bz#1230068 - Segmentation fault when re-adding virtio-rng-pci device
+Patch5157: kvm-virtio-rng-fix-segfault-when-adding-a-virtio-pci-rng.patch
+# For bz#1213236 - [virtagent] 'guest-fstrim' failed for guest with os on spapr-vscsi disk
+Patch5158: kvm-qga-commands-posix-Fix-bug-in-guest-fstrim.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5159: kvm-rtl8139-avoid-nested-ifs-in-IP-header-parsing-CVE-20.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5160: kvm-rtl8139-drop-tautologous-if-ip-.-statement-CVE-2015-.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5161: kvm-rtl8139-skip-offload-on-short-Ethernet-IP-header-CVE.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5162: kvm-rtl8139-check-IP-Header-Length-field-CVE-2015-5165.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5163: kvm-rtl8139-check-IP-Total-Length-field-CVE-2015-5165.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5164: kvm-rtl8139-skip-offload-on-short-TCP-header-CVE-2015-51.patch
+# For bz#1248763 - CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8]
+Patch5165: kvm-rtl8139-check-TCP-Data-Offset-field-CVE-2015-5165.patch
+# For bz#1263275 - CVE-2015-5279 qemu-kvm: qemu: Heap overflow vulnerability in ne2000_receive() function [rhel-6.8]
+Patch5166: kvm-net-add-checks-to-validate-ring-buffer-pointers-CVE-.patch
+# For bz#1265428 - contents of MSR_TSC_AUX are not migrated
+Patch5167: kvm-qemu-kvm-get-put-MSR_TSC_AUX-across-reset-and-migrat.patch
+# For bz#1219908 - Writing snapshots with "virsh snapshot-create-as" command slows as more snapshots are created
+Patch5168: kvm-qcow2-Discard-VM-state-in-active-L1-after-creating-s.patch
+# For bz#1286597 - CVE-2015-7504 qemu-kvm: Qemu: net: pcnet: heap overflow vulnerability in pcnet_receive [rhel-6.8]
+Patch5169: kvm-net-pcnet-add-check-to-validate-receive-data-size-CV.patch
+# For bz#1286567 - CVE-2015-7512 qemu-kvm: Qemu: net: pcnet: buffer overflow in non-loopback mode [rhel-6.8]
+Patch5170: kvm-pcnet-fix-rx-buffer-overflow-CVE-2015-7512.patch
+# For bz#1262866 - [RHEL6] Package is 100% lost when ping from host to Win2012r2 guest with 64000 size
+Patch5171: kvm-rtl8139-Fix-receive-buffer-overflow-check.patch
+# For bz#1262866 - [RHEL6] Package is 100% lost when ping from host to Win2012r2 guest with 64000 size
+Patch5172: kvm-rtl8139-Do-not-consume-the-packet-during-overflow-in.patch
+# For bz#1210246 - [virtagent]The 'write' content is lost if 'read' it before flush through guest agent
+Patch5173: kvm-qga-flush-explicitly-when-needed.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root/administrator account password
+Patch5174: kvm-qga-add-guest-set-user-password-command.patch
+# For bz#1223216 - qemu-img can not create qcow2 image when backend is block device
+Patch5175: kvm-qcow2-Zero-initialise-first-cluster-for-new-images.patch
+# For bz#1297424 - Add warning about running qemu-img on active VMs to its manpage
+Patch5176: kvm-Documentation-Warn-against-qemu-img-on-active-image.patch
+# For bz#1250442 - qemu-doc.html bad markup in section 3.3 Invocation
+Patch5178: kvm-qemu-options-Fix-texinfo-markup.patch
+Patch5179: kvm-qga-Fix-memory-allocation-pasto.patch
+# For bz#1268347 - posix_fallocate emulation on NFS fails with Bad file descriptor if fd is opened O_WRONLY
+Patch5180: kvm-block-raw-posix-Open-file-descriptor-O_RDWR-to-work-.patch
+# For bz#1213233 - [virtagent] The default path '/etc/qemu/fsfreeze-hook' for 'fsfreeze-hook' script doesn't exist
+Patch5181: kvm-Change-fsfreeze-hook-default-location.patch
+# For bz#1290743 - qemu-kvm core dumped when repeat system_reset 20 times during guest boot
+Patch5182: kvm-qxl-replace-pipe-signaling-with-bottom-half.patch
+# For bz#1294619 - Guest should failed to boot if set iops,bps to negative number
+Patch5183: kvm-blockdev-Error-out-on-negative-throttling-option-val.patch
+# For bz#1298046 - CVE-2016-1714 qemu-kvm: Qemu: nvram: OOB r/w access in processing firmware configurations [rhel-6.8]
+Patch5184: kvm-fw_cfg-add-check-to-validate-current-entry-value-CVE.patch
+# For bz#1249740 - Segfault occurred at Dst VM while completed migration upon ENOSPC
+Patch5185: kvm-virtio-scsi-use-virtqueue_map_sg-when-loading-reques.patch
+# For bz#1249740 - Segfault occurred at Dst VM while completed migration upon ENOSPC
+Patch5186: kvm-scsi-disk-fix-cmd.mode-field-typo.patch
+# For bz#1290743 - qemu-kvm core dumped when repeat system_reset 20 times during guest boot
+Patch5187: kvm-hw-qxl-qxl_send_events-nop-if-stopped.patch
+# For bz#971312 - block: Mirroring to raw block device doesn't zero out unused blocks
+Patch5188: kvm-block-mirror-fix-full-sync-mode-when-target-does-not.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5189: kvm-qemu-ga-implement-win32-guest-set-user-password.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5190: kvm-util-add-base64-decoding-function.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5191: kvm-qga-convert-to-use-error-checked-base64-decode.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5192: kvm-qga-use-more-idiomatic-qemu-style-eol-operators.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5193: kvm-qga-use-size_t-for-wcslen-return-value.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5194: kvm-qga-use-wide-chars-constants-for-wchar_t-comparisons.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5195: kvm-qga-fix-off-by-one-length-check.patch
+# For bz#1174181 - RFE: provide QEMU guest agent command for setting root account password (Linux guest)
+Patch5196: kvm-qga-check-utf8-to-utf16-conversion.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5197: kvm-Add-vga.h-unmodified-from-Linux.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5198: kvm-vga.h-remove-unused-stuff-and-reformat.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5199: kvm-vga-use-constants-from-vga.h.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5200: kvm-vga-Remove-some-should-be-done-in-BIOS-comments.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5201: kvm-vga-fix-banked-access-bounds-checking-CVE-2016-3710.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5202: kvm-vga-add-vbe_enabled-helper.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5203: kvm-vga-factor-out-vga-register-setup.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5204: kvm-vga-update-vga-register-setup-on-vbe-changes.patch
+# For bz#1331407 - EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z]
+Patch5205: kvm-vga-make-sure-vga-register-setup-for-vbe-stays-intac.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -13281,6 +13354,43 @@ MakeIOtestsExecutable()
 %patch5165 -p1
 %patch5166 -p1
 %patch5167 -p1
+%patch5168 -p1
+%patch5169 -p1
+%patch5170 -p1
+%patch5171 -p1
+%patch5172 -p1
+%patch5173 -p1
+%patch5174 -p1
+%patch5175 -p1
+%patch5176 -p1
+%patch5178 -p1
+%patch5179 -p1
+%patch5180 -p1
+%patch5181 -p1
+%patch5182 -p1
+%patch5183 -p1
+%patch5184 -p1
+%patch5185 -p1
+%patch5186 -p1
+%patch5187 -p1
+%patch5188 -p1
+%patch5189 -p1
+%patch5190 -p1
+%patch5191 -p1
+%patch5192 -p1
+%patch5193 -p1
+%patch5194 -p1
+%patch5195 -p1
+%patch5196 -p1
+%patch5197 -p1
+%patch5198 -p1
+%patch5199 -p1
+%patch5200 -p1
+%patch5201 -p1
+%patch5202 -p1
+%patch5203 -p1
+%patch5204 -p1
+%patch5205 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -13319,7 +13429,8 @@ buildldflags="VL_LDFLAGS=-Wl,--build-id"
 
 %define qemu_ga_build_flags --prefix=%{_prefix} \\\
              --localstatedir=%{_localstatedir} \\\
-             --sysconfdir=%{_sysconfdir} \\\
+             --sysconfdir=%{_libexecdir} \\\
+             --with-confsuffix=qemu-ga \\\
              --disable-strip \\\
              --disable-xen \\\
              --block-drv-rw-whitelist=qcow2,raw,file,host_device,host_cdrom,qed,%{blk_drv_qcow2_gluster}rbd \\\
@@ -13666,37 +13777,137 @@ fi
 %endif # with qemu_kvm
 
 %changelog
-* Mon Jan 25 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.479.el6_7.4
-- kvm-fw_cfg-add-check-to-validate-current-entry-value-CVE.patch [bz#1298045]
-- Resolves: bz#1298045
-  (CVE-2016-1714 qemu-kvm: Qemu: nvram: OOB r/w access in processing firmware configurations [rhel-6.7.z])
+* Tue May 03 2016 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.491.el6_8.1
+- kvm-Add-vga.h-unmodified-from-Linux.patch [bz#1331407]
+- kvm-vga.h-remove-unused-stuff-and-reformat.patch [bz#1331407]
+- kvm-vga-use-constants-from-vga.h.patch [bz#1331407]
+- kvm-vga-Remove-some-should-be-done-in-BIOS-comments.patch [bz#1331407]
+- kvm-vga-fix-banked-access-bounds-checking-CVE-2016-3710.patch [bz#1331407]
+- kvm-vga-add-vbe_enabled-helper.patch [bz#1331407]
+- kvm-vga-factor-out-vga-register-setup.patch [bz#1331407]
+- kvm-vga-update-vga-register-setup-on-vbe-changes.patch [bz#1331407]
+- kvm-vga-make-sure-vga-register-setup-for-vbe-stays-intac.patch [bz#1331407]
+- Resolves: bz#1331407
+  (EMBARGOED CVE-2016-3710 qemu-kvm: qemu: incorrect banked access bounds checking in vga module [rhel-6.8.z])
 
-* Wed Dec 16 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.479.el6_7.3
-- kvm-net-pcnet-add-check-to-validate-receive-data-size-CV.patch [bz#1287950]
-- kvm-pcnet-fix-rx-buffer-overflow-CVE-2015-7512.patch [bz#1287950]
-- Resolves: bz#1287950
-  (CVE-2015-7504 CVE-2015-7512 qemu-kvm: various flaws [rhel-6.7.z])
+* Wed Mar 30 2016 Miroslav Rezanina <mrezanin@redhat.com> - 0.12.1.2-2.491.el6
+- Revert "warning when  CPU threads>1 for non-Intel CPUs" fix
 
-* Mon Sep 28 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.479.el6_7.2
-- kvm-net-add-checks-to-validate-ring-buffer-pointers-CVE-.patch [bz#1263274]
-- Resolves: bz#1263274
-  (CVE-2015-5279 qemu-kvm: qemu: Heap overflow vulnerability in ne2000_receive() function [rhel-6.7.z])
+* Mon Feb 29 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.490.el6
+- kvm-qemu-ga-implement-win32-guest-set-user-password.patch [bz#1174181]
+- kvm-util-add-base64-decoding-function.patch [bz#1174181]
+- kvm-qga-convert-to-use-error-checked-base64-decode.patch [bz#1174181]
+- kvm-qga-use-more-idiomatic-qemu-style-eol-operators.patch [bz#1174181]
+- kvm-qga-use-size_t-for-wcslen-return-value.patch [bz#1174181]
+- kvm-qga-use-wide-chars-constants-for-wchar_t-comparisons.patch [bz#1174181]
+- kvm-qga-fix-off-by-one-length-check.patch [bz#1174181]
+- kvm-qga-check-utf8-to-utf16-conversion.patch [bz#1174181]
+- Resolves: bz#1174181
+  (RFE: provide QEMU guest agent command for setting root account password (Linux guest))
 
-* Thu Aug 06 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.479.el6_7.1
-- kvm-rtl8139-avoid-nested-ifs-in-IP-header-parsing-CVE-20.patch [bz#1248761]
-- kvm-rtl8139-drop-tautologous-if-ip-.-statement-CVE-2015-.patch [bz#1248761]
-- kvm-rtl8139-skip-offload-on-short-Ethernet-IP-header-CVE.patch [bz#1248761]
-- kvm-rtl8139-check-IP-Header-Length-field-CVE-2015-5165.patch [bz#1248761]
-- kvm-rtl8139-check-IP-Total-Length-field-CVE-2015-5165.patch [bz#1248761]
-- kvm-rtl8139-skip-offload-on-short-TCP-header-CVE-2015-51.patch [bz#1248761]
-- kvm-rtl8139-check-TCP-Data-Offset-field-CVE-2015-5165.patch [bz#1248761]
-- Resolves: bz#1248761
-  (CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.7.z])
+* Thu Feb 18 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.489.el6
+- kvm-hw-qxl-qxl_send_events-nop-if-stopped.patch [bz#1290743]
+- kvm-block-mirror-fix-full-sync-mode-when-target-does-not.patch [bz#971312]
+- Resolves: bz#1290743
+  (qemu-kvm core dumped when repeat system_reset 20 times during guest boot)
+- Resolves: bz#971312
+  (block: Mirroring to raw block device doesn't zero out unused blocks)
+
+* Mon Feb 08 2016 Miroslav Rezanina <mrezanin@redhat.com - 0.12.1.2-2.488.el6
+- Fixed qemu-ga path configuration [bz#1213233]
+- Resolves: bz#1213233
+  ([virtagent] The default path '/etc/qemu/fsfreeze-hook' for 'fsfreeze-hook' script doesn't exist)
+
+* Fri Jan 29 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.487.el6
+- kvm-virtio-scsi-use-virtqueue_map_sg-when-loading-reques.patch [bz#1249740]
+- kvm-scsi-disk-fix-cmd.mode-field-typo.patch [bz#1249740]
+- Resolves: bz#1249740
+  (Segfault occurred at Dst VM while completed migration upon ENOSPC)
+
+* Mon Jan 25 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.486.el6
+- kvm-blockdev-Error-out-on-negative-throttling-option-val.patch [bz#1294619]
+- kvm-fw_cfg-add-check-to-validate-current-entry-value-CVE.patch [bz#1298046]
+- Resolves: bz#1294619
+  (Guest should failed to boot if set iops,bps to negative number)
+- Resolves: bz#1298046
+  (CVE-2016-1714 qemu-kvm: Qemu: nvram: OOB r/w access in processing firmware configurations [rhel-6.8])
+
+* Thu Jan 21 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.485.el6
+- kvm-Change-fsfreeze-hook-default-location.patch [bz#1213233]
+- kvm-qxl-replace-pipe-signaling-with-bottom-half.patch [bz#1290743]
+- Resolves: bz#1213233
+  ([virtagent] The default path '/etc/qemu/fsfreeze-hook' for 'fsfreeze-hook' script doesn't exist)
+- Resolves: bz#1290743
+  (qemu-kvm core dumped when repeat system_reset 20 times during guest boot)
+
+* Mon Jan 18 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.484.el6
+- kvm-qga-flush-explicitly-when-needed.patch [bz#1210246]
+- kvm-qga-add-guest-set-user-password-command.patch [bz#1174181]
+- kvm-qcow2-Zero-initialise-first-cluster-for-new-images.patch [bz#1223216]
+- kvm-Documentation-Warn-against-qemu-img-on-active-image.patch [bz#1297424]
+- kvm-target-i386-warns-users-when-CPU-threads-1-for-non-I.patch [bz#1292678]
+- kvm-qemu-options-Fix-texinfo-markup.patch [bz#1250442]
+- kvm-qga-Fix-memory-allocation-pasto.patch []
+- kvm-block-raw-posix-Open-file-descriptor-O_RDWR-to-work-.patch [bz#1268347]
+- Resolves: bz#1174181
+  (RFE: provide QEMU guest agent command for setting root/administrator account password)
+- Resolves: bz#1210246
+  ([virtagent]The 'write' content is lost if 'read' it before flush through guest agent)
+- Resolves: bz#1223216
+  (qemu-img can not create qcow2 image when backend is block device)
+- Resolves: bz#1250442
+  (qemu-doc.html bad markup in section 3.3 Invocation)
+- Resolves: bz#1268347
+  (posix_fallocate emulation on NFS fails with Bad file descriptor if fd is opened O_WRONLY)
+- Resolves: bz#1292678
+  (Qemu should report error when cmdline set threads=2 in amd host)
+- Resolves: bz#1297424
+  (Add warning about running qemu-img on active VMs to its manpage)
+
+* Tue Jan 05 2016 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.483.el6
+- kvm-rtl8139-Fix-receive-buffer-overflow-check.patch [bz#1262866]
+- kvm-rtl8139-Do-not-consume-the-packet-during-overflow-in.patch [bz#1262866]
+- Resolves: bz#1262866
+  ([RHEL6] Package is 100% lost when ping from host to Win2012r2 guest with 64000 size)
+
+* Tue Dec 15 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.482.el6
+- kvm-qemu-kvm-get-put-MSR_TSC_AUX-across-reset-and-migrat.patch [bz#1265428]
+- kvm-qcow2-Discard-VM-state-in-active-L1-after-creating-s.patch [bz#1219908]
+- kvm-net-pcnet-add-check-to-validate-receive-data-size-CV.patch [bz#1286597]
+- kvm-pcnet-fix-rx-buffer-overflow-CVE-2015-7512.patch [bz#1286567]
+- Resolves: bz#1219908
+  (Writing snapshots with "virsh snapshot-create-as" command slows as more snapshots are created)
+- Resolves: bz#1265428
+  (contents of MSR_TSC_AUX are not migrated)
+- Resolves: bz#1286567
+  (CVE-2015-7512 qemu-kvm: Qemu: net: pcnet: buffer overflow in non-loopback mode [rhel-6.8])
+
+* Mon Sep 28 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.481.el6
+- kvm-net-add-checks-to-validate-ring-buffer-pointers-CVE-.patch [bz#1263275]
+- Resolves: bz#1263275
+  (CVE-2015-5279 qemu-kvm: qemu: Heap overflow vulnerability in ne2000_receive() function [rhel-6.8])
+
+* Thu Aug 06 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.480.el6
+- kvm-virtio-rng-fix-segfault-when-adding-a-virtio-pci-rng.patch [bz#1230068]
+- kvm-qga-commands-posix-Fix-bug-in-guest-fstrim.patch [bz#1213236]
+- kvm-rtl8139-avoid-nested-ifs-in-IP-header-parsing-CVE-20.patch [bz#1248763]
+- kvm-rtl8139-drop-tautologous-if-ip-.-statement-CVE-2015-.patch [bz#1248763]
+- kvm-rtl8139-skip-offload-on-short-Ethernet-IP-header-CVE.patch [bz#1248763]
+- kvm-rtl8139-check-IP-Header-Length-field-CVE-2015-5165.patch [bz#1248763]
+- kvm-rtl8139-check-IP-Total-Length-field-CVE-2015-5165.patch [bz#1248763]
+- kvm-rtl8139-skip-offload-on-short-TCP-header-CVE-2015-51.patch [bz#1248763]
+- kvm-rtl8139-check-TCP-Data-Offset-field-CVE-2015-5165.patch [bz#1248763]
+- Resolves: bz#1213236
+  ([virtagent] 'guest-fstrim' failed for guest with os on spapr-vscsi disk)
+- Resolves: bz#1230068
+  (Segmentation fault when re-adding virtio-rng-pci device)
+- Resolves: bz#1248763
+  (CVE-2015-5165 qemu-kvm: Qemu: rtl8139 uninitialized heap memory information leakage to guest [rhel-6.8])
 
 * Mon Jun 22 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.479.el6
 - kvm-posix-aio-compat-fix-acb-ev_signo-race-condition.patch [bz#1233292]
 - Resolves: bz#1233292
-  (qemu-kvm randomly crashes with "kill failed failed: Invalid argument")
+  ()
 
 * Wed Jun 03 2015 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.478.el6
 - kvm-vdi-Avoid-direct-AIO-callback.patch [bz#1130046]

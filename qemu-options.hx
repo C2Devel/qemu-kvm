@@ -2203,10 +2203,6 @@ Normally QEMU loads a configuration file from @var{sysconfdir}/qemu.conf and
 option will prevent QEMU from loading these configuration files at startup.
 ETEXI
 
-STEXI
-@end table
-ETEXI
-
 #if defined(TARGET_SPARC) || defined(TARGET_PPC)
 DEF("prom-env", HAS_ARG, QEMU_OPTION_prom_env,
     "-prom-env variable=value\n"
@@ -2301,4 +2297,9 @@ STEXI
 @findex -dump-vmstate
 Dump json-encoded vmstate information for current machine type to file
 in @var{file}
+ETEXI
+
+HXCOMM This is the last statement. Insert new options before this line!
+STEXI
+@end table
 ETEXI

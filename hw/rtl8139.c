@@ -1142,7 +1142,9 @@ static ssize_t rtl8139_do_receive(VLANClientState *nc, const uint8_t *buf, size_
 
         /* if receiver buffer is empty then avail == 0 */
 
-        if (avail != 0 && size + 8 >= avail)
+#define RX_ALIGN(x) (((x) + 3) & ~0x3)
+
+        if (avail != 0 && RX_ALIGN(size + 8) >= avail)
         {
             DEBUG_PRINT(("rx overflow: rx buffer length %d head 0x%04x read 0x%04x === available 0x%04x need 0x%04x\n",
                    s->RxBufferSize, s->RxBufAddr, s->RxBufPtr, avail, size + 8));
@@ -1150,7 +1152,7 @@ static ssize_t rtl8139_do_receive(VLANClientState *nc, const uint8_t *buf, size_
             s->IntrStatus |= RxOverflow;
             ++s->RxMissed;
             rtl8139_update_irq(s);
-            return size_;
+            return 0;
         }
 
         packet_header |= RxStatusOK;
@@ -1169,7 +1171,7 @@ static ssize_t rtl8139_do_receive(VLANClientState *nc, const uint8_t *buf, size_
         rtl8139_write_buffer(s, (uint8_t *)&val, 4);
 
         /* correct buffer write pointer */
-        s->RxBufAddr = MOD2((s->RxBufAddr + 3) & ~0x3, s->RxBufferSize);
+        s->RxBufAddr = MOD2(RX_ALIGN(s->RxBufAddr), s->RxBufferSize);
 
         /* now we can signal we have received something */
 
