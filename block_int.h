@@ -223,6 +223,9 @@ struct BlockDriver {
     QLIST_ENTRY(BlockDriver) list;
 };
 
+typedef struct BlockLimits {
+} BlockLimits;
+
 /*
  * Note: the function bdrv_append() copies and swaps contents of
  * BlockDriverStates, so if you add new fields to this struct, please
@@ -274,6 +277,9 @@ struct BlockDriverState {
     uint64_t nr_ops[BDRV_MAX_IOTYPE];
     uint64_t total_time_ns[BDRV_MAX_IOTYPE];
     uint64_t wr_highest_sector;
+
+    /* I/O Limits */
+    BlockLimits bl;
 
     /* Whether the disk can expand beyond total_sectors */
     int growable;
