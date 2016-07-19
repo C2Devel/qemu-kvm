@@ -672,6 +672,7 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     bs->valid_key = 0;
     bs->open_flags = flags;
     bs->guest_block_size = 512;
+    bs->request_alignment = 512;
     bs->zero_beyond_eof = true;
 
     open_flags = flags;
@@ -728,6 +729,8 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     }
 
     bdrv_refresh_limits(bs);
+    assert(bdrv_opt_mem_align(bs) != 0);
+    assert(bs->request_alignment != 0);
 
 #ifndef _WIN32
     if (bs->is_temporary) {
