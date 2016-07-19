@@ -401,6 +401,33 @@ int bdrv_create_file(const char* filename, QEMUOptionParameter *options)
     return bdrv_create(drv, filename, options);
 }
 
+int bdrv_refresh_limits(BlockDriverState *bs)
+{
+    BlockDriver *drv = bs->drv;
+
+    memset(&bs->bl, 0, sizeof(bs->bl));
+
+    if (!drv) {
+        return 0;
+    }
+
+    /* Take some limits from the children as a default */
+    if (bs->file) {
+        bdrv_refresh_limits(bs->file);
+    }
+
+    if (bs->backing_hd) {
+        bdrv_refresh_limits(bs->backing_hd);
+    }
+
+    /* Then let the driver override it */
+    if (drv->bdrv_refresh_limits) {
+        return drv->bdrv_refresh_limits(bs);
+    }
+
+    return 0;
+}
+
 /*
  * Create a uniquely-named empty temporary file.
  * Return 0 upon success, otherwise a negative errno value.
@@ -685,6 +712,8 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
         goto free_and_fail;
     }
 
+    bdrv_refresh_limits(bs);
+
 #ifndef _WIN32
     if (bs->is_temporary) {
         unlink(filename);
@@ -845,6 +874,9 @@ int bdrv_open(BlockDriverState *bs, const char *filename, int flags,
             bdrv_close(bs);
             return ret;
         }
+
+        /* Recalculate the BlockLimits with the backing file */
+        bdrv_refresh_limits(bs);
     }
 
     if (!bdrv_key_required(bs)) {
@@ -1071,6 +1103,8 @@ void bdrv_reopen_commit(BDRVReopenState *reopen_state)
     reopen_state->bs->enable_write_cache = !!(reopen_state->flags &
                                               BDRV_O_CACHE_WB);
     reopen_state->bs->read_only = !(reopen_state->flags & BDRV_O_RDWR);
+
+    bdrv_refresh_limits(reopen_state->bs);
 }
 
 /*
@@ -1876,6 +1910,7 @@ int bdrv_drop_intermediate(BlockDriverState *active, BlockDriverState *top,
     }
     new_top_bs->backing_hd = base_bs;
 
+    bdrv_refresh_limits(new_top_bs);
 
     QSIMPLEQ_FOREACH_SAFE(intermediate_state, &states_to_delete, entry, next) {
         /* so that bdrv_close() does not recursively close the chain */

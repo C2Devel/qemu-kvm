@@ -214,6 +214,8 @@ struct BlockDriver {
 
     void (*bdrv_debug_event)(BlockDriverState *bs, BlkDebugEvent event);
 
+    int (*bdrv_refresh_limits)(BlockDriverState *bs);
+
     /*
      * Returns 1 if newly created images are guaranteed to contain only
      * zeros, 0 otherwise.
