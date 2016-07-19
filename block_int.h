@@ -291,8 +291,8 @@ struct BlockDriverState {
     /* Whether produces zeros when read beyond eof */
     bool zero_beyond_eof;
 
-    /* the memory alignment required for the buffers handled by this driver */
-    int buffer_alignment;
+    /* the block size for which the guest device expects atomicity */
+    int guest_block_size;
 
     /* do we need to tell the quest if we have a volatile write cache? */
     int enable_write_cache;
@@ -320,8 +320,6 @@ int get_tmp_filename(char *filename, int size);
 
 void *qemu_blockalign(BlockDriverState *bs, size_t size);
 void *qemu_blockalign0(BlockDriverState *bs, size_t size);
-void *qemu_try_blockalign(BlockDriverState *bs, size_t size);
-void *qemu_try_blockalign0(BlockDriverState *bs, size_t size);
 void bdrv_set_io_limits(BlockDriverState *bs,
                         ThrottleConfig *cfg);
 

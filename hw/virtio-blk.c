@@ -725,7 +725,7 @@ VirtIODevice *virtio_blk_init(DeviceState *dev, VirtIOBlkConf *blk)
     }
 #endif
     bdrv_set_dev_ops(s->bs, &virtio_block_ops, s);
-    s->bs->buffer_alignment = s->conf->logical_block_size;
+    bdrv_set_guest_block_size(s->bs, s->conf->logical_block_size);
 
     bdrv_iostatus_enable(s->bs);
     add_boot_device_path(s->conf->bootindex, dev, "/disk@0,0");

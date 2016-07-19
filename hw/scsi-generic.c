@@ -203,7 +203,7 @@ static void scsi_read_complete(void * opaque, int ret)
                          ((uint64_t) r->buf[4] << 24) | ((uint64_t) r->buf[5] << 16) |
                          ((uint64_t) r->buf[6] << 8) | (uint64_t) r->buf[7];
         }
-        s->conf.bs->buffer_alignment = s->blocksize;
+        bdrv_set_guest_block_size(s->conf.bs, s->blocksize);
 
         scsi_req_data(&r->req, len);
         scsi_req_unref(&r->req);

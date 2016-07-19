@@ -2031,7 +2031,7 @@ int ide_init_drive(IDEState *s, BlockDriverState *bs, const char *version,
     if (bdrv_get_type_hint(bs) == BDRV_TYPE_CDROM) {
         s->drive_kind = IDE_CD;
         bdrv_set_dev_ops(bs, &ide_cd_block_ops, s);
-        s->bs->buffer_alignment = 2048;
+        bdrv_set_guest_block_size(bs, 2048);
     } else {
         if (!bdrv_is_inserted(s->bs)) {
             error_report("Device needs media, but drive is empty");

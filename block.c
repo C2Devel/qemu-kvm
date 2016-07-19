@@ -671,8 +671,7 @@ static int bdrv_open_common(BlockDriverState *bs, const char *filename,
     bs->encrypted = 0;
     bs->valid_key = 0;
     bs->open_flags = flags;
-    /* buffer_alignment defaulted to 512, drivers can change this value */
-    bs->buffer_alignment = 512;
+    bs->guest_block_size = 512;
     bs->zero_beyond_eof = true;
 
     open_flags = flags;
@@ -1275,7 +1274,7 @@ void bdrv_append(BlockDriverState *bs_new, BlockDriverState *bs_top)
     tmp.dev_ops           = bs_top->dev_ops;
     tmp.dev_opaque        = bs_top->dev_opaque;
     tmp.dev               = bs_top->dev;
-    tmp.buffer_alignment  = bs_top->buffer_alignment;
+    tmp.guest_block_size  = bs_top->guest_block_size;
     tmp.copy_on_read      = bs_top->copy_on_read;
 
     /* i/o throttled req */
@@ -4425,7 +4424,10 @@ BlockDriverAIOCB *bdrv_aio_ioctl(BlockDriverState *bs,
     return NULL;
 }
 
-
+void bdrv_set_guest_block_size(BlockDriverState *bs, int align)
+{
+    bs->guest_block_size = align;
+}
 
 void *qemu_blockalign(BlockDriverState *bs, size_t size)
 {
@@ -4435,30 +4437,6 @@ void *qemu_blockalign(BlockDriverState *bs, size_t size)
 void *qemu_blockalign0(BlockDriverState *bs, size_t size)
 {
     return memset(qemu_blockalign(bs, size), 0, size);
-}
-
-void *qemu_try_blockalign(BlockDriverState *bs, size_t size)
-{
-    size_t align = (bs && bs->buffer_alignment) ? bs->buffer_alignment : 512;
-
-    /* Ensure that NULL is never returned on success */
-    assert(align > 0);
-    if (size == 0) {
-        size = align;
-    }
-
-    return qemu_try_memalign(align, size);
-}
-
-void *qemu_try_blockalign0(BlockDriverState *bs, size_t size)
-{
-    void *mem = qemu_try_blockalign(bs, size);
-
-    if (mem) {
-        memset(mem, 0, size);
-    }
-
-    return mem;
 }
 
 /*
