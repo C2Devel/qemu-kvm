@@ -226,6 +226,8 @@ struct BlockDriver {
 };
 
 typedef struct BlockLimits {
+    /* memory alignment so that no bounce buffer is needed */
+    size_t opt_mem_alignment;
 } BlockLimits;
 
 /*

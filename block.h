@@ -246,6 +246,9 @@ BlockDriverState *bdrv_find_overlay(BlockDriverState *active,
                                     BlockDriverState *bs);
 BlockDriverState *bdrv_find_base(BlockDriverState *bs);
 
+/* Returns the alignment in bytes that is required so that no bounce buffer
+ * is required throughout the stack */
+size_t bdrv_opt_mem_align(BlockDriverState *bs);
 bool bdrv_qiov_is_aligned(BlockDriverState *bs, QEMUIOVector *qiov);
 
 typedef struct BdrvCheckResult {
