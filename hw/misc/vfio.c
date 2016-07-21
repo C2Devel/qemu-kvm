@@ -195,17 +195,22 @@ typedef struct VFIODevice {
     QLIST_ENTRY(VFIODevice) next;
     struct VFIOGroup *group;
     EventNotifier err_notifier;
+    EventNotifier req_notifier;
     uint32_t features;
 #define VFIO_FEATURE_ENABLE_VGA_BIT 0
 #define VFIO_FEATURE_ENABLE_VGA (1 << VFIO_FEATURE_ENABLE_VGA_BIT)
+#define VFIO_FEATURE_ENABLE_REQ_BIT 1
+#define VFIO_FEATURE_ENABLE_REQ (1 << VFIO_FEATURE_ENABLE_REQ_BIT)
     int32_t bootindex;
     uint8_t pm_cap;
     bool reset_works;
     bool has_vga;
     bool pci_aer;
+    bool req_enabled;
     bool has_flr;
     bool has_pm_reset;
     bool needs_reset;
+    bool rom_read_failed;
 } VFIODevice;
 
 typedef struct VFIOGroup {
@@ -1197,6 +1202,14 @@ static void vfio_pci_load_rom(VFIODevice *vdev)
     vdev->rom_offset = reg_info.offset;
 
     if (!vdev->rom_size) {
+        vdev->rom_read_failed = true;
+        error_report("vfio-pci: Cannot read device rom at "
+                    "%04x:%02x:%02x.%x\n",
+                    vdev->host.domain, vdev->host.bus, vdev->host.slot,
+                    vdev->host.function);
+        error_printf("Device option ROM contents are probably invalid "
+                    "(check dmesg).\nSkip option ROM probe with rombar=0, "
+                    "or load from file with romfile=\n");
         return;
     }
 
@@ -1226,7 +1239,7 @@ static uint64_t vfio_rom_read(void *opaque, hwaddr addr, unsigned size)
     uint64_t val = ((uint64_t)1 << (size * 8)) - 1;
 
     /* Load the ROM lazily when the guest tries to read it */
-    if (unlikely(!vdev->rom)) {
+    if (unlikely(!vdev->rom && !vdev->rom_read_failed)) {
         vfio_pci_load_rom(vdev);
     }
 
@@ -1345,6 +1358,7 @@ static void vfio_pci_size_rom(VFIODevice *vdev)
                      PCI_BASE_ADDRESS_SPACE_MEMORY, &vdev->pdev.rom);
 
     vdev->pdev.has_rom = true;
+    vdev->rom_read_failed = false;
 }
 
 static void vfio_vga_write(void *opaque, hwaddr addr,
@@ -2452,6 +2466,33 @@ static int vfio_early_setup_msix(VFIODevice *vdev)
             vdev->host.function, pos, vdev->msix->table_bar,
             vdev->msix->table_offset, vdev->msix->entries);
 
+    /*
+     * Test the size of the pba_offset variable and catch if it extends outside
+     * of the specified BAR. If it is the case, we need to apply a hardware
+     * specific quirk if the device is known or we have a broken configuration.
+     */
+    if (vdev->msix->pba_offset >=
+        vdev->bars[vdev->msix->pba_bar].size) {
+
+        PCIDevice *pdev = &vdev->pdev;
+        uint16_t vendor = pci_get_word(pdev->config + PCI_VENDOR_ID);
+        uint16_t device = pci_get_word(pdev->config + PCI_DEVICE_ID);
+
+        /*
+         * Chelsio T5 Virtual Function devices are encoded as 0x58xx for T5
+         * adapters. The T5 hardware returns an incorrect value of 0x8000 for
+         * the VF PBA offset while the BAR itself is only 8k. The correct value
+         * is 0x1000, so we hard code that here.
+         */
+        if (vendor == PCI_VENDOR_ID_CHELSIO && (device & 0xff00) == 0x5800) {
+            vdev->msix->pba_offset = 0x1000;
+        } else {
+            error_report("vfio: Hardware reports invalid configuration, "
+                         "MSIX PBA outside of specified BAR");
+            return -EINVAL;
+        }
+    }
+
     return 0;
 }
 
@@ -2569,7 +2610,7 @@ empty_region:
 static void vfio_map_bar(VFIODevice *vdev, int nr)
 {
     VFIOBAR *bar = &vdev->bars[nr];
-    unsigned size = bar->size;
+    uint64_t size = bar->size;
     char name[64];
     uint32_t pci_bar;
     uint8_t type;
@@ -2618,9 +2659,9 @@ static void vfio_map_bar(VFIODevice *vdev, int nr)
     }
 
     if (vdev->msix && vdev->msix->table_bar == nr) {
-        unsigned start;
+        uint64_t start;
 
-        start = TARGET_PAGE_ALIGN(vdev->msix->table_offset +
+        start = TARGET_PAGE_ALIGN((uint64_t)vdev->msix->table_offset +
                                   (vdev->msix->entries * PCI_MSIX_ENTRY_SIZE));
 
         size = start < bar->size ? bar->size - start : 0;
@@ -3302,7 +3343,10 @@ static int vfio_connect_container(VFIOGroup *group)
     container = g_malloc0(sizeof(*container));
     container->fd = fd;
 
-    if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU)) {
+    if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU) ||
+        ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1v2_IOMMU)) {
+        bool v2 = !!ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_TYPE1v2_IOMMU);
+
         ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
         if (ret) {
             error_report("vfio: failed to set group container: %m");
@@ -3311,7 +3355,8 @@ static int vfio_connect_container(VFIOGroup *group)
             return -errno;
         }
 
-        ret = ioctl(fd, VFIO_SET_IOMMU, VFIO_TYPE1_IOMMU);
+        ret = ioctl(fd, VFIO_SET_IOMMU,
+                    v2 ? VFIO_TYPE1v2_IOMMU : VFIO_TYPE1_IOMMU);
         if (ret) {
             error_report("vfio: failed to set iommu for container: %m");
             g_free(container);
@@ -3581,6 +3626,7 @@ static int vfio_get_device(VFIOGroup *group, const char *name, VFIODevice *vdev)
 
         vdev->has_vga = true;
     }
+
     irq_info.index = VFIO_PCI_ERR_IRQ_INDEX;
 
     ret = ioctl(vdev->fd, VFIO_DEVICE_GET_IRQ_INFO, &irq_info);
@@ -3640,7 +3686,7 @@ static void vfio_err_notifier_handler(void *opaque)
                  __func__, vdev->host.domain, vdev->host.bus,
                  vdev->host.slot, vdev->host.function);
 
-    vm_stop(RUN_STATE_IO_ERROR);
+    vm_stop(RUN_STATE_INTERNAL_ERROR);
 }
 
 /*
@@ -3723,6 +3769,97 @@ static void vfio_unregister_err_notifier(VFIODevice *vdev)
     event_notifier_cleanup(&vdev->err_notifier);
 }
 
+static void vfio_req_notifier_handler(void *opaque)
+{
+    VFIODevice *vdev = opaque;
+
+    if (!event_notifier_test_and_clear(&vdev->req_notifier)) {
+        return;
+    }
+
+    qdev_unplug(&vdev->pdev.qdev, NULL);
+}
+
+static void vfio_register_req_notifier(VFIODevice *vdev)
+{
+    struct vfio_irq_info irq_info = { .argsz = sizeof(irq_info),
+                                      .index = VFIO_PCI_REQ_IRQ_INDEX };
+    int argsz;
+    struct vfio_irq_set *irq_set;
+    int32_t *pfd;
+
+    if (!(vdev->features & VFIO_FEATURE_ENABLE_REQ)) {
+        return;
+    }
+
+    if (ioctl(vdev->fd,
+              VFIO_DEVICE_GET_IRQ_INFO, &irq_info) < 0 || irq_info.count < 1) {
+        return;
+    }
+
+    if (event_notifier_init(&vdev->req_notifier, 0)) {
+        error_report("vfio: Unable to init event notifier for device request");
+        return;
+    }
+
+    argsz = sizeof(*irq_set) + sizeof(*pfd);
+
+    irq_set = g_malloc0(argsz);
+    irq_set->argsz = argsz;
+    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD |
+                     VFIO_IRQ_SET_ACTION_TRIGGER;
+    irq_set->index = VFIO_PCI_REQ_IRQ_INDEX;
+    irq_set->start = 0;
+    irq_set->count = 1;
+    pfd = (int32_t *)&irq_set->data;
+
+    *pfd = event_notifier_get_fd(&vdev->req_notifier);
+    qemu_set_fd_handler(*pfd, vfio_req_notifier_handler, NULL, vdev);
+
+    if (ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set)) {
+        error_report("vfio: Failed to set up device request notification");
+        qemu_set_fd_handler(*pfd, NULL, NULL, vdev);
+        event_notifier_cleanup(&vdev->req_notifier);
+    } else {
+        vdev->req_enabled = true;
+    }
+
+    g_free(irq_set);
+}
+
+static void vfio_unregister_req_notifier(VFIODevice *vdev)
+{
+    int argsz;
+    struct vfio_irq_set *irq_set;
+    int32_t *pfd;
+
+    if (!vdev->req_enabled) {
+        return;
+    }
+
+    argsz = sizeof(*irq_set) + sizeof(*pfd);
+
+    irq_set = g_malloc0(argsz);
+    irq_set->argsz = argsz;
+    irq_set->flags = VFIO_IRQ_SET_DATA_EVENTFD |
+                     VFIO_IRQ_SET_ACTION_TRIGGER;
+    irq_set->index = VFIO_PCI_REQ_IRQ_INDEX;
+    irq_set->start = 0;
+    irq_set->count = 1;
+    pfd = (int32_t *)&irq_set->data;
+    *pfd = -1;
+
+    if (ioctl(vdev->fd, VFIO_DEVICE_SET_IRQS, irq_set)) {
+        error_report("vfio: Failed to de-assign device request fd: %m");
+    }
+    g_free(irq_set);
+    qemu_set_fd_handler(event_notifier_get_fd(&vdev->req_notifier),
+                        NULL, NULL, vdev);
+    event_notifier_cleanup(&vdev->req_notifier);
+
+    vdev->req_enabled = false;
+}
+
 static int vfio_initfn(PCIDevice *pdev)
 {
     VFIODevice *pvdev, *vdev = DO_UPCAST(VFIODevice, pdev, pdev);
@@ -3757,10 +3894,10 @@ static int vfio_initfn(PCIDevice *pdev)
 
     strncat(path, "iommu_group", sizeof(path) - strlen(path) - 1);
 
-    len = readlink(path, iommu_group_path, PATH_MAX);
-    if (len <= 0) {
+    len = readlink(path, iommu_group_path, sizeof(path));
+    if (len <= 0 || len >= sizeof(path)) {
         error_report("vfio: error no iommu_group for device");
-        return -errno;
+        return len < 0 ? -errno : -ENAMETOOLONG;
     }
 
     iommu_group_path[len] = 0;
@@ -3875,6 +4012,7 @@ static int vfio_initfn(PCIDevice *pdev)
 
     add_boot_device_path(vdev->bootindex, &pdev->qdev, NULL);
     vfio_register_err_notifier(vdev);
+    vfio_register_req_notifier(vdev);
 
     return 0;
 
@@ -3894,6 +4032,7 @@ static void vfio_exitfn(PCIDevice *pdev)
     VFIODevice *vdev = DO_UPCAST(VFIODevice, pdev, pdev);
     VFIOGroup *group = vdev->group;
 
+    vfio_unregister_req_notifier(vdev);
     vfio_unregister_err_notifier(vdev);
     pci_device_set_intx_routing_notifier(&vdev->pdev, NULL);
     vfio_disable_interrupts(vdev);
@@ -3948,6 +4087,8 @@ static Property vfio_pci_dev_properties[] = {
                        intx.mmap_timeout, 1100),
     DEFINE_PROP_BIT("x-vga", VFIODevice, features,
                     VFIO_FEATURE_ENABLE_VGA_BIT, false),
+    DEFINE_PROP_BIT("x-req", VFIODevice, features,
+                    VFIO_FEATURE_ENABLE_REQ_BIT, true),
     DEFINE_PROP_INT32("bootindex", VFIODevice, bootindex, -1),
     /*
      * TODO - support passed fds... is this necessary?

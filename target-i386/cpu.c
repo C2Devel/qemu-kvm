@@ -145,9 +145,9 @@ static const char *svm_feature_name[] = {
 
 static const char *cpuid_7_0_ebx_feature_name[] = {
     "fsgsbase", NULL, NULL, "bmi1", "hle", "avx2", NULL, "smep",
-    "bmi2", "erms", "invpcid", "rtm", NULL, NULL, NULL, NULL,
-    NULL, NULL, "rdseed", "adx", "smap", NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    "bmi2", "erms", "invpcid", "rtm", NULL, NULL, "mpx", NULL,
+    "avx512f", NULL, "rdseed", "adx", "smap", NULL, NULL, NULL,
+    NULL, NULL, "avx512pf", "avx512er", "avx512cd", NULL, NULL, NULL,
 };
 
 typedef struct FeatureWordInfo {
@@ -223,7 +223,17 @@ typedef struct ExtSaveArea {
 
 static const ExtSaveArea ext_save_areas[] = {
     [2] = { .feature = FEAT_1_ECX, .bits = CPUID_EXT_AVX,
-            .offset = 0x100, .size = 0x240 },
+            .offset = 0x240, .size = 0x100 },
+    [3] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_MPX,
+            .offset = 0x3c0, .size = 0x40  },
+    [4] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_MPX,
+            .offset = 0x400, .size = 0x40  },
+    [5] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
+            .offset = 0x440, .size = 0x40 },
+    [6] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
+            .offset = 0x480, .size = 0x200 },
+    [7] = { .feature = FEAT_7_0_EBX, .bits = CPUID_7_0_EBX_AVX512F,
+            .offset = 0x680, .size = 0x400 },
 };
 
 const char *get_register_name_32(unsigned int reg)
@@ -2191,8 +2201,8 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             const ExtSaveArea *esa = &ext_save_areas[count];
             if ((env->features[esa->feature] & esa->bits) == esa->bits &&
                 (kvm_mask & (1 << count)) != 0) {
-                *eax = esa->offset;
-                *ebx = esa->size;
+                *eax = esa->size;
+                *ebx = esa->offset;
             }
         }
         break;
@@ -2397,6 +2407,18 @@ static void x86_cpu_reset(CPUState *s)
     env->dr[7] = DR7_FIXED_1;
     cpu_breakpoint_remove_all(env, BP_CPU);
     cpu_watchpoint_remove_all(env, BP_CPU);
+
+    env->xcr0 = 1;
+
+    /*
+     * SDM 11.11.5 requires:
+     *  - IA32_MTRR_DEF_TYPE MSR.E = 0
+     *  - IA32_MTRR_PHYSMASKn.V = 0
+     * All other bits are undefined.  For simplification, zero it all.
+     */
+    env->mtrr_deftype = 0;
+    memset(env->mtrr_var, 0, sizeof(env->mtrr_var));
+    memset(env->mtrr_fixed, 0, sizeof(env->mtrr_fixed));
 
 #if !defined(CONFIG_USER_ONLY)
     /* We hard-wire the BSP to the first CPU. */

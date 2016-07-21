@@ -204,6 +204,17 @@ static int socket_close(void *opaque)
     return 0;
 }
 
+static int socket_shutdown(void *opaque, bool rd, bool wr)
+{
+    QEMUFileSocket *s = opaque;
+
+    if (shutdown(s->fd, rd ? (wr ? SHUT_RDWR : SHUT_RD) : SHUT_WR)) {
+        return -errno;
+    } else {
+        return 0;
+    }
+}
+
 static int stdio_get_fd(void *opaque)
 {
     QEMUFileStdio *s = opaque;
@@ -448,16 +459,30 @@ QEMUFile *qemu_fdopen(int fd, const char *mode)
 }
 
 static const QEMUFileOps socket_read_ops = {
-    .get_fd =     socket_get_fd,
+    .get_fd     = socket_get_fd,
     .get_buffer = socket_get_buffer,
-    .close =      socket_close
+    .close      = socket_close,
+    .shut_down  = socket_shutdown
 };
 
 static const QEMUFileOps socket_write_ops = {
-    .get_fd =     socket_get_fd,
+    .get_fd        = socket_get_fd,
     .writev_buffer = socket_writev_buffer,
-    .close =      socket_close
+    .close         = socket_close,
+    .shut_down     = socket_shutdown
 };
+
+/*
+ * Stop a file from being read/written - not all backing files can do this
+ * typically only sockets can.
+ */
+int qemu_file_shutdown(QEMUFile *f)
+{
+    if (!f->ops->shut_down) {
+        return -ENOSYS;
+    }
+    return f->ops->shut_down(f->opaque, true, true);
+}
 
 bool qemu_file_mode_is_not_valid(const char *mode)
 {

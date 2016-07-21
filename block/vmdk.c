@@ -451,7 +451,8 @@ static int vmdk_init_tables(BlockDriverState *bs, VmdkExtent *extent,
                             Error **errp)
 {
     int ret;
-    int l1_size, i;
+    size_t l1_size;
+    int i;
 
     /* read the L1 table */
     l1_size = extent->l1_size * sizeof(uint32_t);
@@ -954,7 +955,7 @@ fail:
 }
 
 
-static int vmdk_refresh_limits(BlockDriverState *bs)
+static void vmdk_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     BDRVVmdkState *s = bs->opaque;
     int i;
@@ -966,8 +967,6 @@ static int vmdk_refresh_limits(BlockDriverState *bs)
                     s->extents[i].cluster_sectors);
         }
     }
-
-    return 0;
 }
 
 /**

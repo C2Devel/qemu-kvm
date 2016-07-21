@@ -31,13 +31,16 @@ Data:
             offset into the image (json-int)
 - "size":   If the corruption resulted from an image access, this is the access
             size (json-int)
+- "fatal":  If set, the image is marked corrupt and therefore unusable after
+            this event and must be repaired (Since 2.2; before, every
+            BLOCK_IMAGE_CORRUPTED event was fatal)
 
 Example:
 
 { "event": "BLOCK_IMAGE_CORRUPTED",
     "data": { "device": "ide0-hd0",
         "msg": "Prevented active L1 table overwrite", "offset": 196608,
-        "size": 65536 },
+        "size": 65536, "fatal": true },
     "timestamp": { "seconds": 1378126126, "microseconds": 966463 } }
 
 BLOCK_IO_ERROR
@@ -146,28 +149,13 @@ Data:
     "ignore": error has been ignored, the job may fail later
     "report": error will be reported and the job canceled
     "stop": error caused job to be paused
-- "__com.redhat_reason": error reason, this is a RHEL7 extension, it's one of
-  the following (json-string):
-    "eio": errno EIO
-    "eperm": errno EPERM
-    "enospc": errno ENOSPC
-    "eother": any other errno (other than EIO, EPERM, ENOSPC)
-- "__com.redhat_debug_info": RHEL7 extension containing debug information for
-                             humans, applications should NOT read any
-                             information from this member (json-object):
-    - "errno": errno value (json-int)
-    - "message": error message returned by strerror() (json-string)
 
 Example:
 
 { "event": "BLOCK_JOB_ERROR",
     "data": { "device": "ide0-hd1",
               "operation": "write",
-              "action": "stop",
-              "__com.redhat_reason": "enospc",
-              "__com.redhat_debug_info": {
-                  "message": "No space left on device",
-                  "errno": 28 } }
+              "action": "stop" },
     "timestamp": { "seconds": 1265044230, "microseconds": 450486 } }
 
 BLOCK_JOB_READY

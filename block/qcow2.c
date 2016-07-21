@@ -31,6 +31,8 @@
 #include "qapi/qmp/qerror.h"
 #include "qapi/qmp/qbool.h"
 #include "qapi/util.h"
+#include "qapi/qmp/types.h"
+#include "monitor/monitor.h"
 #include "trace.h"
 
 /*
@@ -114,7 +116,7 @@ static int qcow2_read_extensions(BlockDriverState *bs, uint64_t start_offset,
 #ifdef DEBUG_EXT
         printf("ext.magic = 0x%x\n", ext.magic);
 #endif
-        if (ext.len > end_offset - offset) {
+        if (offset > end_offset || ext.len > end_offset - offset) {
             error_setg(errp, "Header extension too large");
             return -EINVAL;
         }
@@ -137,6 +139,7 @@ static int qcow2_read_extensions(BlockDriverState *bs, uint64_t start_offset,
                 return 3;
             }
             bs->backing_format[ext.len] = '\0';
+            s->image_backing_format = g_strdup(bs->backing_format);
 #ifdef DEBUG_EXT
             printf("Qcow2: Got format extension %s\n", bs->backing_format);
 #endif
@@ -602,6 +605,9 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
 
     s->l2_bits = s->cluster_bits - 3; /* L2 is always one cluster */
     s->l2_size = 1 << s->l2_bits;
+    /* 2^(s->refcount_order - 3) is the refcount width in bytes */
+    s->refcount_block_bits = s->cluster_bits - (s->refcount_order - 3);
+    s->refcount_block_size = 1 << s->refcount_block_bits;
     bs->total_sectors = header.size / 512;
     s->csize_shift = (62 - (s->cluster_bits - 8));
     s->csize_mask = (1 << (s->cluster_bits - 8)) - 1;
@@ -729,6 +735,7 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
             goto fail;
         }
         bs->backing_file[len] = '\0';
+        s->image_backing_file = g_strdup(bs->backing_file);
     }
 
     /* Internal snapshots */
@@ -759,7 +766,7 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
         (s->incompatible_features & QCOW2_INCOMPAT_DIRTY)) {
         BdrvCheckResult result = {0};
 
-        ret = qcow2_check(bs, &result, BDRV_FIX_ERRORS);
+        ret = qcow2_check(bs, &result, BDRV_FIX_ERRORS | BDRV_FIX_LEAKS);
         if (ret < 0) {
             error_setg_errno(errp, -ret, "Could not repair dirty image");
             goto fail;
@@ -848,13 +855,11 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
     return ret;
 }
 
-static int qcow2_refresh_limits(BlockDriverState *bs)
+static void qcow2_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     BDRVQcowState *s = bs->opaque;
 
     bs->bl.write_zeroes_alignment = s->cluster_sectors;
-
-    return 0;
 }
 
 static int qcow2_set_key(BlockDriverState *bs, const char *key)
@@ -1246,6 +1251,9 @@ static void qcow2_close(BlockDriverState *bs)
     g_free(s->unknown_header_fields);
     cleanup_unknown_header_ext(bs);
 
+    g_free(s->image_backing_file);
+    g_free(s->image_backing_format);
+
     g_free(s->cluster_cache);
     qemu_vfree(s->cluster_data);
     qcow2_refcount_close(bs);
@@ -1396,9 +1404,10 @@ int qcow2_update_header(BlockDriverState *bs)
     }
 
     /* Backing file format header extension */
-    if (*bs->backing_format) {
+    if (s->image_backing_format) {
         ret = header_ext_add(buf, QCOW2_EXT_MAGIC_BACKING_FORMAT,
-                             bs->backing_format, strlen(bs->backing_format),
+                             s->image_backing_format,
+                             strlen(s->image_backing_format),
                              buflen);
         if (ret < 0) {
             goto fail;
@@ -1456,8 +1465,8 @@ int qcow2_update_header(BlockDriverState *bs)
     buflen -= ret;
 
     /* Backing file name */
-    if (*bs->backing_file) {
-        size_t backing_file_len = strlen(bs->backing_file);
+    if (s->image_backing_file) {
+        size_t backing_file_len = strlen(s->image_backing_file);
 
         if (buflen < backing_file_len) {
             ret = -ENOSPC;
@@ -1465,7 +1474,7 @@ int qcow2_update_header(BlockDriverState *bs)
         }
 
         /* Using strncpy is ok here, since buf is not NUL-terminated. */
-        strncpy(buf, bs->backing_file, buflen);
+        strncpy(buf, s->image_backing_file, buflen);
 
         header->backing_file_offset = cpu_to_be64(buf - ((char*) header));
         header->backing_file_size   = cpu_to_be32(backing_file_len);
@@ -1486,8 +1495,16 @@ fail:
 static int qcow2_change_backing_file(BlockDriverState *bs,
     const char *backing_file, const char *backing_fmt)
 {
+    BDRVQcowState *s = bs->opaque;
+
     pstrcpy(bs->backing_file, sizeof(bs->backing_file), backing_file ?: "");
     pstrcpy(bs->backing_format, sizeof(bs->backing_format), backing_fmt ?: "");
+
+    g_free(s->image_backing_file);
+    g_free(s->image_backing_format);
+
+    s->image_backing_file = backing_file ? g_strdup(bs->backing_file) : NULL;
+    s->image_backing_format = backing_fmt ? g_strdup(bs->backing_format) : NULL;
 
     return qcow2_update_header(bs);
 }
@@ -1675,7 +1692,7 @@ static int qcow2_create2(const char *filename, int64_t total_size,
         .l1_size                    = cpu_to_be32(0),
         .refcount_table_offset      = cpu_to_be64(cluster_size),
         .refcount_table_clusters    = cpu_to_be32(1),
-        .refcount_order             = cpu_to_be32(3 + REFCOUNT_SHIFT),
+        .refcount_order             = cpu_to_be32(4),
         .header_length              = cpu_to_be32(sizeof(*header)),
     };
 
@@ -1872,7 +1889,7 @@ static coroutine_fn int qcow2_co_discard(BlockDriverState *bs,
 
     qemu_co_mutex_lock(&s->lock);
     ret = qcow2_discard_clusters(bs, sector_num << BDRV_SECTOR_BITS,
-        nb_sectors);
+        nb_sectors, QCOW2_DISCARD_REQUEST);
     qemu_co_mutex_unlock(&s->lock);
     return ret;
 }
@@ -2036,11 +2053,6 @@ static coroutine_fn int qcow2_co_flush_to_os(BlockDriverState *bs)
     qemu_co_mutex_unlock(&s->lock);
 
     return 0;
-}
-
-static int64_t qcow2_vm_state_offset(BDRVQcowState *s)
-{
-	return (int64_t)s->l1_vm_state_index << (s->cluster_bits + s->l2_bits);
 }
 
 static int qcow2_get_info(BlockDriverState *bs, BlockDriverInfo *bdi)
@@ -2288,8 +2300,9 @@ static int qcow2_amend_options(BlockDriverState *bs,
     }
 
     if (backing_file || backing_format) {
-        ret = qcow2_change_backing_file(bs, backing_file ?: bs->backing_file,
-                                        backing_format ?: bs->backing_format);
+        ret = qcow2_change_backing_file(bs,
+                    backing_file ?: s->image_backing_file,
+                    backing_format ?: s->image_backing_format);
         if (ret < 0) {
             return ret;
         }
@@ -2334,6 +2347,66 @@ static int qcow2_amend_options(BlockDriverState *bs,
     }
 
     return 0;
+}
+
+/*
+ * If offset or size are negative, respectively, they will not be included in
+ * the BLOCK_IMAGE_CORRUPTED event emitted.
+ * fatal will be ignored for read-only BDS; corruptions found there will always
+ * be considered non-fatal.
+ */
+void qcow2_signal_corruption(BlockDriverState *bs, bool fatal, int64_t offset,
+                             int64_t size, const char *message_format, ...)
+{
+    BDRVQcowState *s = bs->opaque;
+    char *message;
+    QObject *data;
+    va_list ap;
+
+    fatal = fatal && !bs->read_only;
+
+    if (s->signaled_corruption &&
+        (!fatal || (s->incompatible_features & QCOW2_INCOMPAT_CORRUPT)))
+    {
+        return;
+    }
+
+    va_start(ap, message_format);
+    message = g_strdup_vprintf(message_format, ap);
+    va_end(ap);
+
+    if (fatal) {
+        fprintf(stderr, "qcow2: Marking image as corrupt: %s; further "
+                "corruption events will be suppressed\n", message);
+    } else {
+        fprintf(stderr, "qcow2: Image is corrupt: %s; further non-fatal "
+                "corruption events will be suppressed\n", message);
+    }
+
+    assert((offset >= 0) == (size >= 0));
+
+    if (offset >= 0) {
+        data = qobject_from_jsonf("{ 'device': %s, 'msg': %s, 'offset': %"
+                                  PRId64 ", 'size': %" PRId64 ", 'fatal': %s }",
+                                  bdrv_get_device_name(bs), message,
+                                  offset, size, fatal ? "true" : "false");
+    } else {
+        data = qobject_from_jsonf("{ 'device': %s, 'msg': %s, 'fatal': %s }",
+                                  bdrv_get_device_name(bs), message,
+                                  fatal ? "true" : "false");
+    }
+
+    monitor_protocol_event(QEVENT_BLOCK_IMAGE_CORRUPTED, data);
+    qobject_decref(data);
+
+    g_free(message);
+
+    if (fatal) {
+        qcow2_mark_corrupt(bs);
+        bs->drv = NULL; /* make BDS unusable */
+    }
+
+    s->signaled_corruption = true;
 }
 
 static QEMUOptionParameter qcow2_create_options[] = {

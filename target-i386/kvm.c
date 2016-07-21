@@ -68,11 +68,13 @@ static bool has_msr_tsc_deadline;
 static bool has_msr_async_pf_en;
 static bool has_msr_pv_eoi_en;
 static bool has_msr_misc_enable;
+static bool has_msr_bndcfgs;
 static bool has_msr_kvm_steal_time;
 static int lm_capable_kernel;
 static bool has_msr_hv_hypercall;
 static bool has_msr_hv_vapic;
 static bool has_msr_hv_tsc;
+static bool has_msr_mtrr;
 
 static bool has_msr_architectural_pmu;
 static uint32_t num_architectural_pmu_counters;
@@ -711,6 +713,10 @@ int kvm_arch_init_vcpu(CPUState *cs)
         env->kvm_xsave_buf = qemu_memalign(4096, sizeof(struct kvm_xsave));
     }
 
+    if (env->features[FEAT_1_EDX] & CPUID_MTRR) {
+        has_msr_mtrr = true;
+    }
+
     return 0;
 }
 
@@ -778,6 +784,10 @@ static int kvm_get_supported_msrs(KVMState *s)
                 }
                 if (kvm_msr_list->indices[i] == MSR_IA32_MISC_ENABLE) {
                     has_msr_misc_enable = true;
+                    continue;
+                }
+                if (kvm_msr_list->indices[i] == MSR_IA32_BNDCFGS) {
+                    has_msr_bndcfgs = true;
                     continue;
                 }
             }
@@ -983,6 +993,11 @@ static int kvm_put_fpu(X86CPU *cpu)
 #define XSAVE_XMM_SPACE   40
 #define XSAVE_XSTATE_BV   128
 #define XSAVE_YMMH_SPACE  144
+#define XSAVE_BNDREGS     240
+#define XSAVE_BNDCSR      256
+#define XSAVE_OPMASK      272
+#define XSAVE_ZMM_Hi256   288
+#define XSAVE_Hi16_ZMM    416
 
 static int kvm_put_xsave(X86CPU *cpu)
 {
@@ -1015,6 +1030,18 @@ static int kvm_put_xsave(X86CPU *cpu)
     *(uint64_t *)&xsave->region[XSAVE_XSTATE_BV] = env->xstate_bv;
     memcpy(&xsave->region[XSAVE_YMMH_SPACE], env->ymmh_regs,
             sizeof env->ymmh_regs);
+    memcpy(&xsave->region[XSAVE_BNDREGS], env->bnd_regs,
+            sizeof env->bnd_regs);
+    memcpy(&xsave->region[XSAVE_BNDCSR], &env->bndcs_regs,
+            sizeof(env->bndcs_regs));
+    memcpy(&xsave->region[XSAVE_OPMASK], env->opmask_regs,
+            sizeof env->opmask_regs);
+    memcpy(&xsave->region[XSAVE_ZMM_Hi256], env->zmmh_regs,
+            sizeof env->zmmh_regs);
+#ifdef TARGET_X86_64
+    memcpy(&xsave->region[XSAVE_Hi16_ZMM], env->hi16_zmm_regs,
+            sizeof env->hi16_zmm_regs);
+#endif
     r = kvm_vcpu_ioctl(CPU(cpu), KVM_SET_XSAVE, xsave);
     return r;
 }
@@ -1117,7 +1144,7 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
     CPUX86State *env = &cpu->env;
     struct {
         struct kvm_msrs info;
-        struct kvm_msr_entry entries[100];
+        struct kvm_msr_entry entries[150];
     } msr_data;
     struct kvm_msr_entry *msrs = msr_data.entries;
     int n = 0, i;
@@ -1138,6 +1165,9 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
     if (has_msr_misc_enable) {
         kvm_msr_entry_set(&msrs[n++], MSR_IA32_MISC_ENABLE,
                           env->msr_ia32_misc_enable);
+    }
+    if (has_msr_bndcfgs) {
+        kvm_msr_entry_set(&msrs[n++], MSR_IA32_BNDCFGS, env->msr_bndcfgs);
     }
 #ifdef TARGET_X86_64
     if (lm_capable_kernel) {
@@ -1218,6 +1248,37 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         if (has_msr_hv_tsc) {
             kvm_msr_entry_set(&msrs[n++], HV_X64_MSR_REFERENCE_TSC,
                               env->msr_hv_tsc);
+        }
+        if (has_msr_mtrr) {
+            kvm_msr_entry_set(&msrs[n++], MSR_MTRRdefType, env->mtrr_deftype);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix64K_00000, env->mtrr_fixed[0]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix16K_80000, env->mtrr_fixed[1]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix16K_A0000, env->mtrr_fixed[2]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_C0000, env->mtrr_fixed[3]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_C8000, env->mtrr_fixed[4]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_D0000, env->mtrr_fixed[5]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_D8000, env->mtrr_fixed[6]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_E0000, env->mtrr_fixed[7]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_E8000, env->mtrr_fixed[8]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_F0000, env->mtrr_fixed[9]);
+            kvm_msr_entry_set(&msrs[n++],
+                              MSR_MTRRfix4K_F8000, env->mtrr_fixed[10]);
+            for (i = 0; i < MSR_MTRRcap_VCNT; i++) {
+                kvm_msr_entry_set(&msrs[n++],
+                                  MSR_MTRRphysBase(i), env->mtrr_var[i].base);
+                kvm_msr_entry_set(&msrs[n++],
+                                  MSR_MTRRphysMask(i), env->mtrr_var[i].mask);
+            }
         }
     }
     if (env->mcg_cap) {
@@ -1300,6 +1361,18 @@ static int kvm_get_xsave(X86CPU *cpu)
     env->xstate_bv = *(uint64_t *)&xsave->region[XSAVE_XSTATE_BV];
     memcpy(env->ymmh_regs, &xsave->region[XSAVE_YMMH_SPACE],
             sizeof env->ymmh_regs);
+    memcpy(env->bnd_regs, &xsave->region[XSAVE_BNDREGS],
+            sizeof env->bnd_regs);
+    memcpy(&env->bndcs_regs, &xsave->region[XSAVE_BNDCSR],
+            sizeof(env->bndcs_regs));
+    memcpy(env->opmask_regs, &xsave->region[XSAVE_OPMASK],
+            sizeof env->opmask_regs);
+    memcpy(env->zmmh_regs, &xsave->region[XSAVE_ZMM_Hi256],
+            sizeof env->zmmh_regs);
+#ifdef TARGET_X86_64
+    memcpy(env->hi16_zmm_regs, &xsave->region[XSAVE_Hi16_ZMM],
+            sizeof env->hi16_zmm_regs);
+#endif
     return 0;
 }
 
@@ -1418,7 +1491,7 @@ static int kvm_get_msrs(X86CPU *cpu)
     CPUX86State *env = &cpu->env;
     struct {
         struct kvm_msrs info;
-        struct kvm_msr_entry entries[100];
+        struct kvm_msr_entry entries[150];
     } msr_data;
     struct kvm_msr_entry *msrs = msr_data.entries;
     int ret, i, n;
@@ -1442,6 +1515,9 @@ static int kvm_get_msrs(X86CPU *cpu)
     }
     if (has_msr_misc_enable) {
         msrs[n++].index = MSR_IA32_MISC_ENABLE;
+    }
+    if (has_msr_bndcfgs) {
+        msrs[n++].index = MSR_IA32_BNDCFGS;
     }
 
     if (!env->tsc_valid) {
@@ -1499,6 +1575,24 @@ static int kvm_get_msrs(X86CPU *cpu)
     }
     if (has_msr_hv_tsc) {
         msrs[n++].index = HV_X64_MSR_REFERENCE_TSC;
+    }
+    if (has_msr_mtrr) {
+        msrs[n++].index = MSR_MTRRdefType;
+        msrs[n++].index = MSR_MTRRfix64K_00000;
+        msrs[n++].index = MSR_MTRRfix16K_80000;
+        msrs[n++].index = MSR_MTRRfix16K_A0000;
+        msrs[n++].index = MSR_MTRRfix4K_C0000;
+        msrs[n++].index = MSR_MTRRfix4K_C8000;
+        msrs[n++].index = MSR_MTRRfix4K_D0000;
+        msrs[n++].index = MSR_MTRRfix4K_D8000;
+        msrs[n++].index = MSR_MTRRfix4K_E0000;
+        msrs[n++].index = MSR_MTRRfix4K_E8000;
+        msrs[n++].index = MSR_MTRRfix4K_F0000;
+        msrs[n++].index = MSR_MTRRfix4K_F8000;
+        for (i = 0; i < MSR_MTRRcap_VCNT; i++) {
+            msrs[n++].index = MSR_MTRRphysBase(i);
+            msrs[n++].index = MSR_MTRRphysMask(i);
+        }
     }
 
     msr_data.info.nmsrs = n;
@@ -1566,6 +1660,9 @@ static int kvm_get_msrs(X86CPU *cpu)
         case MSR_IA32_MISC_ENABLE:
             env->msr_ia32_misc_enable = msrs[i].data;
             break;
+        case MSR_IA32_BNDCFGS:
+            env->msr_bndcfgs = msrs[i].data;
+            break;
         default:
             if (msrs[i].index >= MSR_MC0_CTL &&
                 msrs[i].index < MSR_MC0_CTL + (env->mcg_cap & 0xff) * 4) {
@@ -1613,6 +1710,49 @@ static int kvm_get_msrs(X86CPU *cpu)
             break;
         case HV_X64_MSR_REFERENCE_TSC:
             env->msr_hv_tsc = msrs[i].data;
+            break;
+        case MSR_MTRRdefType:
+            env->mtrr_deftype = msrs[i].data;
+            break;
+        case MSR_MTRRfix64K_00000:
+            env->mtrr_fixed[0] = msrs[i].data;
+            break;
+        case MSR_MTRRfix16K_80000:
+            env->mtrr_fixed[1] = msrs[i].data;
+            break;
+        case MSR_MTRRfix16K_A0000:
+            env->mtrr_fixed[2] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_C0000:
+            env->mtrr_fixed[3] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_C8000:
+            env->mtrr_fixed[4] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_D0000:
+            env->mtrr_fixed[5] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_D8000:
+            env->mtrr_fixed[6] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_E0000:
+            env->mtrr_fixed[7] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_E8000:
+            env->mtrr_fixed[8] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_F0000:
+            env->mtrr_fixed[9] = msrs[i].data;
+            break;
+        case MSR_MTRRfix4K_F8000:
+            env->mtrr_fixed[10] = msrs[i].data;
+            break;
+        case MSR_MTRRphysBase(0) ... MSR_MTRRphysMask(MSR_MTRRcap_VCNT - 1):
+            if (index & 1) {
+                env->mtrr_var[MSR_MTRRphysIndex(index)].mask = msrs[i].data;
+            } else {
+                env->mtrr_var[MSR_MTRRphysIndex(index)].base = msrs[i].data;
+            }
             break;
         }
     }

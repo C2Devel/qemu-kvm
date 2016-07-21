@@ -22,6 +22,7 @@
 /* Extensions */
 
 #define VFIO_TYPE1_IOMMU		1
+#define VFIO_TYPE1v2_IOMMU		3
 
 /*
  * The IOCTL interface is designed for extensibility by embedding the
@@ -320,6 +321,7 @@ enum {
 	VFIO_PCI_MSI_IRQ_INDEX,
 	VFIO_PCI_MSIX_IRQ_INDEX,
 	VFIO_PCI_ERR_IRQ_INDEX,
+	VFIO_PCI_REQ_IRQ_INDEX,
 	VFIO_PCI_NUM_IRQS
 };
 

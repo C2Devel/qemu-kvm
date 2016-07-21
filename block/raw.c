@@ -58,10 +58,9 @@ static int64_t raw_getlength(BlockDriverState *bs)
     return bdrv_getlength(bs->file);
 }
 
-static int raw_refresh_limits(BlockDriverState *bs)
+static void raw_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     bs->bl = bs->file->bl;
-    return 0;
 }
 
 static int raw_truncate(BlockDriverState *bs, int64_t offset)

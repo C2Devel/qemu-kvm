@@ -685,6 +685,7 @@ void serial_init_core(SerialState *s)
 
     qemu_chr_add_handlers(s->chr, serial_can_receive1, serial_receive1,
                           serial_event, s);
+    serial_reset(s);
 }
 
 void serial_exit_core(SerialState *s)

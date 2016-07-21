@@ -3341,3 +3341,26 @@ Example:
    }
 
 EQMP
+
+#if defined TARGET_I386
+    {
+        .name       = "rtc-reset-reinjection",
+        .args_type  = "",
+        .mhandler.cmd_new = qmp_marshal_input_rtc_reset_reinjection,
+    },
+#endif
+
+SQMP
+rtc-reset-reinjection
+---------------------
+
+Reset the RTC interrupt reinjection backlog.
+
+Arguments: None.
+
+Example:
+
+-> { "execute": "rtc-reset-reinjection" }
+<- { "return": {} }
+
+EQMP

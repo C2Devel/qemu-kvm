@@ -357,7 +357,13 @@ static int qemu_gluster_open(BlockDriverState *bs,  QDict *options,
         ret = -errno;
         goto out;
     }
-    fcntl(s->fds[GLUSTER_FD_READ], F_SETFL, O_NONBLOCK);
+    ret = fcntl(s->fds[GLUSTER_FD_READ], F_SETFL, O_NONBLOCK);
+    if (ret < 0) {
+        ret = -errno;
+        close(s->fds[GLUSTER_FD_READ]);
+        close(s->fds[GLUSTER_FD_WRITE]);
+        goto out;
+    }
     qemu_aio_set_fd_handler(s->fds[GLUSTER_FD_READ],
         qemu_gluster_aio_event_reader, NULL, qemu_gluster_aio_flush_cb, s);
 

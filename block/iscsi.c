@@ -1290,6 +1290,41 @@ fail:
     return NULL;
 }
 
+
+static bool iscsi_is_write_protected(IscsiLun *iscsilun)
+{
+    struct scsi_task *task;
+    struct scsi_mode_sense *ms = NULL;
+    bool wrprotected = false;
+
+    task = iscsi_modesense6_sync(iscsilun->iscsi, iscsilun->lun,
+                                 1, SCSI_MODESENSE_PC_CURRENT,
+                                 0x3F, 0, 255);
+    if (task == NULL) {
+        error_report("iSCSI: Failed to send MODE_SENSE(6) command: %s",
+                     iscsi_get_error(iscsilun->iscsi));
+        goto out;
+    }
+
+    if (task->status != SCSI_STATUS_GOOD) {
+        error_report("iSCSI: Failed MODE_SENSE(6), LUN assumed writable");
+        goto out;
+    }
+    ms = scsi_datain_unmarshall(task);
+    if (!ms) {
+        error_report("iSCSI: Failed to unmarshall MODE_SENSE(6) data: %s",
+                     iscsi_get_error(iscsilun->iscsi));
+        goto out;
+    }
+    wrprotected = ms->device_specific_parameter & 0x80;
+
+out:
+    if (task) {
+        scsi_free_scsi_task(task);
+    }
+    return wrprotected;
+}
+
 /*
  * We support iscsi url's on the form
  * iscsi://[<username>%<password>@]<host>[:<port>]/<targetname>/<lun>
@@ -1405,6 +1440,14 @@ static int iscsi_open(BlockDriverState *bs, QDict *options, int flags,
     scsi_free_scsi_task(task);
     task = NULL;
 
+    /* Check the write protect flag of the LUN if we want to write */
+    if (iscsilun->type == TYPE_DISK && (flags & BDRV_O_RDWR) &&
+        iscsi_is_write_protected(iscsilun)) {
+        error_setg(errp, "Cannot open a write protected LUN as read-write");
+        ret = -EACCES;
+        goto out;
+    }
+
     iscsi_readcapacity_sync(iscsilun, &local_err);
     if (local_err != NULL) {
         error_propagate(errp, local_err);
@@ -1473,9 +1516,7 @@ static int iscsi_open(BlockDriverState *bs, QDict *options, int flags,
 
 out:
     qemu_opts_del(opts);
-    if (initiator_name != NULL) {
-        g_free(initiator_name);
-    }
+    g_free(initiator_name);
     if (iscsi_url != NULL) {
         iscsi_destroy_url(iscsi_url);
     }
@@ -1507,7 +1548,7 @@ static void iscsi_close(BlockDriverState *bs)
     memset(iscsilun, 0, sizeof(IscsiLun));
 }
 
-static int iscsi_refresh_limits(BlockDriverState *bs)
+static void iscsi_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     IscsiLun *iscsilun = bs->opaque;
 
@@ -1533,8 +1574,6 @@ static int iscsi_refresh_limits(BlockDriverState *bs)
         bs->bl.opt_transfer_length = sector_lun2qemu(iscsilun->bl.opt_xfer_len,
                                                      iscsilun);
     }
-
-    return 0;
 }
 
 /* We have nothing to do for iSCSI reopen, stub just returns

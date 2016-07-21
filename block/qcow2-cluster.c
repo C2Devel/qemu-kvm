@@ -151,12 +151,14 @@ static int l2_load(BlockDriverState *bs, uint64_t l2_offset,
 int qcow2_write_l1_entry(BlockDriverState *bs, int l1_index)
 {
     BDRVQcowState *s = bs->opaque;
-    uint64_t buf[L1_ENTRIES_PER_SECTOR];
+    uint64_t buf[L1_ENTRIES_PER_SECTOR] = { 0 };
     int l1_start_index;
     int i, ret;
 
     l1_start_index = l1_index & ~(L1_ENTRIES_PER_SECTOR - 1);
-    for (i = 0; i < L1_ENTRIES_PER_SECTOR; i++) {
+    for (i = 0; i < L1_ENTRIES_PER_SECTOR && l1_start_index + i < s->l1_size;
+         i++)
+    {
         buf[i] = cpu_to_be64(s->l1_table[l1_start_index + i]);
     }
 
@@ -459,6 +461,13 @@ int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
         goto out;
     }
 
+    if (offset_into_cluster(s, l2_offset)) {
+        qcow2_signal_corruption(bs, true, -1, -1, "L2 table offset %#" PRIx64
+                                " unaligned (L1 index: %#" PRIx64 ")",
+                                l2_offset, l1_index);
+        return -EIO;
+    }
+
     /* load the l2 table in memory */
 
     ret = l2_load(bs, l2_offset, &l2_table);
@@ -481,7 +490,11 @@ int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
         break;
     case QCOW2_CLUSTER_ZERO:
         if (s->qcow_version < 3) {
-            return -EIO;
+            qcow2_signal_corruption(bs, true, -1, -1, "Zero cluster entry found"
+                                    " in pre-v3 image (L2 offset: %#" PRIx64
+                                    ", L2 index: %#x)", l2_offset, l2_index);
+            ret = -EIO;
+            goto fail;
         }
         c = count_contiguous_clusters(nb_clusters, s->cluster_size,
                 &l2_table[l2_index], 0,
@@ -499,6 +512,14 @@ int qcow2_get_cluster_offset(BlockDriverState *bs, uint64_t offset,
                 &l2_table[l2_index], 0,
                 QCOW_OFLAG_COMPRESSED | QCOW_OFLAG_ZERO);
         *cluster_offset &= L2E_OFFSET_MASK;
+        if (offset_into_cluster(s, *cluster_offset)) {
+            qcow2_signal_corruption(bs, true, -1, -1, "Data cluster offset %#"
+                                    PRIx64 " unaligned (L2 offset: %#" PRIx64
+                                    ", L2 index: %#x)", *cluster_offset,
+                                    l2_offset, l2_index);
+            ret = -EIO;
+            goto fail;
+        }
         break;
     default:
         abort();
@@ -514,6 +535,10 @@ out:
 
     *num = nb_available - index_in_cluster;
 
+    return ret;
+
+fail:
+    qcow2_cache_put(bs, s->l2_table_cache, (void **)&l2_table);
     return ret;
 }
 
@@ -550,6 +575,12 @@ static int get_cluster_table(BlockDriverState *bs, uint64_t offset,
 
     assert(l1_index < s->l1_size);
     l2_offset = s->l1_table[l1_index] & L1E_OFFSET_MASK;
+    if (offset_into_cluster(s, l2_offset)) {
+        qcow2_signal_corruption(bs, true, -1, -1, "L2 table offset %#" PRIx64
+                                " unaligned (L1 index: %#" PRIx64 ")",
+                                l2_offset, l1_index);
+        return -EIO;
+    }
 
     /* seek the l2 table of the given l2 offset */
 
@@ -917,6 +948,15 @@ static int handle_copied(BlockDriverState *bs, uint64_t guest_offset,
         bool offset_matches =
             (cluster_offset & L2E_OFFSET_MASK) == *host_offset;
 
+        if (offset_into_cluster(s, cluster_offset & L2E_OFFSET_MASK)) {
+            qcow2_signal_corruption(bs, true, -1, -1, "Data cluster offset "
+                                    "%#llx unaligned (guest offset: %#" PRIx64
+                                    ")", cluster_offset & L2E_OFFSET_MASK,
+                                    guest_offset);
+            ret = -EIO;
+            goto out;
+        }
+
         if (*host_offset != 0 && !offset_matches) {
             *bytes = 0;
             ret = 0;
@@ -948,7 +988,7 @@ out:
 
     /* Only return a host offset if we actually made progress. Otherwise we
      * would make requirements for handle_alloc() that it can't fulfill */
-    if (ret) {
+    if (ret > 0) {
         *host_offset = (cluster_offset & L2E_OFFSET_MASK)
                      + offset_into_cluster(s, guest_offset);
     }
@@ -1086,6 +1126,17 @@ static int handle_alloc(BlockDriverState *bs, uint64_t guest_offset,
     if (nb_clusters == 0) {
         *bytes = 0;
         return 0;
+    }
+
+    /* !*host_offset would overwrite the image header and is reserved for "no
+     * host offset preferred". If 0 was a valid host offset, it'd trigger the
+     * following overlap check; do that now to avoid having an invalid value in
+     * *host_offset. */
+    if (!alloc_cluster_offset) {
+        ret = qcow2_pre_write_overlap_check(bs, 0, alloc_cluster_offset,
+                                            nb_clusters * s->cluster_size);
+        assert(ret < 0);
+        goto fail;
     }
 
     /*
@@ -1333,7 +1384,7 @@ int qcow2_decompress_cluster(BlockDriverState *bs, uint64_t cluster_offset)
  * clusters.
  */
 static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
-    unsigned int nb_clusters)
+    unsigned int nb_clusters, enum qcow2_discard_type type)
 {
     BDRVQcowState *s = bs->opaque;
     uint64_t *l2_table;
@@ -1362,7 +1413,7 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
         l2_table[l2_index + i] = cpu_to_be64(0);
 
         /* Then decrease the refcount */
-        qcow2_free_any_clusters(bs, old_offset, 1, QCOW2_DISCARD_REQUEST);
+        qcow2_free_any_clusters(bs, old_offset, 1, type);
     }
 
     ret = qcow2_cache_put(bs, s->l2_table_cache, (void**) &l2_table);
@@ -1374,7 +1425,7 @@ static int discard_single_l2(BlockDriverState *bs, uint64_t offset,
 }
 
 int qcow2_discard_clusters(BlockDriverState *bs, uint64_t offset,
-    int nb_sectors)
+    int nb_sectors, enum qcow2_discard_type type)
 {
     BDRVQcowState *s = bs->opaque;
     uint64_t end_offset;
@@ -1397,7 +1448,7 @@ int qcow2_discard_clusters(BlockDriverState *bs, uint64_t offset,
 
     /* Each L2 table is handled by its own loop iteration */
     while (nb_clusters > 0) {
-        ret = discard_single_l2(bs, offset, nb_clusters);
+        ret = discard_single_l2(bs, offset, nb_clusters, type);
         if (ret < 0) {
             goto fail;
         }
@@ -1528,6 +1579,14 @@ static int expand_zero_clusters_in_l1(BlockDriverState *bs, uint64_t *l1_table,
             continue;
         }
 
+        if (offset_into_cluster(s, l2_offset)) {
+            qcow2_signal_corruption(bs, true, -1, -1, "L2 table offset %#"
+                                    PRIx64 " unaligned (L1 index: %#x)",
+                                    l2_offset, i);
+            ret = -EIO;
+            goto fail;
+        }
+
         if (is_active_l1) {
             /* get active L2 tables from cache */
             ret = qcow2_cache_get(bs, s->l2_table_cache, l2_offset,
@@ -1585,6 +1644,19 @@ static int expand_zero_clusters_in_l1(BlockDriverState *bs, uint64_t *l1_table,
                     ret = offset;
                     goto fail;
                 }
+            }
+
+            if (offset_into_cluster(s, offset)) {
+                qcow2_signal_corruption(bs, true, -1, -1, "Data cluster offset "
+                                        "%#" PRIx64 " unaligned (L2 offset: %#"
+                                        PRIx64 ", L2 index: %#x)", offset,
+                                        l2_offset, j);
+                if (!preallocated) {
+                    qcow2_free_clusters(bs, offset, s->cluster_size,
+                                        QCOW2_DISCARD_ALWAYS);
+                }
+                ret = -EIO;
+                goto fail;
             }
 
             ret = qcow2_pre_write_overlap_check(bs, 0, offset, s->cluster_size);

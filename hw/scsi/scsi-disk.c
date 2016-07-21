@@ -413,7 +413,7 @@ static void scsi_read_data(SCSIRequest *req)
  */
 static int scsi_handle_rw_error(SCSIDiskReq *r, int error)
 {
-    bool is_read = (r->req.cmd.xfer == SCSI_XFER_FROM_DEV);
+    bool is_read = (r->req.cmd.mode == SCSI_XFER_FROM_DEV);
     SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, r->req.dev);
     BlockErrorAction action = bdrv_get_error_action(s->qdev.conf.bs, is_read, error);
 

@@ -1894,6 +1894,7 @@ void qemu_system_killed(int signal, pid_t pid)
 
 void qemu_system_shutdown_request(void)
 {
+    trace_qemu_system_shutdown_request();
     shutdown_requested = 1;
     qemu_notify_event();
 }
@@ -1906,6 +1907,7 @@ static void qemu_system_powerdown(void)
 
 void qemu_system_powerdown_request(void)
 {
+    trace_qemu_system_powerdown_request();
     powerdown_requested = 1;
     qemu_notify_event();
 }
@@ -4250,6 +4252,9 @@ int main(int argc, char **argv, char **envp)
                                  .kernel_cmdline = kernel_cmdline,
                                  .initrd_filename = initrd_filename,
                                  .cpu_model = cpu_model };
+
+    current_machine = machine;
+
     machine->init(&args);
 
     audio_init();
@@ -4257,8 +4262,6 @@ int main(int argc, char **argv, char **envp)
     cpu_synchronize_all_post_init();
 
     set_numa_modes();
-
-    current_machine = machine;
 
     /* init USB devices */
     if (usb_enabled(false)) {

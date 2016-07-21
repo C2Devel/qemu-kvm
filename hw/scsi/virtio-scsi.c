@@ -154,6 +154,12 @@ static void *virtio_scsi_load_request(QEMUFile *f, SCSIRequest *sreq)
 #endif
     assert(req->elem.in_num <= ARRAY_SIZE(req->elem.in_sg));
     assert(req->elem.out_num <= ARRAY_SIZE(req->elem.out_sg));
+
+    virtqueue_map_sg(req->elem.in_sg, req->elem.in_addr,
+                     req->elem.in_num, 1);
+    virtqueue_map_sg(req->elem.out_sg, req->elem.out_addr,
+                     req->elem.out_num, 0);
+
     virtio_scsi_parse_req(s, vs->cmd_vqs[n], req);
 
     scsi_req_ref(sreq);

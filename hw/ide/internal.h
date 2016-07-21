@@ -289,6 +289,7 @@ typedef struct IDEDMAOps IDEDMAOps;
 #define ATAPI_INT_REASON_TAG            0xf8
 
 /* same constants as bochs */
+#define ASC_NO_SEEK_COMPLETE                 0x02
 #define ASC_ILLEGAL_OPCODE                   0x20
 #define ASC_LOGICAL_BLOCK_OOR                0x21
 #define ASC_INV_FIELD_IN_CMD_PACKET          0x24
@@ -322,6 +323,7 @@ typedef void EndTransferFunc(IDEState *);
 typedef void DMAStartFunc(IDEDMA *, IDEState *, BlockDriverCompletionFunc *);
 typedef int DMAFunc(IDEDMA *);
 typedef int DMAIntFunc(IDEDMA *, int);
+typedef int32_t DMAInt32Func(IDEDMA *, int);
 typedef void DMARestartFunc(void *, int, RunState);
 
 struct unreported_events {
@@ -383,7 +385,7 @@ struct IDEState {
     uint8_t cdrom_changed;
     int packet_transfer_size;
     int elementary_transfer_size;
-    int io_buffer_index;
+    int32_t io_buffer_index;
     int lba;
     int cd_sector_size;
     int atapi_dma; /* true if dma is requested for the packet cmd */
@@ -392,8 +394,8 @@ struct IDEState {
     struct iovec iov;
     QEMUIOVector qiov;
     /* ATA DMA state */
-    int io_buffer_offset;
-    int io_buffer_size;
+    int32_t io_buffer_offset;
+    int32_t io_buffer_size;
     QEMUSGList sg;
     /* PIO transfer handling */
     int req_nb_sectors; /* number of sectors per interrupt */
@@ -403,8 +405,8 @@ struct IDEState {
     uint8_t *io_buffer;
     /* PIO save/restore */
     int32_t io_buffer_total_len;
-    int cur_io_buffer_offset;
-    int cur_io_buffer_len;
+    int32_t cur_io_buffer_offset;
+    int32_t cur_io_buffer_len;
     uint8_t end_transfer_fn_idx;
     QEMUTimer *sector_write_timer; /* only used for win2k install hack */
     uint32_t irq_count; /* counts IRQs when using win2k install hack */
@@ -428,7 +430,7 @@ struct IDEState {
 struct IDEDMAOps {
     DMAStartFunc *start_dma;
     DMAFunc *start_transfer;
-    DMAIntFunc *prepare_buf;
+    DMAInt32Func *prepare_buf;
     DMAIntFunc *rw_buf;
     DMAIntFunc *set_unit;
     DMAIntFunc *add_status;
@@ -536,6 +538,7 @@ void ide_dma_error(IDEState *s);
 
 void ide_atapi_cmd_ok(IDEState *s);
 void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc);
+void ide_atapi_dma_restart(IDEState *s);
 void ide_atapi_io_error(IDEState *s, int ret);
 
 void ide_ioport_write(void *opaque, uint32_t addr, uint32_t val);

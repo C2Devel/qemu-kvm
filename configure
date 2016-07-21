@@ -250,6 +250,7 @@ libssh2=""
 live_block_ops="yes"
 live_block_migration="no"
 vhdx=""
+tcmalloc="no"
 
 # parse CC options first
 for opt do
@@ -394,6 +395,8 @@ elif check_define __s390__ ; then
   fi
 elif check_define __arm__ ; then
   cpu="arm"
+elif check_define __aarch64__ ; then
+  cpu="aarch64"
 elif check_define __hppa__ ; then
   cpu="hppa"
 else
@@ -415,6 +418,9 @@ case "$cpu" in
   ;;
   armv*b|armv*l|arm)
     cpu="arm"
+  ;;
+  aarch64)
+    cpu="aarch64"
   ;;
   hppa|parisc|parisc64)
     cpu="hppa"
@@ -967,6 +973,10 @@ for opt do
   ;;
   --disable-vhdx) vhdx="no"
   ;;
+  --disable-tcmalloc) tcmalloc="no"
+  ;;
+  --enable-tcmalloc) tcmalloc="yes"
+  ;;
   *) echo "ERROR: unknown option $opt"; show_help="yes"
   ;;
   esac
@@ -1248,6 +1258,8 @@ echo "  --disable-live-block-migration disable live block migration"
 echo "  --enable-live-block-migration  enable live block migration"
 echo "  --disable-vhdx           disables support for the Microsoft VHDX image format"
 echo "  --enable-vhdx            enable support for the Microsoft VHDX image format"
+echo "  --disable-tcmalloc       disable tcmalloc support"
+echo "  --enable-tcmalloc        enable tcmalloc support"
 echo ""
 echo "NOTE: The object files are built at the place where configure is launched"
 exit 1
@@ -2645,6 +2657,26 @@ fi
 
 ##########################################
 # fdt probe
+# fdt support is mandatory for at least some target architectures,
+# so insist on it if we're building those system emulators.
+fdt_required=no
+for target in $target_list; do
+  case $target in
+    aarch64*-softmmu|arm*-softmmu|ppc*-softmmu|microblaze*-softmmu)
+      fdt_required=yes
+    ;;
+  esac
+done
+
+if test "$fdt_required" = "yes"; then
+  if test "$fdt" = "no"; then
+    error_exit "fdt disabled but some requested targets require it." \
+      "You can turn off fdt only if you also disable all the system emulation" \
+      "targets which need it (by specifying a cut down --target-list)."
+  fi
+  fdt=yes
+fi
+
 if test "$fdt" != "no" ; then
   fdt_libs="-lfdt"
   cat > $TMPC << EOF
@@ -2850,6 +2882,22 @@ int main(void)
 EOF
 if compile_prog "" "" ; then
   splice=yes
+fi
+
+##########################################
+# tcmalloc probe
+
+if test "$tcmalloc" = "yes" ; then
+  cat > $TMPC << EOF
+#include <stdlib.h>
+int main(void) { malloc(1); return 0; }
+EOF
+
+  if compile_prog "" "-ltcmalloc" ; then
+    LIBS="-ltcmalloc $LIBS"
+  else
+    feature_not_found "tcmalloc" "install gperftools devel"
+  fi
 fi
 
 ##########################################
@@ -3719,6 +3767,7 @@ echo "Live block migration $live_block_migration"
 echo "vhdx              $vhdx"
 echo "lzo support       $lzo"
 echo "snappy support    $snappy"
+echo "tcmalloc support  $tcmalloc"
 
 if test "$sdl_too_old" = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -4286,6 +4335,9 @@ if test "$linux" = "yes" ; then
   s390x)
     linux_arch=s390
     ;;
+  aarch64)
+    linux_arch=arm64
+    ;;
   *)
     # For most CPUs the kernel architecture name and QEMU CPU name match.
     linux_arch="$cpu"
@@ -4362,6 +4414,11 @@ case "$target_arch2" in
     bflt="yes"
     target_nptl="yes"
     gdb_xml_files="arm-core.xml arm-vfp.xml arm-vfp3.xml arm-neon.xml"
+  ;;
+  aarch64)
+    TARGET_BASE_ARCH=arm
+    bflt="yes"
+    gdb_xml_files="aarch64-core.xml"
   ;;
   cris)
     target_nptl="yes"

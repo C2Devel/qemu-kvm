@@ -28,6 +28,7 @@
 #include <hw/isa/isa.h>
 #include "block/block.h"
 #include "sysemu/dma.h"
+#include "qemu/error-report.h"
 
 #include <hw/ide/pci.h>
 
@@ -51,8 +52,11 @@ static void bmdma_start_dma(IDEDMA *dma, IDEState *s,
     }
 }
 
-/* return 0 if buffer completed */
-static int bmdma_prepare_buf(IDEDMA *dma, int is_write)
+/**
+ * Return the number of bytes successfully prepared.
+ * -1 on error.
+ */
+static int32_t bmdma_prepare_buf(IDEDMA *dma, int is_write)
 {
     BMDMAState *bm = DO_UPCAST(BMDMAState, dma, dma);
     IDEState *s = bmdma_active_if(bm);
@@ -69,8 +73,9 @@ static int bmdma_prepare_buf(IDEDMA *dma, int is_write)
         if (bm->cur_prd_len == 0) {
             /* end of table (with a fail safe of one page) */
             if (bm->cur_prd_last ||
-                (bm->cur_addr - bm->addr) >= BMDMA_PAGE_SIZE)
-                return s->io_buffer_size != 0;
+                (bm->cur_addr - bm->addr) >= BMDMA_PAGE_SIZE) {
+                return s->io_buffer_size;
+            }
             pci_dma_read(&bm->pci_dev->dev, bm->cur_addr, &prd, 8);
             bm->cur_addr += 8;
             prd.addr = le32_to_cpu(prd.addr);
@@ -85,12 +90,23 @@ static int bmdma_prepare_buf(IDEDMA *dma, int is_write)
         l = bm->cur_prd_len;
         if (l > 0) {
             qemu_sglist_add(&s->sg, bm->cur_prd_addr, l);
+
+            /* Note: We limit the max transfer to be 2GiB.
+             * This should accommodate the largest ATA transaction
+             * for LBA48 (65,536 sectors) and 32K sector sizes. */
+            if (s->sg.size > INT32_MAX) {
+                error_report("IDE: sglist describes more than 2GiB.\n");
+                break;
+            }
             bm->cur_prd_addr += l;
             bm->cur_prd_len -= l;
             s->io_buffer_size += l;
         }
     }
-    return 1;
+
+    qemu_sglist_destroy(&s->sg);
+    s->io_buffer_size = 0;
+    return -1;
 }
 
 /* return 0 if buffer completed */
@@ -220,6 +236,17 @@ static void bmdma_restart_bh(void *opaque)
         }
     } else if (error_status & BM_STATUS_RETRY_FLUSH) {
         ide_flush_cache(bmdma_active_if(bm));
+    } else {
+        IDEState *s = bmdma_active_if(bm);
+
+        /*
+         * We've not got any bits to tell us about ATAPI - but
+         * we do have the end_transfer_func that tells us what
+         * we're trying to do.
+         */
+        if (s->end_transfer_func == ide_atapi_cmd) {
+            ide_atapi_dma_restart(s);
+        }
     }
 }
 

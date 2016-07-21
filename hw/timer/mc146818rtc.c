@@ -26,6 +26,7 @@
 #include "sysemu/sysemu.h"
 #include "hw/timer/mc146818rtc.h"
 #include "qapi/visitor.h"
+#include "qmp-commands.h"
 
 #ifdef TARGET_I386
 #include "hw/i386/apic.h"
@@ -85,6 +86,7 @@ typedef struct RTCState {
     Notifier clock_reset_notifier;
     LostTickPolicy lost_tick_policy;
     Notifier suspend_notifier;
+    QLIST_ENTRY(RTCState) link;
 } RTCState;
 
 static void rtc_set_time(RTCState *s);
@@ -529,6 +531,20 @@ static void rtc_get_time(RTCState *s, struct tm *tm)
         rtc_from_bcd(s, s->cmos_data[RTC_CENTURY]) * 100 - 1900;
 }
 
+static QLIST_HEAD(, RTCState) rtc_devices =
+    QLIST_HEAD_INITIALIZER(rtc_devices);
+
+#ifdef TARGET_I386
+void qmp_rtc_reset_reinjection(Error **errp)
+{
+    RTCState *s;
+
+    QLIST_FOREACH(s, &rtc_devices, link) {
+        s->irq_coalesced = 0;
+    }
+}
+#endif
+
 static void rtc_set_time(RTCState *s)
 {
     struct tm tm;
@@ -889,6 +905,8 @@ ISADevice *rtc_init(ISABus *bus, int base_year, qemu_irq intercept_irq)
     } else {
         isa_init_irq(isadev, &s->irq, RTC_ISA_IRQ);
     }
+    QLIST_INSERT_HEAD(&rtc_devices, s, link);
+
     return isadev;
 }
 

@@ -42,6 +42,13 @@ void qemu_set_nonblock(int fd);
 int send_all(int fd, const void *buf, int len1);
 int recv_all(int fd, void *buf, int len1, bool single_read);
 
+#ifdef WIN32
+/* Windows has different names for the same constants with the same values */
+#define SHUT_RD   0
+#define SHUT_WR   1
+#define SHUT_RDWR 2
+#endif
+
 /* callback function for nonblocking connect
  * valid fd on success, negative error code on failure
  */
