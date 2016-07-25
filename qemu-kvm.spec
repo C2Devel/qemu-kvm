@@ -83,7 +83,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid .CROC2
+%define buildid .CROC3
 
 %define sublevel 0.12.1.2
 %define pkgrelease 2.448
@@ -12935,10 +12935,14 @@ fi
 %endif # with qemu_kvm
 
 %changelog
-* Thu Jan 29 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.CROC2.el6
+* Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.el6.CROC3
+- fix patches syntax on applying in spec
+- change CROC-specific patches numbering
+
+* Thu Jan 29 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.el6.CROC2
 - croc-kvm-blockdev-fix-cdrom-readonly-default-state.patch
 
-* Wed Jan 28 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.CROC1.el6
+* Wed Jan 28 2015 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.el6.CROC1
 - croc-kvm-qmp-incoming_finished-event-added.patch
 
 * Fri Sep 26 2014 Jeff E. Nelson <jen@redhat.com> - 0.12.1.2-2.448.el6
