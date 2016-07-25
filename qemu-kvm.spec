@@ -30,6 +30,10 @@
 %define build_arches x86_64
 %endif
 
+%ifnarch s390 s390x
+%global have_tcmalloc    1
+%endif
+
 %ifarch i686
 %global build_qemu_kvm   0
 %global have_gluster     1
@@ -9175,6 +9179,9 @@ Requires: glusterfs-api
 %endif
 # For compressed guest memory dumps
 Requires: lzo snappy
+%if 0%{?have_tcmalloc}
+BuildRequires: gperftools-devel
+%endif
 %endif
 
 # fix for CVE-2011-2527 requires newer glibc
@@ -13555,6 +13562,12 @@ buildldflags="VL_LDFLAGS=-Wl,--build-id"
 %define config_spice          --disable-spice
 %endif
 
+%if 0%{?have_tcmalloc}
+%define config_tcmalloc       --enable-tcmalloc
+%else
+%define config_tcmalloc       --disable-tcmalloc
+%endif
+
 %define qemu_ga_build_flags --prefix=%{_prefix} \\\
              --localstatedir=%{_localstatedir} \\\
              --sysconfdir=%{_libexecdir} \\\
@@ -13625,6 +13638,7 @@ cd qemu-kvm-x86_64-build
             --enable-lzo \
             --enable-snappy \
             --enable-vhdx \
+            %{config_tcmalloc} \
             %{config_fake_machine} \
             %{disable_rhev_features_arg}
 
