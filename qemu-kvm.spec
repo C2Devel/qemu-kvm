@@ -108,7 +108,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid .CROC2
+%define buildid .CROC3
 
 %define zrelease 1
 %define sublevel 0.12.1.2
@@ -9120,6 +9120,8 @@ Patch9939: 9939-block-raw-posix-fix-launching-with-failed-disks.patch
 Patch9940: 9940-block-minimal-bounce-buffer-alignment.patch
 # Backport of 4K block support and fix unaligned writes
 Patch9941: 9941-block-align-bounce-buffers-to-page.patch
+# Added support for configure with tcmalloc
+Patch9942: 9942-configure-Add-support-for-tcmalloc.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -13526,6 +13528,7 @@ MakeIOtestsExecutable()
 %patch9939 -p1
 %patch9940 -p1
 %patch9941 -p1
+%patch9942 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -13919,6 +13922,10 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Tue Aug 09 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC3
+- 9942-configure-Add-support-for-tcmalloc.patch
+- spec-enable-tcmalloc-as-default-memory-allocator.patch
+
 * Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC2
 - 9904-block-add-BlockLimits-structure-to-BlockDriverState.patch
 - 9905-block-Initialize-BlockLimits-in-bdrv_refresh_limits-.patch
