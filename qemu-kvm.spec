@@ -12562,8 +12562,8 @@ ApplyOptionalPatch()
 %patch4936 -p1
 %patch4937 -p1
 %patch4938 -p1
-%Patch9990 -p1
-%Patch9991 -p1
+%patch9990 -p1
+%patch9991 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
