@@ -104,7 +104,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid %{nil}
+%define buildid .CROC1
 
 %define zrelease 1
 %define sublevel 0.12.1.2
@@ -9037,6 +9037,10 @@ Patch5205: kvm-vga-make-sure-vga-register-setup-for-vbe-stays-intac.patch
 Patch9900: croc-kvm-qmp-incoming_finished-event-added.patch
 # Default cdrom readonly state false
 Patch9901: croc-kvm-blockdev-fix-cdrom-readonly-default-state.patch
+# Set NULL upon deleting handlers in qemu_set_fd_handler2
+Patch9902: 9902-vl.c-set-NULL-upon-deleting-handlers-in-qemu_set_fd_.patch
+# block: remove SIGUSR2 using in aio context
+Patch9903: 9903-block-remove-SIGUSR2-using-in-aio-context.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -13400,6 +13404,8 @@ MakeIOtestsExecutable()
 %patch5205 -p1
 %patch9900 -p1
 %patch9901 -p1
+%patch9902 -p1
+%patch9903 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -13786,6 +13792,10 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC1
+- 9902-vl.c-set-NULL-upon-deleting-handlers-in-qemu_set_fd_.patch
+- 9903-block-remove-SIGUSR2-using-in-aio-context.patch
+
 * Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.448.el6.CROC3
 - fix patches syntax on applying in spec
 - change CROC-specific patches numbering
