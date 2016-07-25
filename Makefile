@@ -140,7 +140,7 @@ sdl_zoom.o: sdl_zoom.c sdl_zoom.h sdl_zoom_template.h
 
 sdl.o: sdl.c keymaps.h sdl_keysym.h sdl_zoom.h
 
-sdl.o audio/sdlaudio.o sdl_zoom.o baum.o: QEMU_CFLAGS += $(SDL_CFLAGS)
+sdl.o audio/sdlaudio.o sdl_zoom.o: QEMU_CFLAGS += $(SDL_CFLAGS)
 
 acl.o: acl.h acl.c
 

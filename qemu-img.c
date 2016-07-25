@@ -78,8 +78,8 @@ static void help(void)
            "  'filename' is a disk image filename\n"
            "  'fmt' is the disk image format. It is guessed automatically in most cases\n"
            "  'cache' is the cache mode used to write the output disk image, the valid\n"
-           "    options are: 'none', 'writeback' (default), 'writethrough' and 'unsafe'\n"
-           "  'src_cache' in contrast is the cache mode used to read input disk images\n"
+           "    options are: 'none', 'writeback' (default), 'writethrough', 'directsync'\n"
+           "    and 'unsafe'\n"
            "  'size' is the disk image size in bytes. Optional suffixes\n"
            "    'k' or 'K' (kilobyte, 1024), 'M' (megabyte, 1024k), 'G' (gigabyte, 1024M)\n"
            "    and T (terabyte, 1024G) are supported. 'b' is ignored.\n"
@@ -214,6 +214,7 @@ static int print_block_option_help(const char *filename, const char *fmt)
 {
     BlockDriver *drv, *proto_drv;
     QEMUOptionParameter *create_options = NULL;
+    Error *local_err = NULL;
 
     /* Find driver and parse its options */
     drv = bdrv_find_format(fmt);
@@ -222,16 +223,20 @@ static int print_block_option_help(const char *filename, const char *fmt)
         return 1;
     }
 
-    proto_drv = bdrv_find_protocol(filename);
-    if (!proto_drv) {
-        error_report("Unknown protocol '%s'", filename);
-        return 1;
-    }
-
     create_options = append_option_parameters(create_options,
                                               drv->create_options);
-    create_options = append_option_parameters(create_options,
-                                              proto_drv->create_options);
+
+    if (filename) {
+        proto_drv = bdrv_find_protocol(filename, &local_err);
+        if (!proto_drv) {
+            qerror_report_err(local_err);
+            error_free(local_err);
+            return 1;
+        }
+        create_options = append_option_parameters(create_options,
+                                                  proto_drv->create_options);
+    }
+
     print_option_help(create_options);
     free_option_parameters(create_options);
     return 0;
@@ -338,38 +343,55 @@ static int img_create(int argc, char **argv)
         case 'e':
             error_report("qemu-img: option -e is deprecated, please use \'-o "
                   "encryption\' instead!");
-            return 1;
+            goto fail;
         case '6':
             error_report("qemu-img: option -6 is deprecated, please use \'-o "
                   "compat6\' instead!");
-            return 1;
+            goto fail;
         case 'o':
-            options = optarg;
+            if (!is_valid_option_list(optarg)) {
+                error_report("Invalid option list: %s", optarg);
+                goto fail;
+            }
+            if (!options) {
+                options = g_strdup(optarg);
+            } else {
+                char *old_options = options;
+                options = g_strdup_printf("%s,%s", options, optarg);
+                g_free(old_options);
+            }
             break;
         }
     }
 
     /* Get the filename */
+    filename = (optind < argc) ? argv[optind] : NULL;
+    if (options && has_help_option(options)) {
+        g_free(options);
+        return print_block_option_help(filename, fmt);
+    }
+
     if (optind >= argc) {
         help();
     }
-    filename = argv[optind++];
+    optind++;
 
     /* Get image size, if specified */
     if (optind < argc) {
         int64_t sval;
-        sval = strtosz_suffix(argv[optind++], NULL, STRTOSZ_DEFSUFFIX_B);
-        if (sval < 0) {
-            error_report("Invalid image size specified! You may use k, M, G or "
-                  "T suffixes for ");
-            error_report("kilobytes, megabytes, gigabytes and terabytes.");
-            return 1;
+        char *end;
+        sval = strtosz_suffix(argv[optind++], &end, STRTOSZ_DEFSUFFIX_B);
+        if (sval < 0 || *end) {
+            if (sval == -ERANGE) {
+                error_report("Image size must be less than 8 EiB!");
+            } else {
+                error_report("Invalid image size specified! You may use k, M, "
+                      "G or T suffixes for ");
+                error_report("kilobytes, megabytes, gigabytes and terabytes.");
+            }
+            goto fail;
         }
         img_size = (uint64_t)sval;
-    }
-
-    if (options && !strcmp(options, "?")) {
-        return print_block_option_help(filename, fmt);
     }
 
     bdrv_img_create(filename, fmt, base_filename, base_fmt,
@@ -377,10 +399,15 @@ static int img_create(int argc, char **argv)
     if (error_is_set(&local_err)) {
         error_report("%s", error_get_pretty(local_err));
         error_free(local_err);
-        return 1;
+        goto fail;
     }
 
+    g_free(options);
     return 0;
+
+fail:
+    g_free(options);
+    return 1;
 }
 
 static void dump_json_image_check(ImageCheck *check)
@@ -1078,12 +1105,14 @@ out3:
 
 static int img_convert(int argc, char **argv)
 {
-    int c, ret = 0, n, n1, bs_n, bs_i, compress, cluster_size, cluster_sectors;
+    int c, n, n1, bs_n, bs_i, compress, cluster_size, cluster_sectors;
+    int64_t ret = 0;
     int progress = 0, flags, src_flags;
     const char *fmt, *out_fmt, *cache, *src_cache, *out_baseimg, *out_filename;
     BlockDriver *drv, *proto_drv;
     BlockDriverState **bs = NULL, *out_bs = NULL;
-    int64_t total_sectors, nb_sectors, sector_num, bs_offset;
+    int64_t total_sectors, nb_sectors, sector_num, bs_offset,
+            sector_num_next_status = 0;
     uint64_t bs_sectors;
     uint8_t * buf = NULL;
     const uint8_t *buf1;
@@ -1091,8 +1120,8 @@ static int img_convert(int argc, char **argv)
     QEMUOptionParameter *param = NULL, *create_options = NULL;
     QEMUOptionParameter *out_baseimg_param;
     char *options = NULL;
-    float local_progress = 0;
     int min_sparse = 8; /* Need at least 4k of zeros for sparse detection */
+    Error *local_err = NULL;
 
     fmt = NULL;
     out_fmt = "raw";
@@ -1125,21 +1154,36 @@ static int img_convert(int argc, char **argv)
         case 'e':
             error_report("qemu-img: option -e is deprecated, please use \'-o "
                   "encryption\' instead!");
-            return 1;
+            ret = -1;
+            goto fail_getopt;
         case '6':
             error_report("qemu-img: option -6 is deprecated, please use \'-o "
                   "compat6\' instead!");
-            return 1;
+            ret = -1;
+            goto fail_getopt;
         case 'o':
-            options = optarg;
+            if (!is_valid_option_list(optarg)) {
+                error_report("Invalid option list: %s", optarg);
+                ret = -1;
+                goto fail_getopt;
+            }
+            if (!options) {
+                options = g_strdup(optarg);
+            } else {
+                char *old_options = options;
+                options = g_strdup_printf("%s,%s", options, optarg);
+                g_free(old_options);
+            }
             break;
         case 'S':
         {
             int64_t sval;
-            sval = strtosz_suffix(optarg, NULL, STRTOSZ_DEFSUFFIX_B);
-            if (sval < 0) {
+            char *end;
+            sval = strtosz_suffix(optarg, &end, STRTOSZ_DEFSUFFIX_B);
+            if (sval < 0 || *end) {
                 error_report("Invalid minimum zero buffer size for sparse output specified");
-                return 1;
+                ret = -1;
+                goto fail_getopt;
             }
 
             min_sparse = sval / BDRV_SECTOR_SIZE;
@@ -1157,20 +1201,21 @@ static int img_convert(int argc, char **argv)
         }
     }
 
+    /* Initialize before goto out */
+    qemu_progress_init(progress, 1.0);
+
     bs_n = argc - optind - 1;
+    out_filename = bs_n >= 1 ? argv[argc - 1] : NULL;
+
+    if (options && has_help_option(options)) {
+        ret = print_block_option_help(out_filename, out_fmt);
+        goto out;
+    }
+
     if (bs_n < 1) {
         help();
     }
 
-    out_filename = argv[argc - 1];
-
-    /* Initialize before goto out */
-    qemu_progress_init(progress, 2.0);
-
-    if (options && !strcmp(options, "?")) {
-        ret = print_block_option_help(out_filename, out_fmt);
-        goto out;
-    }
 
     if (bs_n > 1 && out_baseimg) {
         error_report("-B makes no sense when concatenating multiple input "
@@ -1210,9 +1255,10 @@ static int img_convert(int argc, char **argv)
         goto out;
     }
 
-    proto_drv = bdrv_find_protocol(out_filename);
+    proto_drv = bdrv_find_protocol(out_filename, &local_err);
     if (!proto_drv) {
-        error_report("Unknown protocol '%s'", out_filename);
+        qerror_report_err(local_err);
+        error_free(local_err);
         ret = -1;
         goto out;
     }
@@ -1283,8 +1329,8 @@ static int img_convert(int argc, char **argv)
     flags = BDRV_O_RDWR;
     ret = bdrv_parse_cache_flags(cache, &flags);
     if (ret < 0) {
-        error_report("Invalid cache option: %s\n", cache);
-        return -1;
+        error_report("Invalid cache option: %s", cache);
+        goto out;
     }
 
     out_bs = bdrv_new_open(out_filename, out_fmt, flags, true);
@@ -1314,10 +1360,6 @@ static int img_convert(int argc, char **argv)
         sector_num = 0;
 
         nb_sectors = total_sectors;
-        if (nb_sectors != 0) {
-            local_progress = (float)100 /
-                (nb_sectors / MIN(nb_sectors, cluster_sectors));
-        }
 
         for(;;) {
             int64_t bs_num;
@@ -1379,7 +1421,7 @@ static int img_convert(int argc, char **argv)
                 }
             }
             sector_num += n;
-            qemu_progress_print(local_progress, 100);
+            qemu_progress_print(100.0 * sector_num / total_sectors, 0);
         }
         /* signal EOF to align */
         bdrv_write_compressed(out_bs, 0, NULL, 0);
@@ -1388,20 +1430,12 @@ static int img_convert(int argc, char **argv)
 
         sector_num = 0; // total number of sectors converted so far
         nb_sectors = total_sectors - sector_num;
-        if (nb_sectors != 0) {
-            local_progress = (float)100 /
-                (nb_sectors / MIN(nb_sectors, IO_BUF_SIZE / 512));
-        }
 
         for(;;) {
             nb_sectors = total_sectors - sector_num;
             if (nb_sectors <= 0) {
+                ret = 0;
                 break;
-            }
-            if (nb_sectors >= (IO_BUF_SIZE / 512)) {
-                n = (IO_BUF_SIZE / 512);
-            } else {
-                n = nb_sectors;
             }
 
             while (sector_num - bs_offset >= bs_sectors) {
@@ -1414,33 +1448,49 @@ static int img_convert(int argc, char **argv)
                    sector_num, bs_i, bs_offset, bs_sectors); */
             }
 
-            if (n > bs_offset + bs_sectors - sector_num) {
-                n = bs_offset + bs_sectors - sector_num;
-            }
-
-            /* If the output image is being created as a copy on write image,
-               assume that sectors which are unallocated in the input image
-               are present in both the output's and input's base images (no
-               need to copy them). */
-            if (out_baseimg) {
-                ret = bdrv_is_allocated(bs[bs_i], sector_num - bs_offset,
-                                        n, &n1);
+            if ((out_baseimg || has_zero_init) &&
+                sector_num >= sector_num_next_status) {
+                n = nb_sectors > INT_MAX ? INT_MAX : nb_sectors;
+                ret = bdrv_get_block_status(bs[bs_i], sector_num - bs_offset,
+                                            n, &n1);
                 if (ret < 0) {
-                    error_report("error while reading metadata for sector "
-                                 "%" PRId64 ": %s",
-                                 sector_num - bs_offset, strerror(-ret));
+                    error_report("error while reading block status of sector %"
+                                 PRId64 ": %s", sector_num - bs_offset,
+                                 strerror(-ret));
                     goto out;
                 }
-                if (!ret) {
+                /* If the output image is zero initialized, we are not working
+                 * on a shared base and the input is zero we can skip the next
+                 * n1 sectors */
+                if (has_zero_init && !out_baseimg && (ret & BDRV_BLOCK_ZERO)) {
                     sector_num += n1;
                     continue;
                 }
-                /* The next 'n1' sectors are allocated in the input image. Copy
-                   only those as they may be followed by unallocated sectors. */
-                n = n1;
-            } else {
-                n1 = n;
+                /* If the output image is being created as a copy on write
+                 * image, assume that sectors which are unallocated in the
+                 * input image are present in both the output's and input's
+                 * base images (no need to copy them). */
+                if (out_baseimg) {
+                    if (!(ret & BDRV_BLOCK_DATA)) {
+                        sector_num += n1;
+                        continue;
+                    }
+                    /* The next 'n1' sectors are allocated in the input image.
+                     * Copy only those as they may be followed by unallocated
+                     * sectors. */
+                    nb_sectors = n1;
+                }
+                /* avoid redundant callouts to get_block_status */
+                sector_num_next_status = sector_num + n1;
             }
+
+            n = MIN(nb_sectors, IO_BUF_SIZE / 512);
+            if (sector_num_next_status) {
+                assert(sector_num_next_status > sector_num);
+                n = MIN(n, sector_num_next_status - sector_num);
+            }
+            n = MIN(n, bs_sectors - (sector_num - bs_offset));
+            n1 = n;
 
             ret = bdrv_read(bs[bs_i], sector_num - bs_offset, buf, n);
             if (ret < 0) {
@@ -1466,10 +1516,13 @@ static int img_convert(int argc, char **argv)
                 n -= n1;
                 buf1 += n1 * 512;
             }
-            qemu_progress_print(local_progress, 100);
+            qemu_progress_print(100.0 * sector_num / total_sectors, 0);
         }
     }
 out:
+    if (!ret) {
+        qemu_progress_print(100, 0);
+    }
     qemu_progress_end();
     free_option_parameters(create_options);
     free_option_parameters(param);
@@ -1485,6 +1538,9 @@ out:
         }
         qemu_free(bs);
     }
+fail_getopt:
+    g_free(options);
+
     if (ret) {
         return 1;
     }

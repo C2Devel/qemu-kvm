@@ -33,6 +33,7 @@ prefix=""
 interp_prefix="/usr/gnemul/qemu-%M"
 static="no"
 sysconfdir=""
+confsuffix="qemu"
 local_statedir=""
 sparc_cpu=""
 cross_prefix=""
@@ -227,7 +228,6 @@ kvm_version() {
 # is impossible without a --enable-foo that exits if a feature is not found.
 
 bluez=""
-brlapi=""
 curl=""
 curses=""
 docs=""
@@ -448,7 +448,7 @@ if test "$mingw32" = "yes" ; then
   EXESUF=".exe"
   QEMU_CFLAGS="-DWIN32_LEAN_AND_MEAN -DWINVER=0x501 $QEMU_CFLAGS"
   LIBS="-lwinmm -lws2_32 -liphlpapi $LIBS"
-  libs_qga="-lws2_32 -lwinmm -lpowrprof $libs_qga"
+  libs_qga="-lws2_32 -lwinmm -lpowrprof -lnetapi32 $libs_qga"
 fi
 
 # find source path
@@ -501,6 +501,8 @@ for opt do
   --static) static="yes"
   ;;
   --sysconfdir=*) sysconfdir="$optarg"
+  ;;
+  --with-confsuffix=*) confsuffix="$optarg"
   ;;
   --localstatedir=*) local_statedir="$optarg"
   ;;
@@ -564,10 +566,6 @@ for opt do
   --disable-xen) xen="no"
   ;;
   --enable-xen) xen="yes"
-  ;;
-  --disable-brlapi) brlapi="no"
-  ;;
-  --enable-brlapi) brlapi="yes"
   ;;
   --disable-bluez) bluez="no"
   ;;
@@ -819,6 +817,7 @@ echo "  --make=MAKE              use specified make [$make]"
 echo "  --install=INSTALL        use specified install [$install]"
 echo "  --static                 enable static build [$static]"
 echo "  --sysconfdir=PATH        install config in PATH"
+echo "  --with-confsuffix=SUFFIX suffix for Qemu data inside sysconfigdir [$confsuffix]"   
 echo "  --localstatedir=PATH     install local state in PATH (set at runtime on win32)"
 echo "  --enable-debug-tcg       enable TCG debugging"
 echo "  --disable-debug-tcg      disable TCG debugging (default)"
@@ -844,8 +843,6 @@ echo "                           (affects only QEMU, not qemu-img)"
 echo "  --enable-mixemu          enable mixer emulation"
 echo "  --disable-xen            disable xen backend driver support"
 echo "  --enable-xen             enable xen backend driver support"
-echo "  --disable-brlapi         disable BrlAPI"
-echo "  --enable-brlapi          enable BrlAPI"
 echo "  --disable-vnc-tls        disable TLS encryption for VNC server"
 echo "  --enable-vnc-tls         enable TLS encryption for VNC server"
 echo "  --disable-vnc-sasl       disable SASL encryption for VNC server"
@@ -1446,26 +1443,6 @@ for drv in $audio_drv_list; do
     ;;
     esac
 done
-
-##########################################
-# BrlAPI probe
-
-if test "$brlapi" != "no" ; then
-  brlapi_libs="-lbrlapi"
-  cat > $TMPC << EOF
-#include <brlapi.h>
-int main( void ) { return brlapi__openConnection (NULL, NULL, NULL); }
-EOF
-  if compile_prog "" "$brlapi_libs" ; then
-    brlapi=yes
-    libs_softmmu="$brlapi_libs $libs_softmmu"
-  else
-    if test "$brlapi" = "yes" ; then
-      feature_not_found "brlapi"
-    fi
-    brlapi=no
-  fi
-fi
 
 ##########################################
 # curses probe
@@ -2106,17 +2083,44 @@ if compile_prog "" "" ; then
 fi
 
 ##########################################
+# Do we need libm
+cat > $TMPC << EOF
+#include <math.h>
+int main(void) { return isnan(sin(0.0)); }
+EOF
+if compile_prog "" "" ; then
+  :
+elif compile_prog "" "-lm" ; then
+  LIBS="-lm $LIBS"
+  libs_qga="-lm $libs_qga"
+else
+  echo
+  echo "Error: libm check failed"
+  echo
+  exit 1
+fi
+
+##########################################
 # Do we need librt
+# uClibc provides 2 versions of clock_gettime(), one with realtime
+# support and one without. This means that the clock_gettime() don't
+# need -lrt. We still need it for timer_create() so we check for this
+# function in addition.
 cat > $TMPC <<EOF
 #include <signal.h>
 #include <time.h>
-int main(void) { clockid_t id; return clock_gettime(id, NULL); }
+int main(void) {
+  timer_create(CLOCK_REALTIME, NULL, NULL);
+  return clock_gettime(CLOCK_REALTIME, NULL);
+}
 EOF
 
 if compile_prog "" "" ; then
   :
-elif compile_prog "" "-lrt" ; then
-  LIBS="-lrt $LIBS"
+# we need pthread for static linking. use previous pthread test result
+elif compile_prog "" "$pthread_lib -lrt" ; then
+  LIBS="$LIBS -lrt"
+  libs_qga="$libs_qga -lrt"
 fi
 
 if test "$darwin" != "yes" -a "$mingw32" != "yes" -a "$solaris" != yes -a \
@@ -2208,14 +2212,23 @@ if test "$smartcard" == "no" ; then
 fi
 
 # check for usbredirparser for usb network redirection support
+usb_redir_pkgs="libusbredirparser-0.5 libusbredirparser"
 if test "$usb_redir" != "no" ; then
-    if pkg-config --atleast-version=0.5 libusbredirparser >/dev/null 2>&1 ; then
-        usb_redir="yes"
-        usb_redir_cflags=$(pkg-config --cflags libusbredirparser 2>/dev/null)
-        usb_redir_libs=$(pkg-config --libs libusbredirparser 2>/dev/null)
-        QEMU_CFLAGS="$QEMU_CFLAGS $usb_redir_cflags"
-        LIBS="$LIBS $usb_redir_libs"
-    else
+    found_usb_redir="no"
+
+    for pkgname in ${usb_redir_pkgs}; do
+        if pkg-config --atleast-version=0.5 "${pkgname}" >/dev/null 2>&1 ; then
+            found_usb_redir="yes"
+            usb_redir="yes"
+            usb_redir_cflags=$(pkg-config --cflags "${pkgname}" 2>/dev/null)
+            usb_redir_libs=$(pkg-config --libs "${pkgname}" 2>/dev/null)
+            QEMU_CFLAGS="$QEMU_CFLAGS $usb_redir_cflags"
+            LIBS="$LIBS $usb_redir_libs"
+            break
+        fi
+    done
+
+    if test "$found_usb_redir" = "no"; then
         if test "$usb_redir" = "yes"; then
             feature_not_found "usb-redir"
         fi
@@ -2415,7 +2428,6 @@ if test -n "$sparc_cpu"; then
 fi
 echo "xen support       $xen"
 echo "CPU emulation     $cpu_emulation"
-echo "brlapi support    $brlapi"
 echo "bluez  support    $bluez"
 echo "Documentation     $docs"
 [ ! -z "$uname_release" ] && \
@@ -2467,7 +2479,7 @@ echo "CONFIG_QEMU_SHAREDIR=\"$prefix$datasuffix\"" >> $config_host_mak
 if test "$mingw32" = "yes" ; then
   echo "CONFIG_QEMU_CONFDIR=\"$sysconfdir\"" >> $config_host_mak
 else
-  echo "CONFIG_QEMU_CONFDIR=\"${sysconfdir}/qemu\"" >> $config_host_mak
+  echo "CONFIG_QEMU_CONFDIR=\"${sysconfdir}/${confsuffix}\"" >> $config_host_mak
 fi
 
 case "$cpu" in
@@ -2635,9 +2647,6 @@ fi
 if test "$curl" = "yes" ; then
   echo "CONFIG_CURL=y" >> $config_host_mak
   echo "CURL_CFLAGS=$curl_cflags" >> $config_host_mak
-fi
-if test "$brlapi" = "yes" ; then
-  echo "CONFIG_BRLAPI=y" >> $config_host_mak
 fi
 if test "$bluez" = "yes" ; then
   echo "CONFIG_BLUEZ=y" >> $config_host_mak

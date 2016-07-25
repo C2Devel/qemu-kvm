@@ -279,10 +279,10 @@ QEMU_PROG: -drive foo=bar: could not open disk image ide0-hd0: Must specify eith
 === Parsing protocol from file name ===
 
 Testing: -hda foo:bar
-QEMU_PROG: -hda foo:bar: could not open disk image foo:bar: Unknown protocol
+QEMU_PROG: -hda foo:bar: could not open disk image foo:bar: Unknown protocol 'foo'
 
 Testing: -drive file=foo:bar
-QEMU_PROG: -drive file=foo:bar: could not open disk image foo:bar: Unknown protocol
+QEMU_PROG: -drive file=foo:bar: could not open disk image foo:bar: Unknown protocol 'foo'
 
 Testing: -drive file.filename=foo:bar
 QEMU_PROG: -drive file.filename=foo:bar: could not open disk image ide0-hd0: Could not open 'foo:bar': No such file or directory

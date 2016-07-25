@@ -392,11 +392,12 @@ int fcntl_setfl(int fd, int flag)
  * Convert string to bytes, allowing either B/b for bytes, K/k for KB,
  * M/m for MB, G/g for GB or T/t for TB. End pointer will be returned
  * in *end, if not NULL. A valid value must be terminated by
- * whitespace, ',' or '\0'. Return -1 on error.
+ * whitespace, ',' or '\0'. Return -ERANGE on overflow, Return -EINVAL
+ * on other error.
  */
 int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix)
 {
-    int64_t retval = -1;
+    int64_t retval = -EINVAL;
     char *endptr;
     unsigned char c, d;
     int mul_required = 0;
@@ -457,6 +458,7 @@ int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix)
         }
     }
     if ((val * mul >= INT64_MAX) || val < 0) {
+        retval = -ERANGE;
         goto fail;
     }
     retval = val * mul;

@@ -18,6 +18,7 @@
 
 int event_notifier_init(EventNotifier *e, int active)
 {
+	e->fd = -1;
 #ifdef CONFIG_EVENTFD
 	int fd = eventfd(!!active, EFD_NONBLOCK | EFD_CLOEXEC);
 	if (fd < 0)
@@ -32,6 +33,7 @@ int event_notifier_init(EventNotifier *e, int active)
 void event_notifier_cleanup(EventNotifier *e)
 {
 	close(e->fd);
+	e->fd = -1;
 }
 
 int event_notifier_get_fd(EventNotifier *e)

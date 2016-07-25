@@ -8,7 +8,7 @@ ERROR cluster 3 refcount=1 reference=3
 1 errors were found on the image.
 Data may be corrupted, or further writes to the image may corrupt it.
 incompatible_features     0x0
-qcow2: Preventing invalid write on metadata (overlaps with active L1 table); please use qemu-img check -r.
+qcow2: Image is corrupt (further access will be prevented): Preventing invalid write on metadata (overlaps with active L1 table); please use qemu-img check -r. Further corruption events will be suppressed
 write failed: Input/output error
 incompatible_features     0x0
 read 512/512 bytes at offset 0
@@ -25,14 +25,18 @@ ERROR cluster 2 refcount=1 reference=2
 2 errors were found on the image.
 Data may be corrupted, or further writes to the image may corrupt it.
 incompatible_features     0x0
-qcow2: Preventing invalid write on metadata (overlaps with refcount block); please use qemu-img check -r.
+qcow2: Image is corrupt (further access will be prevented): Preventing invalid write on metadata (overlaps with refcount block); please use qemu-img check -r. Further corruption events will be suppressed
 write failed: Input/output error
 incompatible_features     0x0
-Repairing refcount block 0 refcount=2
+ERROR refcount block 0 refcount=2
+ERROR cluster 2 refcount=1 reference=2
+Rebuilding refcount structure
+Repairing cluster 1 refcount=1 reference=0
+Repairing cluster 2 refcount=2 reference=1
 The following inconsistencies were found and repaired:
 
     0 leaked clusters
-    1 corruptions
+    2 corruptions
 
 Double checking the fixed image now...
 No errors were found on the image.
@@ -40,4 +44,43 @@ incompatible_features     0x0
 wrote 512/512 bytes at offset 0
 512 bytes, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
 incompatible_features     0x0
+
+=== Testing unallocated image header ===
+
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
+wrote 65536/65536 bytes at offset 0
+64 KiB, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
+qcow2: Image is corrupt (further access will be prevented): Preventing invalid write on metadata (overlaps with qcow2_header); please use qemu-img check -r. Further corruption events will be suppressed
+write failed: Input/output error
+
+=== Testing unaligned L1 entry ===
+
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
+wrote 65536/65536 bytes at offset 0
+64 KiB, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
+qcow2: Image is corrupt (further access will be prevented): L2 table offset 0x42a00 unaligned (L1 index: 0); please use qemu-img check -r. Further corruption events will be suppressed
+read failed: Input/output error
+
+=== Testing unaligned L2 entry ===
+
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
+wrote 65536/65536 bytes at offset 0
+64 KiB, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
+qcow2: Image is corrupt (further access will be prevented): Data cluster offset 0x52a00 unaligned (L2 offset: 0x40000, L2 index: 0); please use qemu-img check -r. Further corruption events will be suppressed
+read failed: Input/output error
+
+=== Testing unaligned reftable entry ===
+
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
+qcow2: Image is corrupt (further access will be prevented): Refblock offset 0x22a00 unaligned (reftable index: 0); please use qemu-img check -r. Further corruption events will be suppressed
+write failed: Input/output error
+
+=== Testing read-only corruption report ===
+
+Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=67108864 
+wrote 65536/65536 bytes at offset 0
+64 KiB, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
+qcow2: Image is corrupt: Data cluster offset 0x52a00 unaligned (L2 offset: 0x40000, L2 index: 0); please use qemu-img check -r. Further non-fatal corruption events will be suppressed
+read failed: Input/output error
+read failed: Input/output error
 *** done

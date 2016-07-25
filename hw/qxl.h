@@ -71,8 +71,7 @@ typedef struct PCIQXLDevice {
     QemuMutex          track_lock;
 
     /* thread signaling */
-    pthread_t          main;
-    int                pipe[2];
+    QEMUBH             *update_irq;
 
     /* ram pci bar */
     QXLRam             *ram;
@@ -81,6 +80,7 @@ typedef struct PCIQXLDevice {
     QXLReleaseInfo     *last_release;
     uint32_t           last_release_offset;
     uint32_t           oom_running;
+    uint32_t           vgamem_size;
 
     /* rom pci bar */
     QXLRom             shadow_rom;
@@ -95,6 +95,9 @@ typedef struct PCIQXLDevice {
 
     /* io bar */
     uint32_t           io_base;
+
+    /* user-friendly properties (in megabytes) */
+    uint32_t          vgamem_size_mb;
 
     /* qxl_render_update state */
     int                render_update_cookie_num;

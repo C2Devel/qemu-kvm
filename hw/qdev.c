@@ -324,6 +324,11 @@ void qdev_reset_all(DeviceState *dev)
     qdev_walk_children(dev, qdev_reset_one, NULL, NULL);
 }
 
+void qbus_reset_all(BusState *bus)
+{
+    qbus_walk_children(bus, qdev_reset_one, NULL, NULL);
+}
+
 /* can be used as ->unplug() callback for the simple cases */
 int qdev_simple_unplug_cb(DeviceState *dev)
 {

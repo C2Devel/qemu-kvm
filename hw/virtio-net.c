@@ -811,8 +811,6 @@ static int32_t virtio_net_flush_tx(VirtIONet *n, VirtQueue *vq)
         return num_packets;
     }
 
-    assert(n->vdev.vm_running);
-
     if (n->async_tx.elem.out_num) {
         virtio_queue_set_notification(n->tx_vq, 0);
         return num_packets;

@@ -27,6 +27,7 @@
 #include "pc.h"
 #include "isa.h"
 #include "hpet_emul.h"
+#include "qmp-commands.h"
 
 //#define DEBUG_CMOS
 
@@ -86,6 +87,7 @@ struct RTCState {
     QEMUTimer *second_timer2;
     Notifier suspend_notifier;
     Notifier clock_reset_notifier;
+    QLIST_ENTRY(RTCState) link;
 };
 
 /* set CMOS shutdown status register (index 0xF) as S3_resume(0xFE)
@@ -108,6 +110,20 @@ static void rtc_irq_raise(qemu_irq irq)
 #endif
         qemu_irq_raise(irq);
 }
+
+static QLIST_HEAD(, RTCState) rtc_devices =
+    QLIST_HEAD_INITIALIZER(rtc_devices);
+
+#ifdef TARGET_I386
+void qmp_rtc_reset_reinjection(Error **errp)
+{
+    RTCState *s;
+
+    QLIST_FOREACH(s, &rtc_devices, link) {
+        s->irq_coalesced = 0;
+    }
+}
+#endif
 
 static void rtc_set_time(RTCState *s);
 static void rtc_copy_date(RTCState *s);
@@ -648,11 +664,17 @@ static int rtc_initfn(ISADevice *dev)
 RTCState *rtc_init(int base_year)
 {
     ISADevice *dev;
+    RTCState *s;
 
     dev = isa_create("mc146818rtc");
     qdev_prop_set_int32(&dev->qdev, "base_year", base_year);
     qdev_init_nofail(&dev->qdev);
-    return DO_UPCAST(RTCState, dev, dev);
+
+    s = DO_UPCAST(RTCState, dev, dev);
+
+    QLIST_INSERT_HEAD(&rtc_devices, s, link);
+
+    return s;
 }
 
 static ISADeviceInfo mc146818rtc_info = {

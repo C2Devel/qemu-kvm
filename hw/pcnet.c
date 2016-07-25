@@ -1107,6 +1107,12 @@ ssize_t pcnet_receive(VLANClientState *nc, const uint8_t *buf, size_t size_)
             int pktcount = 0;
 
             if (!s->looptest) {
+                if (size > 4092) {
+#ifdef PCNET_DEBUG_RMD
+                    fprintf(stderr, "pcnet: truncates rx packet.\n");
+#endif
+                    size = 4092;
+                }
                 memcpy(src, buf, size);
                 /* no need to compute the CRC */
                 src[size] = 0;
@@ -1127,7 +1133,7 @@ ssize_t pcnet_receive(VLANClientState *nc, const uint8_t *buf, size_t size_)
                 uint32_t fcs = ~0;
                 uint8_t *p = src;
 
-                while (p != &src[size-4])
+                while (p != &src[size])
                     CRC(fcs, *p++);
                 crc_err = (*(uint32_t *)p != htonl(fcs));
             }
@@ -1226,7 +1232,7 @@ static void pcnet_transmit(PCNetState *s)
     target_phys_addr_t xmit_cxda = 0;
     int count = CSR_XMTRL(s)-1;
     int add_crc = 0;
-
+    int bcnt;
     s->xmit_pos = -1;
 
     if (!CSR_TXON(s)) {
@@ -1252,34 +1258,48 @@ static void pcnet_transmit(PCNetState *s)
             if (BCR_SWSTYLE(s) != 1)
                 add_crc = GET_FIELD(tmd.status, TMDS, ADDFCS);
         }
-        if (!GET_FIELD(tmd.status, TMDS, ENP)) {
-            int bcnt = 4096 - GET_FIELD(tmd.length, TMDL, BCNT);
-            s->phys_mem_read(s->dma_opaque, PHYSADDR(s, tmd.tbadr),
-                             s->buffer + s->xmit_pos, bcnt, CSR_BSWP(s));
-            s->xmit_pos += bcnt;
-        } else if (s->xmit_pos >= 0) {
-            int bcnt = 4096 - GET_FIELD(tmd.length, TMDL, BCNT);
-            s->phys_mem_read(s->dma_opaque, PHYSADDR(s, tmd.tbadr),
-                             s->buffer + s->xmit_pos, bcnt, CSR_BSWP(s));
-            s->xmit_pos += bcnt;
-#ifdef PCNET_DEBUG
-            printf("pcnet_transmit size=%d\n", s->xmit_pos);
-#endif
-            if (CSR_LOOP(s)) {
-                if (BCR_SWSTYLE(s) == 1)
-                    add_crc = !GET_FIELD(tmd.status, TMDS, NOFCS);
-                s->looptest = add_crc ? PCNET_LOOPTEST_CRC : PCNET_LOOPTEST_NOCRC;
-                pcnet_receive(&s->nic->nc, s->buffer, s->xmit_pos);
-                s->looptest = 0;
-            } else
-                if (s->nic)
-                    qemu_send_packet(&s->nic->nc, s->buffer, s->xmit_pos);
 
-            s->csr[0] &= ~0x0008;   /* clear TDMD */
-            s->csr[4] |= 0x0004;    /* set TXSTRT */
-            s->xmit_pos = -1;
+        if (s->xmit_pos < 0) {
+            goto txdone;
         }
 
+        bcnt = 4096 - GET_FIELD(tmd.length, TMDL, BCNT);
+
+        /* if multi-tmd packet outsizes s->buffer then skip it silently.
+         * Note: this is not what real hw does.
+         * Last four bytes of s->buffer are used to store CRC FCS code.
+         */
+        if (s->xmit_pos + bcnt > sizeof(s->buffer) - 4) {
+            s->xmit_pos = -1;
+            goto txdone;
+        }
+
+        s->phys_mem_read(s->dma_opaque, PHYSADDR(s, tmd.tbadr),
+                         s->buffer + s->xmit_pos, bcnt, CSR_BSWP(s));
+        s->xmit_pos += bcnt;
+
+        if (!GET_FIELD(tmd.status, TMDS, ENP)) {
+            goto txdone;
+        }
+
+#ifdef PCNET_DEBUG
+        printf("pcnet_transmit size=%d\n", s->xmit_pos);
+#endif
+        if (CSR_LOOP(s)) {
+            if (BCR_SWSTYLE(s) == 1)
+               add_crc = !GET_FIELD(tmd.status, TMDS, NOFCS);
+            s->looptest = add_crc ? PCNET_LOOPTEST_CRC : PCNET_LOOPTEST_NOCRC;
+            pcnet_receive(&s->nic->nc, s->buffer, s->xmit_pos);
+            s->looptest = 0;
+        } else
+            if (s->nic)
+                qemu_send_packet(&s->nic->nc, s->buffer, s->xmit_pos);
+
+        s->csr[0] &= ~0x0008;   /* clear TDMD */
+        s->csr[4] |= 0x0004;    /* set TXSTRT */
+        s->xmit_pos = -1;
+
+    txdone:
         SET_FIELD(&tmd.status, TMDS, OWN, 0);
         TMDSTORE(&tmd, PHYSADDR(s,CSR_CXDA(s)));
         if (!CSR_TOKINTD(s) || (CSR_LTINTEN(s) && GET_FIELD(tmd.status, TMDS, LTINT)))

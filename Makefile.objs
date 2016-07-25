@@ -15,9 +15,11 @@ coroutine-obj-$(CONFIG_WIN32) += coroutine-win32.o
 # block-obj-y is code used by both qemu system emulation and qemu-img
 
 block-obj-y = cutils.o cache-utils.o qemu-malloc.o qemu-option.o module.o async.o
-block-obj-y += nbd.o block.o aio.o aes.o osdep.o qemu-config.o qemu-progress.o uri.o
-block-obj-y += $(coroutine-obj-y) hbitmap.o
+block-obj-y += nbd.o block.o aes.o osdep.o qemu-config.o qemu-progress.o uri.o
+block-obj-y += $(coroutine-obj-y) hbitmap.o util/throttle.o
 block-obj-$(CONFIG_POSIX) += posix-aio-compat.o
+block-obj-$(CONFIG_POSIX) += aio-posix.o
+block-obj-$(CONFIG_WIN32) += aio-win32.o
 block-obj-$(CONFIG_LINUX_AIO) += linux-aio.o
 block-obj-$(CONFIG_POSIX) += compatfd.o
 
@@ -28,6 +30,7 @@ block-nested-$(CONFIG_VHDX) += vhdx.o vhdx-endian.o vhdx-log.o
 block-nested-y += qed-check.o
 block-nested-y += parallels.o nbd.o blkdebug.o
 block-nested-y += stream.o mirror.o commit.o
+block-nested-y += null.o
 block-nested-$(CONFIG_WIN32) += raw-win32.o
 block-nested-$(CONFIG_POSIX) += raw-posix.o
 block-nested-$(CONFIG_CURL) += curl.o
@@ -105,7 +108,6 @@ common-obj-y += block-migration.o iohandler.o
 common-obj-y += pflib.o
 common-obj-y += bitmap.o bitops.o
 
-common-obj-$(CONFIG_BRLAPI) += baum.o
 common-obj-$(CONFIG_POSIX) += migration-exec.o migration-unix.o migration-fd.o
 
 common-obj-$(CONFIG_SPICE) += ui/spice-core.o ui/spice-input.o ui/spice-display.o spice-qemu-char.o
@@ -201,6 +203,7 @@ hw-obj-$(CONFIG_QDEV_ADDR) += qdev-addr.o
 
 qapi-nested-y = qapi-visit-core.o qmp-input-visitor.o qmp-output-visitor.o qapi-dealloc-visitor.o
 qapi-nested-y += qmp-registry.o qmp-dispatch.o string-input-visitor.o string-output-visitor.o
+qapi-nested-y += qapi-util.o
 
 ifeq ($(CONFIG_LIVE_SNAPSHOTS),y)
 qapi-generated-y += rhev-qapi-visit.o rhev-qapi-types.o rhev-qmp-marshal.o
@@ -220,7 +223,7 @@ qga-nested-y = commands.o guest-agent-command-state.o
 qga-nested-$(CONFIG_POSIX) += commands-posix.o channel-posix.o
 qga-nested-$(CONFIG_WIN32) += commands-win32.o channel-win32.o service-win32.o
 qga-obj-y = $(addprefix qga/, $(qga-nested-y))
-qga-obj-y += qemu-ga.o qemu-tool.o qemu-error.o module.o cutils.o osdep.o
+qga-obj-y += qemu-ga.o qemu-tool.o qemu-error.o module.o cutils.o osdep.o util/base64.o
 qga-obj-$(CONFIG_WIN32) += qemu-malloc.o
 qga-obj-$(CONFIG_POSIX) += qemu-malloc.o qemu-sockets.o qemu-option.o
 

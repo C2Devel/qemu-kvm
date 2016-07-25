@@ -14,13 +14,16 @@ Data:
             offset into the image (json-int)
 - "size":   If the corruption resulted from an image access, this is the access
             size (json-int)
+- "fatal":  If set, access to the image is prevented after this event and it
+            must be repaired (Since 2.2; before, every BLOCK_IMAGE_CORRUPTED
+            event was fatal) (json-bool)
 
 Example:
 
 { "event": "BLOCK_IMAGE_CORRUPTED",
     "data": { "device": "ide0-hd0",
         "msg": "Prevented active L1 table overwrite", "offset": 196608,
-        "size": 65536 },
+        "size": 65536, "fatal": true },
     "timestamp": { "seconds": 1378126126, "microseconds": 966463 } }
 
 BLOCK_IO_ERROR

@@ -57,7 +57,6 @@
 
 static bool fips_enabled = false;
 
-#if !defined(_POSIX_C_SOURCE) || defined(_WIN32) || defined(__sun__)
 static void *oom_check(void *ptr)
 {
     if (ptr == NULL) {
@@ -70,17 +69,16 @@ static void *oom_check(void *ptr)
     }
     return ptr;
 }
-#endif
 
 #if defined(_WIN32)
-void *qemu_memalign(size_t alignment, size_t size)
+void *qemu_try_memalign(size_t alignment, size_t size)
 {
     void *ptr;
 
     if (!size) {
         abort();
     }
-    ptr = oom_check(VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_READWRITE));
+    ptr = VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_READWRITE);
     trace_qemu_memalign(alignment, size, ptr);
     return ptr;
 }
@@ -108,21 +106,20 @@ void qemu_vfree(void *ptr)
 
 #else
 
-void *qemu_memalign(size_t alignment, size_t size)
+void *qemu_try_memalign(size_t alignment, size_t size)
 {
     void *ptr;
 #if defined(_POSIX_C_SOURCE) && !defined(__sun__)
     int ret;
     ret = posix_memalign(&ptr, alignment, size);
     if (ret != 0) {
-        fprintf(stderr, "Failed to allocate %zu B: %s\n",
-                size, strerror(ret));
-        abort();
+        errno = ret;
+        ptr = NULL;
     }
 #elif defined(CONFIG_BSD)
-    ptr = oom_check(valloc(size));
+    ptr = valloc(size);
 #else
-    ptr = oom_check(memalign(alignment, size));
+    ptr = memalign(alignment, size);
 #endif
     trace_qemu_memalign(alignment, size, ptr);
     return ptr;
@@ -148,6 +145,11 @@ void qemu_vfree(void *ptr)
 }
 
 #endif
+
+void *qemu_memalign(size_t alignment, size_t size)
+{
+    return oom_check(qemu_try_memalign(alignment, size));
+}
 
 int qemu_create_pidfile(const char *filename)
 {

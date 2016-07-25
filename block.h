@@ -155,11 +155,11 @@ void bdrv_info_stats(Monitor *mon, QObject **ret_data);
 /* disk I/O throttling */
 void bdrv_io_limits_enable(BlockDriverState *bs);
 void bdrv_io_limits_disable(BlockDriverState *bs);
-bool bdrv_io_limits_enabled(BlockDriverState *bs);
 
 void bdrv_init(void);
 void bdrv_init_with_whitelist(void);
-BlockDriver *bdrv_find_protocol(const char *filename);
+BlockDriver *bdrv_find_protocol(const char *filename,
+                                Error **errp);
 BlockDriver *bdrv_find_format(const char *format_name);
 BlockDriver *bdrv_find_whitelisted_format(const char *format_name,
                                           bool readonly);
@@ -265,8 +265,6 @@ typedef enum {
 int bdrv_check(BlockDriverState *bs, BdrvCheckResult *res, BdrvCheckMode fix);
 
 /* async block I/O */
-typedef struct BlockDriverAIOCB BlockDriverAIOCB;
-typedef void BlockDriverCompletionFunc(void *opaque, int ret);
 typedef void BlockDriverDirtyHandler(BlockDriverState *bs, int64_t sector,
 				     int sector_num);
 BlockDriverAIOCB *bdrv_aio_readv(BlockDriverState *bs, int64_t sector_num,
@@ -281,6 +279,7 @@ BlockDriverAIOCB *bdrv_aio_discard(BlockDriverState *bs,
                                    int64_t sector_num, int nb_sectors,
                                    BlockDriverCompletionFunc *cb, void *opaque);
 void bdrv_aio_cancel(BlockDriverAIOCB *acb);
+void bdrv_aio_cancel_async(BlockDriverAIOCB *acb);
 
 typedef struct BlockRequest {
     /* Fields to be filled by multiwrite caller */

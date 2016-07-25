@@ -9,7 +9,7 @@
  */
 #include "qemu-common.h"
 #include "qemu-aio.h"
-#include "block_int.h"
+#include "qemu-queue.h"
 #include "block/raw-posix-aio.h"
 
 #include <sys/eventfd.h>
@@ -70,20 +70,10 @@ static void qemu_laio_process_completion(struct qemu_laio_state *s,
                 ret = -EINVAL;
             }
         }
-
-        laiocb->common.cb(laiocb->common.opaque, ret);
     }
+    laiocb->common.cb(laiocb->common.opaque, ret);
 
-    qemu_aio_release(laiocb);
-}
-
-/*
- * All requests are directly processed when they complete, so there's nothing
- * left to do during qemu_aio_wait().
- */
-static int qemu_laio_process_requests(void *opaque)
-{
-    return 0;
+    qemu_aio_unref(laiocb);
 }
 
 static void qemu_laio_completion_cb(void *opaque)
@@ -135,34 +125,22 @@ static void laio_cancel(BlockDriverAIOCB *blockacb)
     struct io_event event;
     int ret;
 
-    if (laiocb->ret != -EINPROGRESS)
+    if (laiocb->ret != -EINPROGRESS) {
         return;
-
-    /*
-     * Note that as of Linux 2.6.31 neither the block device code nor any
-     * filesystem implements cancellation of AIO request.
-     * Thus the polling loop below is the normal code path.
-     */
+    }
     ret = io_cancel(laiocb->ctx->ctx, &laiocb->iocb, &event);
-    if (ret == 0) {
-        laiocb->ret = -ECANCELED;
+    laiocb->ret = -ECANCELED;
+    if (ret != 0) {
+        /* iocb is not cancelled, cb will be called by the event loop later */
         return;
     }
 
-    /*
-     * We have to wait for the iocb to finish.
-     *
-     * The only way to get the iocb status update is by polling the io context.
-     * We might be able to do this slightly more optimal by removing the
-     * O_NONBLOCK flag.
-     */
-    while (laiocb->ret == -EINPROGRESS)
-        qemu_laio_completion_cb(laiocb->ctx);
+    laiocb->common.cb(laiocb->common.opaque, laiocb->ret);
 }
 
-static AIOPool laio_pool = {
+static const AIOCBInfo laio_aiocb_info = {
     .aiocb_size         = sizeof(struct qemu_laiocb),
-    .cancel             = laio_cancel,
+    .cancel_async       = laio_cancel,
 };
 
 BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
@@ -174,9 +152,7 @@ BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
     struct iocb *iocbs;
     off_t offset = sector_num * 512;
 
-    laiocb = qemu_aio_get(&laio_pool, bs, cb, opaque);
-    if (!laiocb)
-        return NULL;
+    laiocb = qemu_aio_get(&laio_aiocb_info, bs, cb, opaque);
     laiocb->nbytes = nb_sectors * 512;
     laiocb->ctx = s;
     laiocb->ret = -EINPROGRESS;
@@ -207,7 +183,7 @@ BlockDriverAIOCB *laio_submit(BlockDriverState *bs, void *aio_ctx, int fd,
 out_dec_count:
     s->count--;
 out_free_aiocb:
-    qemu_aio_release(laiocb);
+    qemu_aio_unref(laiocb);
     return NULL;
 }
 
@@ -225,7 +201,7 @@ void *laio_init(void)
         goto out_close_efd;
 
     qemu_aio_set_fd_handler(s->efd, qemu_laio_completion_cb, NULL,
-        qemu_laio_flush_cb, qemu_laio_process_requests, s);
+        qemu_laio_flush_cb, s);
 
     return s;
 

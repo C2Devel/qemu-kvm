@@ -212,6 +212,10 @@ static int virtio_pci_set_host_notifier_internal(VirtIOPCIProxy *proxy,
             event_notifier_cleanup(notifier);
         }
     } else {
+        /* Skip repeat deassigning of notifier */
+        if (event_notifier_get_fd(notifier) == -1) {
+            return 0;
+        }
         r = kvm_set_ioeventfd_pio_word(event_notifier_get_fd(notifier),
                                        proxy->addr + VIRTIO_PCI_QUEUE_NOTIFY,
                                        n, assign);
@@ -955,15 +959,15 @@ static int virtio_rng_init_pci(PCIDevice *pci_dev)
     VirtIODevice *vdev;
     char *path;
 
-    path = g_strdup_printf("/objects/%s", proxy->rng.name);
-    proxy->rng.rng = RNG_BACKEND(object_resolve_path_type(path,
-                                 TYPE_RNG_BACKEND, NULL));
-    g_free(path);
-
     if (proxy->rng.name == NULL) {
         Object *obj = object_new(TYPE_RNG_RANDOM);
-        proxy->rng.default_backend = RNG_RANDOM(obj);
         proxy->rng.rng = RNG_BACKEND(obj);
+    } else {
+        path = g_strdup_printf("/objects/%s", proxy->rng.name);
+        proxy->rng.rng = RNG_BACKEND(object_resolve_path_type(path,
+                                     TYPE_RNG_BACKEND, NULL));
+        object_ref(OBJECT(proxy->rng.rng));
+        g_free(path);
     }
 
     vdev = virtio_rng_init(&pci_dev->qdev, &proxy->rng);
@@ -984,6 +988,7 @@ static int virtio_rng_exit_pci(PCIDevice *pci_dev)
 
     virtio_pci_stop_ioeventfd(proxy);
     virtio_rng_exit(proxy->vdev);
+    object_unref(OBJECT(proxy->rng.rng));
     virtio_exit_pci(pci_dev);
     return 0;
 }

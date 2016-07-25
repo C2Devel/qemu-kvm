@@ -103,6 +103,8 @@ static void coroutine_fn mirror_run(void *opaque)
     buf = qemu_blockalign(bs, s->granularity);
 
     /* First part, loop on the sectors and initialize the dirty bitmap.  */
+    bool mark_all_dirty = s->full && !bdrv_has_zero_init(s->target);
+
     for (sector_num = 0; sector_num < end; ) {
         int64_t next = (sector_num | (sectors_per_chunk - 1)) + 1;
         if (s->full) {
@@ -115,7 +117,7 @@ static void coroutine_fn mirror_run(void *opaque)
             break;
         }
 
-        if (ret == 1) {
+        if (ret == 1 || mark_all_dirty) {
             bdrv_set_dirty(bs, sector_num, n);
             sector_num = next;
         } else {

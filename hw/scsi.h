@@ -5,6 +5,7 @@
 #include "block.h"
 #include "block_int.h"
 #include "sysemu.h"
+#include "notify.h"
 
 #define MAX_SCSI_DEVS	255
 
@@ -52,6 +53,7 @@ struct SCSIRequest {
     uint32_t          status;
     size_t            resid;
     SCSICommand       cmd;
+    NotifierList      cancel_notifiers;
     BlockDriverAIOCB  *aiocb;
     QEMUSGList        *sg;
     bool              dma_started;
@@ -105,7 +107,6 @@ struct SCSIReqOps {
     int32_t (*send_command)(SCSIRequest *req, uint8_t *buf);
     void (*read_data)(SCSIRequest *req);
     void (*write_data)(SCSIRequest *req);
-    void (*cancel_io)(SCSIRequest *req);
     uint8_t *(*get_buf)(SCSIRequest *req);
 
     void (*save_request)(QEMUFile *f, SCSIRequest *req);
@@ -236,8 +237,9 @@ void scsi_req_data(SCSIRequest *req, int len);
 void scsi_req_complete(SCSIRequest *req, int status);
 uint8_t *scsi_req_get_buf(SCSIRequest *req);
 int scsi_req_get_sense(SCSIRequest *req, uint8_t *buf, int len);
-void scsi_req_abort(SCSIRequest *req, int status);
+void scsi_req_cancel_complete(SCSIRequest *req);
 void scsi_req_cancel(SCSIRequest *req);
+void scsi_req_cancel_async(SCSIRequest *req, Notifier *notifier);
 void scsi_req_retry(SCSIRequest *req);
 void scsi_device_purge_requests(SCSIDevice *sdev, SCSISense sense);
 void scsi_device_set_ua(SCSIDevice *sdev, SCSISense sense);

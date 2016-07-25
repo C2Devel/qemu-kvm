@@ -395,6 +395,12 @@ int qemu_can_send_packet(VLANClientState *sender)
     VLANState *vlan = sender->vlan;
     VLANClientState *vc;
 
+    int vm_running = runstate_is_running();
+
+    if (!vm_running) {
+        return 0;
+    }
+
     if (sender->peer) {
         if (sender->peer->receive_disabled) {
             return 0;

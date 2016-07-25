@@ -83,17 +83,17 @@ static int curl_sock_cb(CURL *curl, curl_socket_t fd, int action,
     DPRINTF("CURL (AIO): Sock action %d on fd %d\n", action, fd);
     switch (action) {
         case CURL_POLL_IN:
-            qemu_aio_set_fd_handler(fd, curl_multi_do, NULL, NULL, NULL, s);
+            qemu_aio_set_fd_handler(fd, curl_multi_do, NULL, NULL, s);
             break;
         case CURL_POLL_OUT:
-            qemu_aio_set_fd_handler(fd, NULL, curl_multi_do, NULL, NULL, s);
+            qemu_aio_set_fd_handler(fd, NULL, curl_multi_do, NULL, s);
             break;
         case CURL_POLL_INOUT:
-            qemu_aio_set_fd_handler(fd, curl_multi_do,
-                                    curl_multi_do, NULL, NULL, s);
+            qemu_aio_set_fd_handler(fd, curl_multi_do, curl_multi_do,
+                                    NULL, s);
             break;
         case CURL_POLL_REMOVE:
-            qemu_aio_set_fd_handler(fd, NULL, NULL, NULL, NULL, NULL);
+            qemu_aio_set_fd_handler(fd, NULL, NULL, NULL, NULL);
             break;
     }
 
@@ -142,7 +142,7 @@ static size_t curl_read_cb(void *ptr, size_t size, size_t nmemb, void *opaque)
             qemu_iovec_from_buffer(acb->qiov, s->orig_buf + acb->start,
                                    acb->end - acb->start);
             acb->common.cb(acb->common.opaque, 0);
-            qemu_aio_release(acb);
+            qemu_aio_unref(acb);
             s->acb[i] = NULL;
         }
     }
@@ -399,14 +399,8 @@ out_noclean:
     return -EINVAL;
 }
 
-static void curl_aio_cancel(BlockDriverAIOCB *blockacb)
-{
-    // Do we have to implement canceling? Seems to work without...
-}
-
-static AIOPool curl_aio_pool = {
+static const AIOCBInfo curl_aiocb_info = {
     .aiocb_size         = sizeof(CURLAIOCB),
-    .cancel             = curl_aio_cancel,
 };
 
 static BlockDriverAIOCB *curl_aio_readv(BlockDriverState *bs,
@@ -419,7 +413,7 @@ static BlockDriverAIOCB *curl_aio_readv(BlockDriverState *bs,
     size_t end;
     CURLState *state;
 
-    acb = qemu_aio_get(&curl_aio_pool, bs, cb, opaque);
+    acb = qemu_aio_get(&curl_aiocb_info, bs, cb, opaque);
     if (!acb)
         return NULL;
 
@@ -430,7 +424,7 @@ static BlockDriverAIOCB *curl_aio_readv(BlockDriverState *bs,
 
     switch (curl_find_buf(s, start, nb_sectors * SECTOR_SIZE, acb)) {
         case FIND_RET_OK:
-            qemu_aio_release(acb);
+            qemu_aio_unref(acb);
             // fall through
         case FIND_RET_WAIT:
             return &acb->common;

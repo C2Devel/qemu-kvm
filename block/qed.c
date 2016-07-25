@@ -19,21 +19,8 @@
 #include "qerror.h"
 #include "migration.h"
 
-static void qed_aio_cancel(BlockDriverAIOCB *blockacb)
-{
-    QEDAIOCB *acb = (QEDAIOCB *)blockacb;
-    bool finished = false;
-
-    /* Wait for the request to finish */
-    acb->finished = &finished;
-    while (!finished) {
-        qemu_aio_wait();
-    }
-}
-
-static AIOPool qed_aio_pool = {
+static const AIOCBInfo qed_aiocb_info = {
     .aiocb_size         = sizeof(QEDAIOCB),
-    .cancel             = qed_aio_cancel,
 };
 
 static int bdrv_qed_probe(const uint8_t *buf, int buf_size,
@@ -723,11 +710,6 @@ static int64_t coroutine_fn bdrv_qed_co_get_block_status(BlockDriverState *bs,
     return cb.status;
 }
 
-static int bdrv_qed_make_empty(BlockDriverState *bs)
-{
-    return -ENOTSUP;
-}
-
 static BDRVQEDState *acb_to_s(QEDAIOCB *acb)
 {
     return acb->common.bs->opaque;
@@ -889,18 +871,12 @@ static void qed_aio_complete_bh(void *opaque)
     BlockDriverCompletionFunc *cb = acb->common.cb;
     void *user_opaque = acb->common.opaque;
     int ret = acb->bh_ret;
-    bool *finished = acb->finished;
 
     qemu_bh_delete(acb->bh);
-    qemu_aio_release(acb);
+    qemu_aio_unref(acb);
 
     /* Invoke callback */
     cb(user_opaque, ret);
-
-    /* Signal cancel completion */
-    if (finished) {
-        *finished = true;
-    }
 }
 
 static void qed_aio_complete(QEDAIOCB *acb, int ret)
@@ -1360,13 +1336,12 @@ static BlockDriverAIOCB *qed_aio_setup(BlockDriverState *bs,
                                        BlockDriverCompletionFunc *cb,
                                        void *opaque, int flags)
 {
-    QEDAIOCB *acb = qemu_aio_get(&qed_aio_pool, bs, cb, opaque);
+    QEDAIOCB *acb = qemu_aio_get(&qed_aiocb_info, bs, cb, opaque);
 
     trace_qed_aio_setup(bs->opaque, acb, sector_num, nb_sectors,
                         opaque, flags);
 
     acb->flags = flags;
-    acb->finished = NULL;
     acb->qiov = qiov;
     acb->qiov_offset = 0;
     acb->cur_pos = (uint64_t)sector_num * BDRV_SECTOR_SIZE;
@@ -1405,6 +1380,7 @@ static BlockDriverAIOCB *bdrv_qed_aio_flush(BlockDriverState *bs,
     return bdrv_aio_flush(bs->file, cb, opaque);
 }
 
+#if 0
 typedef struct {
     Coroutine *co;
     int ret;
@@ -1451,6 +1427,7 @@ static int coroutine_fn bdrv_qed_co_write_zeroes(BlockDriverState *bs,
     assert(cb.done);
     return cb.ret;
 }
+#endif
 
 static int bdrv_qed_truncate(BlockDriverState *bs, int64_t offset)
 {
@@ -1607,11 +1584,13 @@ static BlockDriver bdrv_qed = {
     .bdrv_reopen_prepare      = bdrv_qed_reopen_prepare,
     .bdrv_create              = bdrv_qed_create,
     .bdrv_co_get_block_status = bdrv_qed_co_get_block_status,
-    .bdrv_make_empty          = bdrv_qed_make_empty,
     .bdrv_aio_readv           = bdrv_qed_aio_readv,
     .bdrv_aio_writev          = bdrv_qed_aio_writev,
     .bdrv_aio_flush           = bdrv_qed_aio_flush,
+#if 0
+    /* Disabled because of corruption issue; check qemu-iotests 034 */
     .bdrv_co_write_zeroes     = bdrv_qed_co_write_zeroes,
+#endif
     .bdrv_truncate            = bdrv_qed_truncate,
     .bdrv_getlength           = bdrv_qed_getlength,
     .bdrv_get_info            = bdrv_qed_get_info,

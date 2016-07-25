@@ -744,9 +744,6 @@ usb_add serial:productid=FA00:tcp:192.168.0.2:4444
 @end example
 will connect to tcp port 4444 of ip 192.168.0.2, and plug that to the virtual
 serial converter, faking a Matrix Orbital LCD Display (USB ID 0403:FA00).
-@item braille
-Braille device.  This will use BrlAPI to display the braille output on a real
-or fake device.
 @item net:@var{options}
 Network adapter that supports CDC ethernet and RNDIS protocols.  @var{options}
 specifies NIC options as with @code{-net nic,}@var{options} (see description).

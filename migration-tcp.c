@@ -67,7 +67,7 @@ static void tcp_wait_for_connect(int fd, void *opaque)
 
 MigrationState *tcp_start_outgoing_migration(Monitor *mon,
                                              const char *host_port,
-                                             int64_t bandwidth_limit,
+                                             size_t bandwidth_limit,
                                              int detach,
                                              int blk,
                                              int inc,

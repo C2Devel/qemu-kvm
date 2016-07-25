@@ -55,8 +55,6 @@
 /* indicate that the cluster is compressed (they never have the copied flag) */
 #define QCOW_OFLAG_COMPRESSED (1LL << 62)
 
-#define REFCOUNT_SHIFT 1 /* refcount size is 2 bytes */
-
 #define MIN_CLUSTER_BITS 9
 #define MAX_CLUSTER_BITS 21
 
@@ -133,6 +131,8 @@ typedef struct BDRVQcowState {
     int l2_size;
     int l1_size;
     int l1_vm_state_index;
+    int refcount_block_bits;
+    int refcount_block_size;
     int csize_shift;
     int csize_mask;
     uint64_t cluster_offset_mask;
@@ -165,6 +165,7 @@ typedef struct BDRVQcowState {
     QCowSnapshot *snapshots;
 
     int overlap_check; /* bitmask of Qcow2MetadataOverlap values */
+    bool signaled_corruption, signaled_fatal_corruption;
 
     QLIST_HEAD(, Qcow2UnknownHeaderExtension) unknown_header_ext;
 } BDRVQcowState;
@@ -279,6 +280,11 @@ static inline uint64_t qcow2_max_refcount_clusters(BDRVQcowState *s)
     return QCOW_MAX_REFTABLE_SIZE >> s->cluster_bits;
 }
 
+static inline int64_t qcow2_vm_state_offset(BDRVQcowState *s)
+{
+    return (int64_t)s->l1_vm_state_index << (s->cluster_bits + s->l2_bits);
+}
+
 static inline int qcow2_get_cluster_type(uint64_t l2_entry)
 {
     if (l2_entry & QCOW_OFLAG_COMPRESSED) {
@@ -296,6 +302,10 @@ static inline int qcow2_get_cluster_type(uint64_t l2_entry)
 int qcow2_backing_read1(BlockDriverState *bs, QEMUIOVector *qiov,
                   int64_t sector_num, int nb_sectors);
 int qcow2_update_header(BlockDriverState *bs);
+
+void qcow2_signal_corruption(BlockDriverState *bs, bool fatal, int64_t offset,
+                             int64_t size, const char *message_format, ...)
+                             GCC_FMT_ATTR(5, 6);
 
 /* qcow2-refcount.c functions */
 int qcow2_refcount_init(BlockDriverState *bs);
@@ -364,6 +374,8 @@ int qcow2_cache_flush(BlockDriverState *bs, Qcow2Cache *c);
 int qcow2_cache_set_dependency(BlockDriverState *bs, Qcow2Cache *c,
     Qcow2Cache *dependency);
 void qcow2_cache_depends_on_flush(Qcow2Cache *c);
+
+int qcow2_cache_empty(BlockDriverState *bs, Qcow2Cache *c);
 
 int qcow2_cache_get(BlockDriverState *bs, Qcow2Cache *c, uint64_t offset,
     void **table);

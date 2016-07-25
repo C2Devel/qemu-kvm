@@ -2672,6 +2672,7 @@ static void dumb_display_init(void)
 
 typedef struct IOHandlerRecord {
     int fd;
+    int pollfds_idx;
     IOCanReadHandler *fd_read_poll;
     IOHandler *fd_read;
     IOHandler *fd_write;
@@ -2716,6 +2717,7 @@ int qemu_set_fd_handler2(int fd,
         ioh->fd_read = fd_read;
         ioh->fd_write = fd_write;
         ioh->opaque = opaque;
+        ioh->pollfds_idx = -1;
         ioh->deleted = 0;
     }
     qemu_notify_event();
@@ -2728,6 +2730,68 @@ int qemu_set_fd_handler(int fd,
                         void *opaque)
 {
     return qemu_set_fd_handler2(fd, NULL, fd_read, fd_write, opaque);
+}
+
+static void qemu_iohandler_fill(GArray *pollfds)
+{
+    IOHandlerRecord *ioh;
+
+    QLIST_FOREACH(ioh, &io_handlers, next) {
+        int events = 0;
+
+        if (ioh->deleted)
+            continue;
+        if (ioh->fd_read &&
+            (!ioh->fd_read_poll ||
+             ioh->fd_read_poll(ioh->opaque) != 0)) {
+            events |= G_IO_IN | G_IO_HUP | G_IO_ERR;
+        }
+        if (ioh->fd_write) {
+            events |= G_IO_OUT | G_IO_ERR;
+        }
+        if (events) {
+            GPollFD pfd = {
+                .fd = ioh->fd,
+                .events = events,
+            };
+            ioh->pollfds_idx = pollfds->len;
+            g_array_append_val(pollfds, pfd);
+        } else {
+            ioh->pollfds_idx = -1;
+        }
+    }
+}
+
+static void qemu_iohandler_poll(GArray *pollfds, int ret)
+{
+    if (ret > 0) {
+        IOHandlerRecord *pioh, *ioh;
+
+        QLIST_FOREACH_SAFE(ioh, &io_handlers, next, pioh) {
+            int revents = 0;
+
+            if (!ioh->deleted && ioh->pollfds_idx != -1) {
+                GPollFD *pfd = &g_array_index(pollfds, GPollFD,
+                                              ioh->pollfds_idx);
+                revents = pfd->revents;
+            }
+
+            if (!ioh->deleted && ioh->fd_read &&
+                (revents & (G_IO_IN | G_IO_HUP | G_IO_ERR))) {
+                ioh->fd_read(ioh->opaque);
+            }
+            if (!ioh->deleted && ioh->fd_write &&
+                (revents & (G_IO_OUT | G_IO_ERR))) {
+                ioh->fd_write(ioh->opaque);
+            }
+
+            /* Do this last in case read/write handlers marked it for deletion */
+            if (ioh->deleted) {
+                QLIST_REMOVE(ioh, next);
+                g_free(ioh);
+            }
+        }
+    }
 }
 
 
@@ -2833,14 +2897,9 @@ static int ram_save_block(QEMUFile *f)
 
 static uint64_t bytes_transferred;
 
-static ram_addr_t ram_save_remaining(void)
-{
-    return ram_list.dirty_pages;
-}
-
 uint64_t ram_bytes_remaining(void)
 {
-    return ram_save_remaining() * TARGET_PAGE_SIZE;
+    return ram_list.dirty_pages * TARGET_PAGE_SIZE;
 }
 
 uint64_t ram_bytes_transferred(void)
@@ -2864,7 +2923,6 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     ram_addr_t addr;
     uint64_t bytes_transferred_last;
     uint64_t t0;
-    double bwidth = 0;
     int i;
     int ret;
 
@@ -2936,12 +2994,6 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
     }
 
     t0 = get_clock() - t0;
-    bwidth = ((double)bytes_transferred - bytes_transferred_last) / t0;
-
-    /* if we haven't transferred anything this round, force expected_time to a
-     * a very high value, but without crashing */
-    if (bwidth == 0)
-        bwidth = 0.000001;
 
     /* try transferring iterative blocks of memory */
     if (stage == 3) {
@@ -2958,8 +3010,32 @@ static int ram_save_live(Monitor *mon, QEMUFile *f, int stage, void *opaque)
 
     if (stage == 2) {
         uint64_t expected_time;
+        double bwidth = 0;
 
-        expected_time = ram_save_remaining() * TARGET_PAGE_SIZE / bwidth;
+        /*
+         * If it is smaller than 10ms, we don't trust the measurement.
+         *
+         * Sometimes as the amount of time is very small and that
+         * makes the bandwidth really, really high.  But if
+         * networking is very flaky, we also want to finish migration
+         * when the amount of memory pending is small enough. (10MB
+         * on this case).
+         */
+
+        if ((ram_bytes_remaining() > 10 * 1024 * 1024) && (t0 < 10000000)) {
+            return 0;
+        }
+
+        bwidth = ((double)bytes_transferred - bytes_transferred_last) / t0;
+
+        /*
+         * if we haven't transferred anything this round, force expected_time to a
+         * a very high value, but without crashing
+         */
+        if (bwidth == 0)
+            bwidth = 0.000001;
+
+        expected_time = ram_bytes_remaining() / bwidth;
         return expected_time <= migrate_max_downtime();
     }
     return 0;
@@ -2974,7 +3050,7 @@ static inline void *host_from_stream_offset(QEMUFile *f,
     uint8_t len;
 
     if (flags & RAM_SAVE_FLAG_CONTINUE) {
-        if (!block) {
+        if (!block || block->length <= offset) {
             fprintf(stderr, "Ack, bad migration stream!\n");
             return NULL;
         }
@@ -2987,8 +3063,9 @@ static inline void *host_from_stream_offset(QEMUFile *f,
     id[len] = 0;
 
     QLIST_FOREACH(block, &ram_list.blocks, next) {
-        if (!strncmp(id, block->idstr, sizeof(id)))
+        if (!strncmp(id, block->idstr, sizeof(id)) && block->length > offset) {
             return block->host + offset;
+        }
     }
 
     fprintf(stderr, "Can't find block %s!\n", id);
@@ -3426,12 +3503,14 @@ void qemu_system_killed(int signal, pid_t pid)
 
 void qemu_system_shutdown_request(void)
 {
+    trace_qemu_system_shutdown_request();
     shutdown_requested = 1;
     qemu_notify_event();
 }
 
 void qemu_system_powerdown_request(void)
 {
+    trace_qemu_system_powerdown_request();
     powerdown_requested = 1;
     qemu_notify_event();
 }
@@ -3540,9 +3619,12 @@ static int cpu_can_run(CPUState *env)
     return 1;
 }
 
+static GArray *gpollfds;
+
 #ifndef CONFIG_IOTHREAD
 static int qemu_init_main_loop(void)
 {
+    gpollfds = g_array_new(FALSE, FALSE, sizeof(GPollFD));
     return qemu_event_init();
 }
 
@@ -3641,6 +3723,7 @@ static int qemu_init_main_loop(void)
     if (ret)
         return ret;
 
+    gpollfds = g_array_new(FALSE, FALSE, sizeof(GPollFD));
     qemu_cond_init(&qemu_pause_cond);
     qemu_mutex_init(&qemu_fair_mutex);
     qemu_mutex_init(&qemu_global_mutex);
@@ -3933,145 +4016,67 @@ void vm_stop(RunState reason)
 #endif
 
 
-static GPollFD poll_fds[1024 * 2]; /* this is probably overkill */
-static int n_poll_fds;
+static int glib_pollfds_idx;
+static int glib_n_poll_fds;
 static int max_priority;
 
-static void glib_select_fill(int *max_fd, fd_set *rfds, fd_set *wfds,
-                             fd_set *xfds, struct timeval *tv)
+static void glib_pollfds_fill(int *cur_timeout)
 {
     GMainContext *context = g_main_context_default();
-    int i;
-    int timeout = 0, cur_timeout;
+    int timeout = 0;
+    int n;
 
     g_main_context_prepare(context, &max_priority);
 
-    n_poll_fds = g_main_context_query(context, max_priority, &timeout,
-                                      poll_fds, ARRAY_SIZE(poll_fds));
-    g_assert(n_poll_fds <= ARRAY_SIZE(poll_fds));
+    glib_pollfds_idx = gpollfds->len;
+    n = glib_n_poll_fds;
+    do {
+        GPollFD *pfds;
+        glib_n_poll_fds = n;
+        g_array_set_size(gpollfds, glib_pollfds_idx + glib_n_poll_fds);
+        pfds = &g_array_index(gpollfds, GPollFD, glib_pollfds_idx);
+        n = g_main_context_query(context, max_priority, &timeout, pfds,
+                                 glib_n_poll_fds);
+    } while (n != glib_n_poll_fds);
 
-    for (i = 0; i < n_poll_fds; i++) {
-        GPollFD *p = &poll_fds[i];
-
-        if ((p->events & G_IO_IN)) {
-            FD_SET(p->fd, rfds);
-            *max_fd = MAX(*max_fd, p->fd);
-        }
-        if ((p->events & G_IO_OUT)) {
-            FD_SET(p->fd, wfds);
-            *max_fd = MAX(*max_fd, p->fd);
-        }
-        if ((p->events & G_IO_ERR)) {
-            FD_SET(p->fd, xfds);
-            *max_fd = MAX(*max_fd, p->fd);
-        }
-    }
-
-    cur_timeout = (tv->tv_sec * 1000) + ((tv->tv_usec + 500) / 1000);
-    if (timeout >= 0 && timeout < cur_timeout) {
-        tv->tv_sec = timeout / 1000;
-        tv->tv_usec = (timeout % 1000) * 1000;
+    if (timeout >= 0 && timeout < *cur_timeout) {
+        *cur_timeout = timeout;
     }
 }
 
-static void glib_select_poll(fd_set *rfds, fd_set *wfds, fd_set *xfds,
-                             bool err)
+static void glib_pollfds_poll(void)
 {
     GMainContext *context = g_main_context_default();
+    GPollFD *pfds = &g_array_index(gpollfds, GPollFD, glib_pollfds_idx);
 
-    if (!err) {
-        int i;
-
-        for (i = 0; i < n_poll_fds; i++) {
-            GPollFD *p = &poll_fds[i];
-
-            if ((p->events & G_IO_IN) && FD_ISSET(p->fd, rfds)) {
-                p->revents |= G_IO_IN;
-            }
-            if ((p->events & G_IO_OUT) && FD_ISSET(p->fd, wfds)) {
-                p->revents |= G_IO_OUT;
-            }
-            if ((p->events & G_IO_ERR) && FD_ISSET(p->fd, xfds)) {
-                p->revents |= G_IO_ERR;
-            }
-        }
-    }
-
-    if (g_main_context_check(context, max_priority, poll_fds, n_poll_fds)) {
+    if (g_main_context_check(context, max_priority, pfds, glib_n_poll_fds)) {
         g_main_context_dispatch(context);
     }
 }
 
 void main_loop_wait(int timeout)
 {
-    IOHandlerRecord *ioh;
-    fd_set rfds, wfds, xfds;
-    int ret, nfds;
-    struct timeval tv;
+    int ret;
 
-    qemu_bh_update_timeout(&timeout);
+    qemu_bh_update_timeout((uint32_t *)&timeout);
+
+    /* poll any events */
+    g_array_set_size(gpollfds, 0); /* reset for new iteration */
+    /* XXX: separate device handlers from system ones */
+
+    qemu_iohandler_fill(gpollfds);
+    slirp_pollfds_fill(gpollfds);
+    glib_pollfds_fill(&timeout);
 
     os_host_main_loop_wait(&timeout);
 
-    /* poll any events */
-    /* XXX: separate device handlers from system ones */
-    nfds = -1;
-    FD_ZERO(&rfds);
-    FD_ZERO(&wfds);
-    FD_ZERO(&xfds);
-
-    QLIST_FOREACH(ioh, &io_handlers, next) {
-        if (ioh->deleted)
-            continue;
-        if (ioh->fd_read &&
-            (!ioh->fd_read_poll ||
-             ioh->fd_read_poll(ioh->opaque) != 0)) {
-            FD_SET(ioh->fd, &rfds);
-            if (ioh->fd > nfds)
-                nfds = ioh->fd;
-        }
-        if (ioh->fd_write) {
-            FD_SET(ioh->fd, &wfds);
-            if (ioh->fd > nfds)
-                nfds = ioh->fd;
-        }
-    }
-
-    tv.tv_sec = timeout / 1000;
-    tv.tv_usec = (timeout % 1000) * 1000;
-
-    slirp_select_fill(&nfds, &rfds, &wfds, &xfds);
-
-    glib_select_fill(&nfds, &rfds, &wfds, &xfds, &tv);
-
     qemu_mutex_unlock_iothread();
-    ret = select(nfds + 1, &rfds, &wfds, &xfds, &tv);
+    ret = g_poll((GPollFD *)gpollfds->data, gpollfds->len, timeout);
     qemu_mutex_lock_iothread();
-    if (ret > 0) {
-        IOHandlerRecord *pioh;
 
-        QLIST_FOREACH(ioh, &io_handlers, next) {
-            if (!ioh->deleted && ioh->fd_read && FD_ISSET(ioh->fd, &rfds)) {
-                ioh->fd_read(ioh->opaque);
-                if (!(ioh->fd_read_poll && ioh->fd_read_poll(ioh->opaque)))
-                    FD_CLR(ioh->fd, &rfds);
-            }
-            if (!ioh->deleted && ioh->fd_write && FD_ISSET(ioh->fd, &wfds)) {
-                ioh->fd_write(ioh->opaque);
-            }
-        }
-
-	/* remove deleted IO handlers */
-        QLIST_FOREACH_SAFE(ioh, &io_handlers, next, pioh) {
-            if (ioh->deleted) {
-                QLIST_REMOVE(ioh, next);
-                qemu_free(ioh);
-            }
-        }
-    }
-
-    slirp_select_poll(&rfds, &wfds, &xfds, (ret < 0));
-    glib_select_poll(&rfds, &wfds, &xfds, (ret < 0));
+    qemu_iohandler_poll(gpollfds, ret);
+    slirp_pollfds_poll(gpollfds, (ret < 0));
+    glib_pollfds_poll();
 
     /* rearm timer, if not periodic */
     if (alarm_timer->flags & ALARM_FLAG_EXPIRED) {
@@ -5225,12 +5230,13 @@ static int object_create(QemuOpts *opts, void *opaque)
 
     obj = object_new(type);
     if (qemu_opt_foreach(opts, object_set_property, obj, 1) < 0) {
+        object_unref(obj);
         return -1;
     }
 
     object_property_add_child(container_get(object_get_root(), "/objects"),
                               id, obj, NULL);
-
+    object_unref(obj);
     return 0;
 }
 

@@ -40,7 +40,7 @@ static int64_t start, stop;
 #endif
 
 /* Migration speed throttling */
-static uint32_t max_throttle = (32 << 20);
+static size_t max_throttle = (32 << 20);
 
 static MigrationState *current_migration;
 
@@ -193,7 +193,7 @@ int do_migrate_set_speed(Monitor *mon, const QDict *qdict, QObject **ret_data)
     FdMigrationState *s;
 
     d = qdict_get_double(qdict, "value");
-    d = MAX(0, MIN(UINT32_MAX, d));
+    d = MAX(0, MIN(SIZE_MAX, d));
     max_throttle = d;
 
     s = migrate_to_fms(current_migration);
@@ -367,8 +367,6 @@ int migrate_fd_cleanup(FdMigrationState *s)
         DPRINTF("closing file\n");
         if (qemu_fclose(s->file) != 0) {
             ret = -1;
-            s->state = MIG_STATE_ERROR;
-            trace_migrate_set_state(MIG_STATE_ERROR);
         }
         s->file = NULL;
     } else {
@@ -466,6 +464,7 @@ void migrate_fd_put_ready(void *opaque)
 
         bdrv_drain_all();
         bdrv_flush_all();
+        qemu_file_set_rate_limit(s->file, SIZE_MAX);
         if ((qemu_savevm_state_complete(s->mon, s->file)) < 0) {
             if (old_vm_running) {
                 vm_start();
