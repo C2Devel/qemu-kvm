@@ -104,7 +104,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid .CROC1
+%define buildid .CROC2
 
 %define zrelease 1
 %define sublevel 0.12.1.2
@@ -9041,6 +9041,81 @@ Patch9901: croc-kvm-blockdev-fix-cdrom-readonly-default-state.patch
 Patch9902: 9902-vl.c-set-NULL-upon-deleting-handlers-in-qemu_set_fd_.patch
 # block: remove SIGUSR2 using in aio context
 Patch9903: 9903-block-remove-SIGUSR2-using-in-aio-context.patch
+Patch9904: 9904-block-add-BlockLimits-structure-to-BlockDriverState.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9905: 9905-block-Initialize-BlockLimits-in-bdrv_refresh_limits-.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9906: 9906-qemu_memalign-Allow-small-alignments.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9907: 9907-block-Detect-unaligned-length-in-bdrv_qiov_is_aligne.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9908: 9908-block-Don-t-use-guest-sector-size-for-qemu_blockalig.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9909: 9909-block-rename-buffer_alignment-to-guest_block_size.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9910: 9910-raw-Probe-required-direct-I-O-alignment.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9911: 9911-block-Introduce-bdrv_aligned_preadv.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9912: 9912-block-Introduce-bdrv_co_do_preadv.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9913: 9913-block-Introduce-bdrv_aligned_pwritev.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9914: 9914-block-write-Handle-COR-dependency-after-I-O-throttli.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9915: 9915-block-Introduce-bdrv_co_do_pwritev.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9916: 9916-block-Switch-BdrvTrackedRequest-to-byte-granularity.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9917: 9917-block-Allow-waiting-for-overlapping-requests-between.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9918: 9918-block-use-DIV_ROUND_UP-in-bdrv_co_do_readv.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9919: 9919-block-Make-zero-after-EOF-work-with-larger-alignment.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9920: 9920-block-Generalise-and-optimise-COR-serialisation.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9921: 9921-block-Make-overlap-range-for-serialisation-dynamic.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9922: 9922-block-Fix-32-bit-truncation-in-mark_request_serialis.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9923: 9923-block-Allow-wait_serialising_requests-at-any-point.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9924: 9924-block-Align-requests-in-bdrv_co_do_pwritev.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9925: 9925-block-Fix-memory-leaks-in-bdrv_co_do_pwritev.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9926: 9926-block-Assert-serialisation-assumptions-in-pwritev.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9927: 9927-block-Introduce-bdrv_writev_vmstate.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9928: 9928-block-Introduce-bdrv_pwritev-for-qcow2_save_vmstate.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9929: 9929-block-add-bdrv_write_zeroes.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9930: 9930-block-Change-coroutine-wrapper-to-byte-granularity.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9931: 9931-block-Make-bdrv_pread-a-bdrv_prwv_co-wrapper.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9932: 9932-block-Make-bdrv_pwrite-a-bdrv_prwv_co-wrapper.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9933: 9933-block-bdrv_aligned_pwritev-Assert-overlap-range.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9934: 9934-block-Don-t-call-ROUND_UP-with-negative-values.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9935: 9935-block-New-bdrv_nb_sectors.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9936: 9936-block-Fix-NULL-deference-for-unaligned-write-if-qiov.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9937: 9937-cutils-backport-qemu_iovec_concat-implementation.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9938: 9938-block-Fix-bs-request_alignment-assertion-for-bs-sg-1.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9939: 9939-block-raw-posix-fix-launching-with-failed-disks.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9940: 9940-block-minimal-bounce-buffer-alignment.patch
+# Backport of 4K block support and fix unaligned writes
+Patch9941: 9941-block-align-bounce-buffers-to-page.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -13406,6 +13481,44 @@ MakeIOtestsExecutable()
 %patch9901 -p1
 %patch9902 -p1
 %patch9903 -p1
+%patch9904 -p1
+%patch9905 -p1
+%patch9906 -p1
+%patch9907 -p1
+%patch9908 -p1
+%patch9909 -p1
+%patch9910 -p1
+%patch9911 -p1
+%patch9912 -p1
+%patch9913 -p1
+%patch9914 -p1
+%patch9915 -p1
+%patch9916 -p1
+%patch9917 -p1
+%patch9918 -p1
+%patch9919 -p1
+%patch9920 -p1
+%patch9921 -p1
+%patch9922 -p1
+%patch9923 -p1
+%patch9924 -p1
+%patch9925 -p1
+%patch9926 -p1
+%patch9927 -p1
+%patch9928 -p1
+%patch9929 -p1
+%patch9930 -p1
+%patch9931 -p1
+%patch9932 -p1
+%patch9933 -p1
+%patch9934 -p1
+%patch9935 -p1
+%patch9936 -p1
+%patch9937 -p1
+%patch9938 -p1
+%patch9939 -p1
+%patch9940 -p1
+%patch9941 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -13792,6 +13905,46 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC2
+- 9904-block-add-BlockLimits-structure-to-BlockDriverState.patch
+- 9905-block-Initialize-BlockLimits-in-bdrv_refresh_limits-.patch
+- 9906-qemu_memalign-Allow-small-alignments.patch
+- 9907-block-Detect-unaligned-length-in-bdrv_qiov_is_aligne.patch
+- 9908-block-Don-t-use-guest-sector-size-for-qemu_blockalig.patch
+- 9909-block-rename-buffer_alignment-to-guest_block_size.patch
+- 9910-raw-Probe-required-direct-I-O-alignment.patch
+- 9911-block-Introduce-bdrv_aligned_preadv.patch
+- 9912-block-Introduce-bdrv_co_do_preadv.patch
+- 9913-block-Introduce-bdrv_aligned_pwritev.patch
+- 9914-block-write-Handle-COR-dependency-after-I-O-throttli.patch
+- 9915-block-Introduce-bdrv_co_do_pwritev.patch
+- 9916-block-Switch-BdrvTrackedRequest-to-byte-granularity.patch
+- 9917-block-Allow-waiting-for-overlapping-requests-between.patch
+- 9918-block-use-DIV_ROUND_UP-in-bdrv_co_do_readv.patch
+- 9919-block-Make-zero-after-EOF-work-with-larger-alignment.patch
+- 9920-block-Generalise-and-optimise-COR-serialisation.patch
+- 9921-block-Make-overlap-range-for-serialisation-dynamic.patch
+- 9922-block-Fix-32-bit-truncation-in-mark_request_serialis.patch
+- 9923-block-Allow-wait_serialising_requests-at-any-point.patch
+- 9924-block-Align-requests-in-bdrv_co_do_pwritev.patch
+- 9925-block-Fix-memory-leaks-in-bdrv_co_do_pwritev.patch
+- 9926-block-Assert-serialisation-assumptions-in-pwritev.patch
+- 9927-block-Introduce-bdrv_writev_vmstate.patch
+- 9928-block-Introduce-bdrv_pwritev-for-qcow2_save_vmstate.patch
+- 9929-block-add-bdrv_write_zeroes.patch
+- 9930-block-Change-coroutine-wrapper-to-byte-granularity.patch
+- 9931-block-Make-bdrv_pread-a-bdrv_prwv_co-wrapper.patch
+- 9932-block-Make-bdrv_pwrite-a-bdrv_prwv_co-wrapper.patch
+- 9933-block-bdrv_aligned_pwritev-Assert-overlap-range.patch
+- 9934-block-Don-t-call-ROUND_UP-with-negative-values.patch
+- 9935-block-New-bdrv_nb_sectors.patch
+- 9936-block-Fix-NULL-deference-for-unaligned-write-if-qiov.patch
+- 9937-cutils-backport-qemu_iovec_concat-implementation.patch
+- 9938-block-Fix-bs-request_alignment-assertion-for-bs-sg-1.patch
+- 9939-block-raw-posix-fix-launching-with-failed-disks.patch
+- 9940-block-minimal-bounce-buffer-alignment.patch
+- 9941-block-align-bounce-buffers-to-page.patch
+
 * Mon Jul 25 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC1
 - 9902-vl.c-set-NULL-upon-deleting-handlers-in-qemu_set_fd_.patch
 - 9903-block-remove-SIGUSR2-using-in-aio-context.patch
