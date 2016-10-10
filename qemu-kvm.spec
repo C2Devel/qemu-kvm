@@ -108,7 +108,7 @@
 # that the kernel isn't the stock distribution qemu-kvm, for example,
 # by setting the define to ".local" or ".bz123456"
 
-%define buildid .CROC3
+%define buildid .CROC4
 
 %define zrelease 1
 %define sublevel 0.12.1.2
@@ -9122,6 +9122,10 @@ Patch9940: 9940-block-minimal-bounce-buffer-alignment.patch
 Patch9941: 9941-block-align-bounce-buffers-to-page.patch
 # Added support for configure with tcmalloc
 Patch9942: 9942-configure-Add-support-for-tcmalloc.patch
+# Backport of 'bdrv_io_limits_intercept' bytes granularity patch
+Patch9943: 9943-block-Switch-bdrv_io_limits_intercept-to-byte-granul.patch
+# Backport of fix for merging multiwrite requests patch
+Patch9944: 9944-block-fix-overlapping-multiwrite-requests.patch
 
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 BuildRequires: SDL-devel zlib-devel which texi2html gnutls-devel cyrus-sasl-devel
@@ -13529,6 +13533,8 @@ MakeIOtestsExecutable()
 %patch9940 -p1
 %patch9941 -p1
 %patch9942 -p1
+%patch9943 -p1
+%patch9944 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -13922,6 +13928,10 @@ fi
 %endif # with qemu_kvm
 
 %changelog
+* Mon Oct 10 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC4
+- 9943-block-Switch-bdrv_io_limits_intercept-to-byte-granul.patch
+- 9944-block-fix-overlapping-multiwrite-requests.patch
+
 * Tue Aug 09 2016 Mikhail Ushanov <MiUshanov@croc.ru> - 0.12.1.2-2.491.el6.1.CROC3
 - 9942-configure-Add-support-for-tcmalloc.patch
 - spec-enable-tcmalloc-as-default-memory-allocator.patch
