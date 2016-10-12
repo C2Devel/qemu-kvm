@@ -1261,6 +1261,10 @@ static QEMUMachine pc_machine_rhel700 = {
         .driver   = "virtio-net-pci",\
         .property = "any_layout",\
         .value    = "off",\
+    },{\
+        .driver   = "virtio-net-pci",\
+        .property = "__com.redhat_rhel6_ctrl_guest_workaround", \
+        .value    = "on",\
     }
 
 static void pc_compat_rhel660(MachineState *machine)
@@ -1381,6 +1385,10 @@ static QEMUMachine pc_machine_rhel650 = {
     },{\
         .driver   = "virtio-net-pci",\
         .property = "ctrl_mac_addr",\
+        .value    = "off",\
+    },{\
+        .driver   = "virtio-net-pci",\
+        .property = "__com.redhat_rhel6_ctrl_guest_workaround", \
         .value    = "off",\
     }
 

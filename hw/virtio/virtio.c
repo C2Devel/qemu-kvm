@@ -22,6 +22,7 @@
 #include "migration/migration.h"
 #include "hw/virtio/virtio-access.h"
 
+#include "standard-headers/linux/virtio_net.h"
 /*
  * The alignment to use between consumer and producer parts of vring.
  * x86 pagesize again. This is the default, used by transports like PCI
@@ -1230,7 +1231,24 @@ void virtio_save(VirtIODevice *vdev, QEMUFile *f)
 static int virtio_set_features_nocheck(VirtIODevice *vdev, uint64_t val)
 {
     VirtioDeviceClass *k = VIRTIO_DEVICE_GET_CLASS(vdev);
-    bool bad = (val & ~(vdev->host_features)) != 0;
+    bool bad;
+    uint64_t ctrl_guest_mask = 1ull << VIRTIO_NET_F_CTRL_GUEST_OFFLOADS;
+
+    if (vdev->rhel6_ctrl_guest_workaround && (val & ctrl_guest_mask) &&
+          !(vdev->host_features & ctrl_guest_mask)) {
+        /*
+         * This works around a mistake in the definition of the rhel6.[56].0
+         * machinetypes, ctrl-guest-offload was not set in qemu-kvm-rhev for
+         * those machine types, but is set on the rhel6 qemu-kvm-rhev build.
+         * If an incoming rhel6 guest uses it then we need to allow it.
+         * Note: There's a small race where a guest read the flag but didn't
+         * declare it's useage yet.
+         */
+        fprintf(stderr, "RHEL6 ctrl_guest_offload workaround\n");
+        vdev->host_features |= ctrl_guest_mask;
+    }
+
+    bad = (val & ~(vdev->host_features)) != 0;
 
     val &= vdev->host_features;
     if (k->set_features) {
@@ -1643,6 +1661,8 @@ static void virtio_device_unrealize(DeviceState *dev, Error **errp)
 
 static Property virtio_properties[] = {
     DEFINE_VIRTIO_COMMON_FEATURES(VirtIODevice, host_features),
+    DEFINE_PROP_BOOL("__com.redhat_rhel6_ctrl_guest_workaround", VirtIODevice,
+                     rhel6_ctrl_guest_workaround, false),
     DEFINE_PROP_END_OF_LIST(),
 };
 
