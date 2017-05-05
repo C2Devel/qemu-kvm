@@ -104,6 +104,7 @@ typedef struct HDGeometry {
  * BDRV_BLOCK_OFFSET_VALID: sector stored in bs->file as raw data
  * BDRV_BLOCK_ALLOCATED: the content of the block is determined by this
  *                       layer (as opposed to the backing file)
+ * BDRV_BLOCK_EOF: the returned pnum covers through end of file for this layer
  * BDRV_BLOCK_RAW: used internally to indicate that the request
  *                 was answered by the raw driver and that one
  *                 should look in bs->file directly.
@@ -130,6 +131,7 @@ typedef struct HDGeometry {
 #define BDRV_BLOCK_OFFSET_VALID 0x04
 #define BDRV_BLOCK_RAW          0x08
 #define BDRV_BLOCK_ALLOCATED    0x10
+#define BDRV_BLOCK_EOF          0x20
 #define BDRV_BLOCK_OFFSET_MASK  BDRV_SECTOR_MASK
 
 typedef QSIMPLEQ_HEAD(BlockReopenQueue, BlockReopenQueueEntry) BlockReopenQueue;
