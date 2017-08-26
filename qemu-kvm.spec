@@ -52,6 +52,7 @@
 
 #Versions of various parts:
 
+%define buildid %{nil}
 %define pkgname qemu-kvm
 %define rhel_suffix -rhel
 %define rhev_suffix -rhev
@@ -81,7 +82,7 @@ Obsoletes: %1 < %{obsoletes_version}
 Summary: QEMU is a FAST! processor emulator
 Name:    %{pkgname}%{?pkgsuffix}
 Version: 2.3.0
-Release: 31.0%{?dist}_2.21.1
+Release: 31.0%{?dist}_2.21.1%{buildid}
 # Epoch because we pushed a qemu-1.0 package. AIUI this can't ever be dropped
 Epoch: 10
 License: GPLv2+ and LGPLv2+ and BSD
