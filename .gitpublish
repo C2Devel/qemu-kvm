@@ -1,0 +1,17 @@
+# The default profile, rhev
+[gitpublishprofile "rhev"]
+base = rhev7/master-2.2.0
+prefix = RHEV-7.2 qemu-kvm-rhev PATCH
+to = rhvirt-patches@redhat.com
+suppresscc = all
+message = True
+
+# Special project, Acadia, for aarm64 architecture.
+[gitpublishprofile "acadia"]
+base = rhev7/master-2.2.0
+prefix = RHELSA qemu-kvm-rhev PATCH
+to = rhvirt-patches@redhat.com
+cc = virt-arm@redhat.com
+suppresscc = all
+message = True
+
