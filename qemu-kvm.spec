@@ -52,7 +52,7 @@
 
 #Versions of various parts:
 
-%define buildid %{nil}
+%define buildid .CROC1
 %define pkgname qemu-kvm
 %define rhel_suffix -rhel
 %define rhev_suffix -rhev
@@ -1322,6 +1322,9 @@ Patch613: kvm-virtio-error-out-if-guest-exceeds-virtqueue-size.patch
 # For bz#1358997 - CVE-2016-5126 qemu-kvm-rhev: Qemu: block: iscsi: buffer overflow in iscsi_aio_ioctl [rhel-7.2.z]
 Patch614: kvm-block-iscsi-avoid-potential-overflow-of-acb-task-cdb.patch
 
+# CROC backports
+# Backport of bz#1392876
+Patch9000: 9000-Workaround-rhel6-ctrl_guest_offloads-machine-type-mi.patch
 
 BuildRequires: zlib-devel
 BuildRequires: SDL-devel
@@ -2152,6 +2155,9 @@ ApplyOptionalPatch()
 %patch613 -p1
 %patch614 -p1
 
+# CROC backports
+%patch9000 -p1
+
 ApplyOptionalPatch qemu-kvm-test.patch
 
 # for tscdeadline_latency.flat
@@ -2566,6 +2572,9 @@ useradd -r -u 107 -g qemu -G kvm -d / -s /sbin/nologin \
 %{_libdir}/pkgconfig/libcacard.pc
 
 %changelog
+* Fri Sep 01 2017 Mikhail Ushanov <MiUshanov@croc.ru> - ev-2.3.0-31.0.el7_2.21.CROC1
+- 9000-Workaround-rhel6-ctrl_guest_offloads-machine-type-mi.patch
+
 * Mon Nov 21 2016 Sandro Bonazzola <sbonazzo@redhat.com> - ev-2.3.0-31.0.el7_2.21
 - Bumping release to 31.0 to address an update issue.
 
