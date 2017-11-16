@@ -881,6 +881,10 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
     if (r < 0) {
         fprintf(stderr, "vhost VQ %d ring restore failed: %d\n", idx, r);
         fflush(stderr);
+        /* Connection to the backend is broken, so let's sync internal
+         * last avail idx to the device used idx.
+         */
+        virtio_queue_restore_last_avail_idx(vdev, idx);
     } else {
         virtio_queue_set_last_avail_idx(vdev, idx, state.num);
     }
