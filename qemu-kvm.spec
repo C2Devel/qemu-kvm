@@ -52,7 +52,7 @@
 
 #Versions of various parts:
 
-%define buildid .CROC1
+%define buildid .CROC2
 %define pkgname qemu-kvm
 %define rhel_suffix -rhel
 %define rhev_suffix -rhev
@@ -1325,6 +1325,12 @@ Patch614: kvm-block-iscsi-avoid-potential-overflow-of-acb-task-cdb.patch
 # CROC backports
 # Backport of bz#1392876
 Patch9000: 9000-Workaround-rhel6-ctrl_guest_offloads-machine-type-mi.patch
+# Backport of CVE-2017-5715 fixes
+Patch9001: 9001-target-i386-add-support-for-SPEC_CTRL-MSR.patch
+# Backport of https://github.com/qemu/qemu/commit/95ea69fb46.patch
+Patch9002: 9002-x86-add-AVX512_4VNNIW-and-AVX512_4FMAPS-features.patch
+# Backport of CVE-2017-5715 fixes
+Patch9003: 9003-target-i386-cpu-add-new-CPUID-bits-for-indirect-bran.patch
 
 BuildRequires: zlib-devel
 BuildRequires: SDL-devel
@@ -2157,6 +2163,9 @@ ApplyOptionalPatch()
 
 # CROC backports
 %patch9000 -p1
+%patch9001 -p1
+%patch9002 -p1
+%patch9003 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -2572,6 +2581,11 @@ useradd -r -u 107 -g qemu -G kvm -d / -s /sbin/nologin \
 %{_libdir}/pkgconfig/libcacard.pc
 
 %changelog
+* Mon Jan 08 2018 Mikhail Ushanov <MiUshanov@croc.ru> - ev-2.3.0-31.0.el7_2.21.CROC2
+- 9001-target-i386-add-support-for-SPEC_CTRL-MSR.patch
+- 9002-x86-add-AVX512_4VNNIW-and-AVX512_4FMAPS-features.patch
+- 9003-target-i386-cpu-add-new-CPUID-bits-for-indirect-bran.patch
+
 * Fri Sep 01 2017 Mikhail Ushanov <MiUshanov@croc.ru> - ev-2.3.0-31.0.el7_2.21.CROC1
 - 9000-Workaround-rhel6-ctrl_guest_offloads-machine-type-mi.patch
 
