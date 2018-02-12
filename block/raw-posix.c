@@ -148,6 +148,9 @@ typedef struct BDRVRawState {
 #ifdef CONFIG_XFS
     bool is_xfs:1;
 #endif
+#ifdef CONFIG_SIO
+    bool is_sio:1;
+#endif
     bool has_discard:1;
     bool has_write_zeroes:1;
     bool discard_zeroes:1;
@@ -536,6 +539,16 @@ static int raw_open_common(BlockDriverState *bs, QDict *options,
             s->discard_zeroes = true;
         }
 #endif
+
+#ifdef CONFIG_SIO
+        if (s->is_sio) {
+#ifdef BLKDISCARDZEROES
+            s->discard_zeroes = true;
+#endif
+            s->has_write_zeroes = true;
+        }
+#endif
+
 #ifdef __linux__
         /* On Linux 3.10, BLKDISCARD leaves stale data in the page cache.  Do
          * not rely on the contents of discarded blocks unless using O_DIRECT.
@@ -721,6 +734,57 @@ static void raw_reopen_abort(BDRVReopenState *state)
     state->opaque = NULL;
 }
 
+#ifdef CONFIG_SIO
+static int64_t get_sysfs_long(char *path) {
+    int ret;
+    int fd = -1;
+    char buf[32];
+
+    fd = open(path, O_RDONLY);
+    if (fd == -1) {
+        ret = -errno;
+        goto out;
+    }
+
+    do {
+        ret = read(fd, buf, sizeof(buf) - 1);
+    } while (ret == -1 && errno == EINTR);
+
+    if (ret < 0) {
+        ret = -errno;
+        goto out;
+    } else if (ret == 0) {
+        ret = -EIO;
+        goto out;
+    }
+    ret = atol(buf);
+
+out:
+    if (fd != -1) {
+        close(fd);
+    }
+    return ret;
+}
+
+static void sio_refresh_limits(BlockDriverState *bs, Error **errp)
+{
+    BDRVRawState *s = bs->opaque;
+
+    struct stat st;
+    char *sysfspath;
+
+    if (!fstat(s->fd, &st)) {
+        sysfspath = g_strdup_printf("/sys/dev/block/%u:%u/queue/discard_granularity",
+                                    major(st.st_rdev), minor(st.st_rdev));
+        int64_t ret = get_sysfs_long(sysfspath);
+        if (ret > 0) {
+            bs->bl.discard_alignment = ret / BDRV_SECTOR_SIZE;
+            bs->bl.write_zeroes_alignment = ret / BDRV_SECTOR_SIZE;
+        }
+    }
+}
+#endif
+
 static void raw_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     BDRVRawState *s = bs->opaque;
@@ -728,6 +792,12 @@ static void raw_refresh_limits(BlockDriverState *bs, Error **errp)
     raw_probe_alignment(bs, s->fd, errp);
     bs->bl.min_mem_alignment = s->buf_align;
     bs->bl.opt_mem_alignment = MAX(s->buf_align, getpagesize());
+
+#ifdef CONFIG_SIO
+    if (s->is_sio) {
+        sio_refresh_limits(bs, errp);
+    }
+#endif
 }
 
 static int check_for_dasd(int fd)
@@ -1161,7 +1231,17 @@ static int handle_aiocb_discard_block(RawPosixAIOData *aiocb) {
 
 #ifdef BLKDISCARD
     BDRVRawState *s = aiocb->bs->opaque;
-
+#ifdef CONFIG_SIO
+    if (s->is_sio) {
+        if (aiocb->bs->bl.discard_alignment) {
+            int64_t discard_alignment = aiocb->bs->bl.discard_alignment * BDRV_SECTOR_SIZE;
+            if (aiocb->aio_offset % discard_alignment ||
+                aiocb->aio_nbytes % discard_alignment) {
+                return ret;
+            }
+        }
+    }
+#endif
     do {
         uint64_t range[2] = {aiocb->aio_offset, aiocb->aio_nbytes};
         if (ioctl(aiocb->aio_fildes, BLKDISCARD, range) == 0) {
@@ -2126,15 +2206,18 @@ static int hdev_open(BlockDriverState *bs, QDict *options, int flags,
 #endif
 
     s->type = FTYPE_FILE;
-#if defined(__linux__)
-    {
-        char resolved_path[ MAXPATHLEN ], *temp;
+#ifdef __linux__
+    char resolved_path[ MAXPATHLEN ], *temp;
 
-        temp = realpath(filename, resolved_path);
-        if (temp && strstart(temp, "/dev/sg", NULL)) {
-            bs->sg = 1;
-        }
+    temp = realpath(filename, resolved_path);
+    if (temp && strstart(temp, "/dev/sg", NULL)) {
+        bs->sg = 1;
     }
+#ifdef CONFIG_SIO
+    if (temp && strstart(temp, "/dev/scini", NULL)) {
+        s->is_sio = 1;
+    }
+#endif
 #endif
 
     ret = raw_open_common(bs, options, flags, 0, &local_err);
