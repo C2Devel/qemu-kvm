@@ -254,6 +254,7 @@ cap_ng=""
 attr=""
 libattr=""
 xfs=""
+sio=""
 
 vhost_net="no"
 vhost_scsi="no"
@@ -1041,6 +1042,10 @@ for opt do
   --disable-xfsctl) xfs="no"
   ;;
   --enable-xfsctl) xfs="yes"
+  ;;
+  --disable-sio) sio="no"
+  ;;
+  --enable-sio) sio="yes"
   ;;
   --disable-smartcard-nss) smartcard_nss="no"
   ;;
@@ -4464,6 +4469,7 @@ echo "spice support     $spice"
 fi
 echo "rbd support       $rbd"
 echo "xfsctl support    $xfs"
+echo "ScaleIO support   $sio"
 echo "nss used          $smartcard_nss"
 echo "libusb            $libusb"
 echo "usb net redir     $usb_redir"
@@ -4641,6 +4647,9 @@ if test "$uuid" = "yes" ; then
 fi
 if test "$xfs" = "yes" ; then
   echo "CONFIG_XFS=y" >> $config_host_mak
+fi
+if test "$sio" = "yes" ; then
+  echo "CONFIG_SIO=y" >> $config_host_mak
 fi
 qemu_version=`head $source_path/VERSION`
 echo "VERSION=$qemu_version" >>$config_host_mak
