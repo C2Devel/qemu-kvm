@@ -1156,6 +1156,29 @@ static ssize_t handle_aiocb_write_zeroes(RawPosixAIOData *aiocb)
     return -ENOTSUP;
 }
 
+static int handle_aiocb_discard_block(RawPosixAIOData *aiocb) {
+    int ret = -ENOTSUP;
+
+#ifdef BLKDISCARD
+    BDRVRawState *s = aiocb->bs->opaque;
+
+    do {
+        uint64_t range[2] = {aiocb->aio_offset, aiocb->aio_nbytes};
+        if (ioctl(aiocb->aio_fildes, BLKDISCARD, range) == 0) {
+            return 0;
+        }
+    } while (errno == EINTR);
+    ret = -errno;
+
+    ret = translate_err(ret);
+    if (ret == -ENOTSUP) {
+        s->has_discard = false;
+    }
+#endif
+
+    return ret;
+}
+
 static ssize_t handle_aiocb_discard(RawPosixAIOData *aiocb)
 {
     int ret = -EOPNOTSUPP;
@@ -1166,30 +1189,20 @@ static ssize_t handle_aiocb_discard(RawPosixAIOData *aiocb)
     }
 
     if (aiocb->aio_type & QEMU_AIO_BLKDEV) {
-#ifdef BLKDISCARD
-        do {
-            uint64_t range[2] = { aiocb->aio_offset, aiocb->aio_nbytes };
-            if (ioctl(aiocb->aio_fildes, BLKDISCARD, range) == 0) {
-                return 0;
-            }
-        } while (errno == EINTR);
+        return handle_aiocb_discard_block(aiocb);
+    }
 
-        ret = -errno;
-#endif
-    } else {
 #ifdef CONFIG_XFS
-        if (s->is_xfs) {
-            return xfs_discard(s, aiocb->aio_offset, aiocb->aio_nbytes);
-        }
+    if (s->is_xfs) {
+        return xfs_discard(s, aiocb->aio_offset, aiocb->aio_nbytes);
+    }
 #endif
 
 #ifdef CONFIG_FALLOCATE_PUNCH_HOLE
-        ret = do_fallocate(s->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                           aiocb->aio_offset, aiocb->aio_nbytes);
+    ret = do_fallocate(s->fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                       aiocb->aio_offset, aiocb->aio_nbytes);
 #endif
-    }
 
-    ret = translate_err(ret);
     if (ret == -ENOTSUP) {
         s->has_discard = false;
     }
