@@ -2132,6 +2132,7 @@ static void bdrv_move_feature_fields(BlockDriverState *bs_dest,
     bs_dest->copy_on_read       = bs_src->copy_on_read;
 
     bs_dest->enable_write_cache = bs_src->enable_write_cache;
+    bs_dest->detect_zeroes      = bs_src->detect_zeroes;
 
     /* i/o throttled req */
     memcpy(&bs_dest->throttle_state,
