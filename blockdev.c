@@ -2623,6 +2623,10 @@ void qmp_drive_mirror(const char *device, const char *target,
         error_propagate(errp, local_err);
         goto out;
     }
+    if (unmap) {
+        // BDRV_O_UNMAP already inherited from source block driver state
+        target_bs->detect_zeroes = BLOCKDEV_DETECT_ZEROES_OPTIONS_UNMAP;
+    }
 
     bdrv_set_aio_context(target_bs, aio_context);
 
