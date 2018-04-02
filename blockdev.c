@@ -3594,6 +3594,11 @@ static void blockdev_mirror_common(const char *job_id, BlockDriverState *bs,
         sync = MIRROR_SYNC_MODE_FULL;
     }
 
+    if (unmap) {
+        // BDRV_O_UNMAP already inherited from source block driver state
+        target->detect_zeroes = BLOCKDEV_DETECT_ZEROES_OPTIONS_UNMAP;
+    }
+
     /* pass the node name to replace to mirror start since it's loose coupling
      * and will allow to check whether the node still exist at mirror completion
      */
