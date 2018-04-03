@@ -52,7 +52,7 @@
 
 #Versions of various parts:
 
-%define buildid .CROC2
+%define buildid .CROC3
 %define pkgname qemu-kvm
 %define rhel_suffix -rhel
 %define rhev_suffix -rhev
@@ -1331,6 +1331,38 @@ Patch9001: 9001-target-i386-add-support-for-SPEC_CTRL-MSR.patch
 Patch9002: 9002-x86-add-AVX512_4VNNIW-and-AVX512_4FMAPS-features.patch
 # Backport of CVE-2017-5715 fixes
 Patch9003: 9003-target-i386-cpu-add-new-CPUID-bits-for-indirect-bran.patch
+# Backport of https://github.com/qemu/qemu/commit/53a2951312.patch
+Patch9004: 9004-block-driver-should-override-flags-in-bdrv_open.patch
+# Backport of https://github.com/qemu/qemu/commit/a68197ff5b.patch
+Patch9005: 9005-iotests-Add-tests-for-overriding-BDRV_O_PROTOCOL.patch
+# Backport of https://github.com/qemu/qemu/commit/48ac0a4df8.patch
+Patch9006: 9006-mirror-correct-buf_size.patch
+# Backport of https://github.com/qemu/qemu/commit/e4f5874923.patch
+Patch9007: 9007-qemu-iotests-Some-qemu-img-convert-tests.patch
+# Backport of https://github.com/qemu/qemu/commit/16b0d55586.patch
+Patch9008: 9008-qemu-img-Make-MapEntry-a-QAPI-struct.patch
+# Backport of https://github.com/qemu/qemu/commit/2875645b65.patch
+Patch9009: 9009-qemu-img-initialize-MapEntry-object.patch
+# Backport of https://github.com/qemu/qemu/commit/aad15de427.patch
+Patch9010: 9010-qemu-img-Fix-preallocation-with-S-0-for-convert.patch
+# Backport of https://github.com/qemu/qemu/commit/fb0d8654ff.patch
+Patch9011: 9011-block-Add-BDRV_BLOCK_EOF-to-bdrv_get_block_status.patch
+# Backport of https://github.com/qemu/qemu/commit/c61e684e44.patch
+Patch9012: 9012-block-Exploit-BDRV_BLOCK_EOF-for-larger-zero-blocks.patch
+# Backport of https://github.com/qemu/qemu/commit/4196d2f030.patch
+Patch9013: 9013-block-minimal-bounce-buffer-alignment.patch
+# Backport of https://github.com/qemu/qemu/commit/459b4e6612.patch
+Patch9014: 9014-block-align-bounce-buffers-to-page.patch
+# ScaleIO driver feature
+Patch9015: 9015-raw-posix-introduce-aiocb-block-discard-handler.patch
+# ScaleIO driver feature
+Patch9016: 9016-configure-added-CONFIG_SIO-option.patch
+# ScaleIO driver feature
+Patch9017: 9017-raw-posix-scaleio-devices-support.patch
+# Preserve 'detect_zeroes' on image reopen feature
+Patch9018: 9018-block-preserve-detect_zeroes-on-image-reopen.patch
+# Enable 'detect_zeroes' in drive_mirror
+Patch9019: 9019-blockdev-enable-detect_zeroes-on-target-bs-in-drive_.patch
 
 BuildRequires: zlib-devel
 BuildRequires: SDL-devel
@@ -2166,6 +2198,22 @@ ApplyOptionalPatch()
 %patch9001 -p1
 %patch9002 -p1
 %patch9003 -p1
+%patch9004 -p1
+%patch9005 -p1
+%patch9006 -p1
+%patch9007 -p1
+%patch9008 -p1
+%patch9009 -p1
+%patch9010 -p1
+%patch9011 -p1
+%patch9012 -p1
+%patch9013 -p1
+%patch9014 -p1
+%patch9015 -p1
+%patch9016 -p1
+%patch9017 -p1
+%patch9018 -p1
+%patch9019 -p1
 
 ApplyOptionalPatch qemu-kvm-test.patch
 
@@ -2581,6 +2629,24 @@ useradd -r -u 107 -g qemu -G kvm -d / -s /sbin/nologin \
 %{_libdir}/pkgconfig/libcacard.pc
 
 %changelog
+* Tue Apr 03 2018 Mikhail Ushanov <MiUshanov@croc.ru> - ev-2.3.0-31.0.el7_2.21.CROC3
+- 9004-block-driver-should-override-flags-in-bdrv_open.patch
+- 9005-iotests-Add-tests-for-overriding-BDRV_O_PROTOCOL.patch
+- 9006-mirror-correct-buf_size.patch
+- 9007-qemu-iotests-Some-qemu-img-convert-tests.patch
+- 9008-qemu-img-Make-MapEntry-a-QAPI-struct.patch
+- 9009-qemu-img-initialize-MapEntry-object.patch
+- 9010-qemu-img-Fix-preallocation-with-S-0-for-convert.patch
+- 9011-block-Add-BDRV_BLOCK_EOF-to-bdrv_get_block_status.patch
+- 9012-block-Exploit-BDRV_BLOCK_EOF-for-larger-zero-blocks.patch
+- 9013-block-minimal-bounce-buffer-alignment.patch
+- 9014-block-align-bounce-buffers-to-page.patch
+- 9015-raw-posix-introduce-aiocb-block-discard-handler.patch
+- 9016-configure-added-CONFIG_SIO-option.patch
+- 9017-raw-posix-scaleio-devices-support.patch
+- 9018-block-preserve-detect_zeroes-on-image-reopen.patch
+- 9019-blockdev-enable-detect_zeroes-on-target-bs-in-drive_.patch
+
 * Mon Jan 08 2018 Mikhail Ushanov <MiUshanov@croc.ru> - ev-2.3.0-31.0.el7_2.21.CROC2
 - 9001-target-i386-add-support-for-SPEC_CTRL-MSR.patch
 - 9002-x86-add-AVX512_4VNNIW-and-AVX512_4FMAPS-features.patch

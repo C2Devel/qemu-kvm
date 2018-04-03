@@ -105,6 +105,7 @@ fi
     --enable-werror \
     --disable-xen \
     --disable-xfsctl \
+    --enable-sio \
     --${have_fdt}-fdt \
     --${have_gluster}-glusterfs \
     --${have_guest_agent}-guest-agent \
