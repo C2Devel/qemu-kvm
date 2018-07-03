@@ -2797,6 +2797,153 @@ static BlockDriver bdrv_host_device = {
 #endif
 };
 
+#ifdef CONFIG_SIO
+static int sio_probe_device(const char *filename)
+{
+    int priority = 0;
+    struct stat st;
+
+    if (stat(filename, &st) >= 0 && S_ISBLK(st.st_mode)) {
+        char resolved_path[PATH_MAX], *temp;
+
+        temp = realpath(filename, resolved_path);
+        if (temp && strstart(temp, "/dev/scini", NULL)) {
+            priority = 100;
+        }
+    }
+
+    return priority;
+}
+
+static int sio_open(BlockDriverState *bs, QDict *options, int flags,
+                    Error **errp)
+{
+    BDRVRawState *s = bs->opaque;
+    Error *local_err = NULL;
+    int ret;
+
+    ret = raw_open_common(bs, options, flags, 0, &local_err);
+    if (ret < 0) {
+        error_propagate(errp, local_err);
+        return ret;
+    }
+
+#ifdef BLKDISCARDZEROES
+    s->discard_zeroes = true;
+#endif
+    s->has_write_zeroes = true;
+
+    return ret;
+}
+
+static void sio_refresh_limits(BlockDriverState *bs, Error **errp)
+{
+    BDRVRawState *s = bs->opaque;
+    struct stat st;
+    char *sysfspath;
+
+    raw_refresh_limits(bs, errp);
+
+    if (!fstat(s->fd, &st)) {
+        sysfspath = g_strdup_printf("/sys/dev/block/%u:%u/queue/discard_granularity",
+                                    major(st.st_rdev), minor(st.st_rdev));
+        int64_t ret = get_sysfs_long(sysfspath);
+        if (ret > 0) {
+            bs->bl.pdiscard_alignment = ret;
+            bs->bl.pwrite_zeroes_alignment = ret;
+        }
+        g_free(sysfspath);
+    }
+}
+
+static int64_t sio_is_aligned(BlockDriverState *bs,
+    int64_t offset, int64_t bytes)
+{
+    int ret = 0;
+    int64_t pdiscard_alignment = bs->bl.pdiscard_alignment;
+
+    if (offset % pdiscard_alignment || bytes % pdiscard_alignment) {
+        ret = -ENOTSUP;
+    }
+    return ret;
+}
+
+static coroutine_fn int sio_co_pdiscard(BlockDriverState *bs,
+    int64_t offset, int bytes)
+{
+    BDRVRawState *s = bs->opaque;
+    int ret;
+
+    ret = sio_is_aligned(bs, offset, bytes);
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = fd_open(bs);
+    if (ret < 0) {
+        return ret;
+    }
+
+    return paio_submit_co(bs, s->fd, offset, NULL, bytes,
+                          QEMU_AIO_DISCARD | QEMU_AIO_BLKDEV);
+}
+
+static coroutine_fn int sio_co_pwrite_zeroes(BlockDriverState *bs,
+    int64_t offset, int bytes, BdrvRequestFlags flags)
+{
+    BDRVRawState *s = bs->opaque;
+
+    if (!!(flags & BDRV_REQ_MAY_UNMAP) && (s->discard_zeroes)) {
+        int ret = sio_is_aligned(bs, offset, bytes);
+        if (ret < 0) {
+            return ret;
+        }
+    }
+
+    return hdev_co_pwrite_zeroes(bs, offset, bytes, flags);
+}
+
+static BlockDriver bdrv_sio_device = {
+    .format_name = "sio_device",
+    .protocol_name = "sio_device",
+    .instance_size = sizeof(BDRVRawState),
+    .bdrv_needs_filename = true,
+    .bdrv_probe_device = sio_probe_device,
+    .bdrv_parse_filename = hdev_parse_filename,
+    .bdrv_file_open = sio_open,
+    .bdrv_close = raw_close,
+    .bdrv_reopen_prepare = raw_reopen_prepare,
+    .bdrv_reopen_commit = raw_reopen_commit,
+    .bdrv_reopen_abort = raw_reopen_abort,
+    .bdrv_create = hdev_create,
+    .create_opts = &raw_create_opts,
+    .bdrv_co_pwrite_zeroes = sio_co_pwrite_zeroes,
+    .bdrv_co_pdiscard = sio_co_pdiscard,
+
+    .bdrv_co_preadv = raw_co_preadv,
+    .bdrv_co_pwritev = raw_co_pwritev,
+    .bdrv_aio_flush = raw_aio_flush,
+    .bdrv_refresh_limits = sio_refresh_limits,
+    .bdrv_io_plug = raw_aio_plug,
+    .bdrv_io_unplug = raw_aio_unplug,
+
+    .bdrv_truncate = raw_truncate,
+    .bdrv_getlength = raw_getlength,
+    .bdrv_get_info = raw_get_info,
+    .bdrv_get_allocated_file_size = raw_get_allocated_file_size,
+    .bdrv_check_perm = raw_check_perm,
+    .bdrv_set_perm = raw_set_perm,
+    .bdrv_abort_perm_update = raw_abort_perm_update,
+    .bdrv_probe_blocksizes = hdev_probe_blocksizes,
+    .bdrv_probe_geometry = hdev_probe_geometry,
+
+/* generic scsi device */
+#ifdef __linux__
+    .bdrv_aio_ioctl = hdev_aio_ioctl,
+#endif
+};
+#endif
+
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
 static void cdrom_parse_filename(const char *filename, QDict *options,
                                  Error **errp)
@@ -3057,6 +3204,9 @@ static void bdrv_file_init(void)
 #endif
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
     bdrv_register(&bdrv_host_cdrom);
+#endif
+#ifdef CONFIG_SIO
+    bdrv_register(&bdrv_sio_device);
 #endif
 }
 
