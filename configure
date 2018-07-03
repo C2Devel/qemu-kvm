@@ -307,6 +307,7 @@ cap_ng=""
 attr=""
 libattr=""
 xfs=""
+sio=""
 tcg="yes"
 
 vhost_net="no"
@@ -1165,6 +1166,10 @@ for opt do
   ;;
   --enable-xfsctl) xfs="yes"
   ;;
+  --disable-sio) sio="no"
+  ;;
+  --enable-sio) sio="yes"
+  ;;
   --disable-smartcard) smartcard="no"
   ;;
   --enable-smartcard) smartcard="yes"
@@ -1558,6 +1563,7 @@ disabled with --disable-FEATURE, default is enabled if available:
   opengl          opengl support
   virglrenderer   virgl rendering support
   xfsctl          xfsctl support
+  sio             ScaleIO support
   qom-cast-debug  cast debugging support
   tools           build qemu-io, qemu-nbd and qemu-image tools
   vxhs            Veritas HyperScale vDisk backend support
@@ -5418,6 +5424,7 @@ fi
 echo "spice support     $spice $(echo_version $spice $spice_protocol_version/$spice_server_version)"
 echo "rbd support       $rbd"
 echo "xfsctl support    $xfs"
+echo "ScaleIO support   $sio"
 echo "smartcard support $smartcard"
 echo "libusb            $libusb"
 echo "usb net redir     $usb_redir"
@@ -5627,6 +5634,9 @@ if test "$fnmatch" = "yes" ; then
 fi
 if test "$xfs" = "yes" ; then
   echo "CONFIG_XFS=y" >> $config_host_mak
+fi
+if test "$sio" = "yes" ; then
+  echo "CONFIG_SIO=y" >> $config_host_mak
 fi
 qemu_version=$(head $source_path/VERSION)
 echo "VERSION=$qemu_version" >>$config_host_mak
