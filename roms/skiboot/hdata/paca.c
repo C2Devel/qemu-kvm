@@ -49,7 +49,7 @@ static struct dt_node *add_cpu_node(struct dt_node *cpus,
 	no = be32_to_cpu(id->process_interrupt_line);
 
 	ve_flags = be32_to_cpu(id->verify_exists_flags);
-	printf("CPU[%i]: PIR=%i RES=%i %s %s(%u threads)\n",
+	prlog(PR_INFO, "CPU[%i]: PIR=%i RES=%i %s %s(%u threads)\n",
 	       paca_index(paca), be32_to_cpu(id->pir), no,
 	       ve_flags & CPU_ID_PACA_RESERVED
 	       ? "**RESERVED**" : cpu_state(ve_flags),
@@ -134,7 +134,7 @@ static void add_be32_sorted(__be32 arr[], __be32 new, unsigned num)
 	arr[i] = new;
 }
 
-static void add_icps(void)
+static void add_xics_icps(void)
 {
 	struct dt_node *cpu;
 	unsigned int i;
@@ -153,6 +153,9 @@ static void add_icps(void)
 			continue;
 
 		intsrv = dt_find_property(cpu, "ibm,ppc-interrupt-server#s");
+		if (!intsrv)
+			continue;
+
 		pir = dt_prop_get_u32(cpu, "ibm,pir");
 
 		/* Get ibase address */
@@ -251,7 +254,7 @@ static bool __paca_parse(void)
 			okay = false;
 		}
 
-		printf("CPU[%i]: PIR=%i RES=%i %s\n",
+		prlog(PR_INFO, "CPU[%i]: PIR=%i RES=%i %s\n",
 		       paca_index(paca), be32_to_cpu(id->pir),
 		       be32_to_cpu(id->process_interrupt_line),
 		       okay ? "OK" : "UNAVAILABLE");
@@ -321,7 +324,12 @@ static bool __paca_parse(void)
 		free(new_prop);
 	}
 
-	add_icps();
+	/*
+	 * P7 and P8 use the XICS interrupt controller which has a per-core
+	 * interrupt controller node.
+	 */
+	if (proc_gen <= proc_gen_p8)
+		add_xics_icps();
 
 	return true;
 }

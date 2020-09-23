@@ -27,6 +27,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
+
 #include "qemu/osdep.h"
 #include "hw/hw.h"
 #include "hw/loader.h"
@@ -42,10 +43,13 @@
 #include "exec/address-spaces.h"
 #include "hw/i386/pc.h"
 #include "hw/i386/ich9.h"
+#include "hw/i386/amd_iommu.h"
+#include "hw/i386/intel_iommu.h"
 #include "hw/smbios/smbios.h"
 #include "hw/ide/pci.h"
 #include "hw/ide/ahci.h"
 #include "hw/usb.h"
+#include "qapi/error.h"
 #include "qemu/error-report.h"
 #include "sysemu/numa.h"
 
@@ -101,9 +105,11 @@ static void pc_q35_init(MachineState *machine)
         lowmem = pcms->max_ram_below_4g;
         if (machine->ram_size - lowmem > lowmem &&
             lowmem & ((1ULL << 30) - 1)) {
-            warn_report("Large machine and max_ram_below_4g(%"PRIu64
-                        ") not a multiple of 1G; possible bad performance.",
-                        pcms->max_ram_below_4g);
+            warn_report("There is possibly poor performance as the ram size "
+                        " (0x%" PRIx64 ") is more then twice the size of"
+                        " max-ram-below-4g (%"PRIu64") and"
+                        " max-ram-below-4g is not a multiple of 1G.",
+                        (uint64_t)machine->ram_size, pcms->max_ram_below_4g);
         }
     }
 
@@ -188,7 +194,7 @@ static void pc_q35_init(MachineState *machine)
                              TYPE_HOTPLUG_HANDLER,
                              (Object **)&pcms->acpi_dev,
                              object_property_allow_set_link,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE, &error_abort);
+                             OBJ_PROP_LINK_STRONG, &error_abort);
     object_property_set_link(OBJECT(machine), OBJECT(lpc),
                              PC_MACHINE_ACPI_DEVICE_PROP, &error_abort);
 
@@ -266,10 +272,7 @@ static void pc_q35_init(MachineState *machine)
 
     /* the rest devices to which pci devfn is automatically assigned */
     pc_vga_init(isa_bus, host_bus);
-    pc_nic_init(isa_bus, host_bus);
-    if (pcmc->pci_enabled) {
-        pc_pci_device_init(host_bus);
-    }
+    pc_nic_init(pcmc, isa_bus, host_bus);
 
     if (pcms->acpi_nvdimm_state.is_enabled) {
         nvdimm_init_acpi_state(&pcms->acpi_nvdimm_state, system_io,
@@ -292,22 +295,49 @@ static void pc_q35_init(MachineState *machine)
 #if 0 /* Disabled for Red Hat Enterprise Linux */
 static void pc_q35_machine_options(MachineClass *m)
 {
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+    pcmc->default_nic_model = "e1000e";
+
     m->family = "pc_q35";
     m->desc = "Standard PC (Q35 + ICH9, 2009)";
-    m->hot_add_cpu = pc_hot_add_cpu;
     m->units_per_default_bus = 1;
     m->default_machine_opts = "firmware=bios-256k.bin";
     m->default_display = "std";
     m->no_floppy = 1;
-    m->has_dynamic_sysbus = true;
+    machine_class_allow_dynamic_sysbus_dev(m, TYPE_AMD_IOMMU_DEVICE);
+    machine_class_allow_dynamic_sysbus_dev(m, TYPE_INTEL_IOMMU_DEVICE);
     m->max_cpus = 288;
 }
 
-static void pc_q35_2_10_machine_options(MachineClass *m)
+static void pc_q35_2_12_machine_options(MachineClass *m)
 {
     pc_q35_machine_options(m);
     m->alias = "q35";
+    SET_MACHINE_COMPAT(m, PC_COMPAT_2_12);
+}
+
+DEFINE_Q35_MACHINE(v2_12, "pc-q35-2.12", NULL,
+                   pc_q35_2_12_machine_options);
+
+static void pc_q35_2_11_machine_options(MachineClass *m)
+{
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+
+    pc_q35_2_12_machine_options(m);
+    pcmc->default_nic_model = "e1000";
+    m->alias = NULL;
+    SET_MACHINE_COMPAT(m, PC_COMPAT_2_11);
+}
+
+DEFINE_Q35_MACHINE(v2_11, "pc-q35-2.11", NULL,
+                   pc_q35_2_11_machine_options);
+
+static void pc_q35_2_10_machine_options(MachineClass *m)
+{
+    pc_q35_2_11_machine_options(m);
+    SET_MACHINE_COMPAT(m, PC_COMPAT_2_10);
     m->numa_auto_assign_ram = numa_legacy_auto_assign_ram;
+    m->auto_enable_numa_with_memhp = false;
 }
 
 DEFINE_Q35_MACHINE(v2_10, "pc-q35-2.10", NULL,
@@ -316,7 +346,6 @@ DEFINE_Q35_MACHINE(v2_10, "pc-q35-2.10", NULL,
 static void pc_q35_2_9_machine_options(MachineClass *m)
 {
     pc_q35_2_10_machine_options(m);
-    m->alias = NULL;
     SET_MACHINE_COMPAT(m, PC_COMPAT_2_9);
 }
 
@@ -384,15 +413,30 @@ DEFINE_Q35_MACHINE(v2_4, "pc-q35-2.4", NULL,
 /* Options for the latest rhel7 q35 machine type */
 static void pc_q35_machine_rhel7_options(MachineClass *m)
 {
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+    pcmc->default_nic_model = "e1000e";
     m->family = "pc_q35_Z";
     m->default_machine_opts = "firmware=bios-256k.bin";
     m->default_display = "std";
     m->no_floppy = 1;
-    m->has_dynamic_sysbus = true;
-    m->alias = "q35";
+    machine_class_allow_dynamic_sysbus_dev(m, TYPE_SYS_BUS_DEVICE);    m->alias = "q35";
     m->max_cpus = 384;
     SET_MACHINE_COMPAT(m, PC_RHEL_COMPAT);
 }
+
+static void pc_q35_init_rhel760(MachineState *machine)
+{
+    pc_q35_init(machine);
+}
+
+static void pc_q35_machine_rhel760_options(MachineClass *m)
+{
+    pc_q35_machine_rhel7_options(m);
+    m->desc = "RHEL-7.6.0 PC (Q35 + ICH9, 2009)";
+}
+
+DEFINE_PC_MACHINE(q35_rhel760, "pc-q35-rhel7.6.0", pc_q35_init_rhel760,
+                  pc_q35_machine_rhel760_options);
 
 static void pc_q35_init_rhel750(MachineState *machine)
 {
@@ -401,8 +445,13 @@ static void pc_q35_init_rhel750(MachineState *machine)
 
 static void pc_q35_machine_rhel750_options(MachineClass *m)
 {
-    pc_q35_machine_rhel7_options(m);
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+    pc_q35_machine_rhel760_options(m);
+    m->alias = NULL;
     m->desc = "RHEL-7.5.0 PC (Q35 + ICH9, 2009)";
+    m->auto_enable_numa_with_memhp = false;
+    pcmc->default_nic_model = "e1000";
+    SET_MACHINE_COMPAT(m, PC_RHEL7_5_COMPAT);
 }
 
 DEFINE_PC_MACHINE(q35_rhel750, "pc-q35-rhel7.5.0", pc_q35_init_rhel750,
@@ -417,7 +466,6 @@ static void pc_q35_machine_rhel740_options(MachineClass *m)
 {
     PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
     pc_q35_machine_rhel750_options(m);
-    m->alias = NULL;
     m->desc = "RHEL-7.4.0 PC (Q35 + ICH9, 2009)";
     m->numa_auto_assign_ram = numa_legacy_auto_assign_ram;
     pcmc->pc_rom_ro = false;

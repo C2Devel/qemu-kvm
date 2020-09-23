@@ -4,7 +4,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 	http://www.apache.org/licenses/LICENSE-2.0
+ *	http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -26,6 +26,8 @@
 #include <timer.h>
 #include <ipmi.h>
 #include <timebase.h>
+#include <chip.h>
+#include <interrupts.h>
 
 /* BT registers */
 #define BT_CTRL			0
@@ -78,7 +80,7 @@
 			(msg)->seq, ((msg)->ipmi_msg.netfn >> 2), (msg)->ipmi_msg.cmd, ##args); \
 		else \
 			prlog(level, "seq 0x?? netfn 0x?? cmd 0x??: " fmt "\n", ##args); \
-	} while(0)
+	} while (0)
 
 #define BT_Q_ERR(msg, fmt, args...) \
 	_BT_Q_LOG(PR_ERR, msg, fmt, ##args)
@@ -268,7 +270,7 @@ static void bt_send_msg(struct bt_msg *bt_msg)
 	for (i = 0; i < ipmi_msg->req_size; i++)
 		bt_outb(ipmi_msg->data[i], BT_HOST2BMC);
 
-	BT_Q_DBG(bt_msg, "Message sent to host");
+	BT_Q_INF(bt_msg, "Message sent to host");
 	bt_msg->send_count++;
 
 	bt_outb(BT_CTRL_H2B_ATN, BT_CTRL);
@@ -360,7 +362,7 @@ static void bt_get_resp(void)
 		ipmi_msg->data[i] = bt_inb(BT_HOST2BMC);
 	bt_set_h_busy(false);
 
-	BT_Q_DBG(bt_msg, "IPMI MSG done");
+	BT_Q_INF(bt_msg, "IPMI MSG done");
 
 	list_del(&bt_msg->link);
 	bt.queue_len--;
@@ -379,8 +381,9 @@ static void bt_expire_old_msg(uint64_t tb)
 
 	bt_msg = list_top(&bt.msgq, struct bt_msg, link);
 
-	if (bt_msg && bt_msg->tb > 0 &&
-	    (tb_compare(tb, bt_msg->tb + secs_to_tb(bt.caps.msg_timeout)) == TB_AAFTERB)) {
+	if (bt_msg && bt_msg->tb > 0 && !chip_quirk(QUIRK_SIMICS) &&
+	    (tb_compare(tb, bt_msg->tb +
+			secs_to_tb(bt.caps.msg_timeout)) == TB_AAFTERB)) {
 		if (bt_msg->send_count <= bt.caps.max_retries) {
 			/* A message timeout is usually due to the BMC
 			 * clearing the H2B_ATN flag without actually
@@ -410,7 +413,7 @@ static void print_debug_queue_info(void)
 {
 #if BT_QUEUE_DEBUG
 	struct bt_msg *msg;
-	static bool printed = false;
+	static bool printed;
 
 	if (!list_empty(&bt.msgq)) {
 		printed = false;
@@ -626,8 +629,10 @@ void bt_init(void)
 
 	/* We support only one */
 	n = dt_find_compatible_node(dt_root, NULL, "ipmi-bt");
-	if (!n)
+	if (!n) {
+		prerror("No BT device\n");
 		return;
+	}
 
 	/* Get IO base */
 	prop = dt_find_property(n, "reg");
@@ -665,7 +670,8 @@ void bt_init(void)
 
 	irq = dt_prop_get_u32(n, "interrupts");
 	bt_lpc_client.interrupts = LPC_IRQ(irq);
-	lpc_register_client(dt_get_chip_id(n), &bt_lpc_client);
+	lpc_register_client(dt_get_chip_id(n), &bt_lpc_client,
+			    IRQ_ATTR_TARGET_OPAL);
 
 	/* Enqueue an IPMI message to ask the BMC about its BT capabilities */
 	get_bt_caps();

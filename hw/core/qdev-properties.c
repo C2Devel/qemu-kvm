@@ -10,6 +10,7 @@
 #include "net/hub.h"
 #include "qapi/visitor.h"
 #include "chardev/char.h"
+#include "qemu/uuid.h"
 
 void qdev_prop_set_after_realize(DeviceState *dev, const char *name,
                                   Error **errp)
@@ -72,7 +73,9 @@ static void set_enum(Object *obj, Visitor *v, const char *name, void *opaque,
 
 static void set_default_value_enum(Object *obj, const Property *prop)
 {
-    object_property_set_str(obj, prop->info->enum_table[prop->defval.i],
+    object_property_set_str(obj,
+                            qapi_enum_lookup(prop->info->enum_table,
+                                             prop->defval.i),
                             prop->name, &error_abort);
 }
 
@@ -585,7 +588,7 @@ const PropertyInfo qdev_prop_macaddr = {
 const PropertyInfo qdev_prop_on_off_auto = {
     .name = "OnOffAuto",
     .description = "on/off/auto",
-    .enum_table = OnOffAuto_lookup,
+    .enum_table = &OnOffAuto_lookup,
     .get = get_enum,
     .set = set_enum,
     .set_default_value = set_default_value_enum,
@@ -597,7 +600,7 @@ QEMU_BUILD_BUG_ON(sizeof(LostTickPolicy) != sizeof(int));
 
 const PropertyInfo qdev_prop_losttickpolicy = {
     .name  = "LostTickPolicy",
-    .enum_table  = LostTickPolicy_lookup,
+    .enum_table  = &LostTickPolicy_lookup,
     .get   = get_enum,
     .set   = set_enum,
     .set_default_value = set_default_value_enum,
@@ -611,7 +614,7 @@ const PropertyInfo qdev_prop_blockdev_on_error = {
     .name = "BlockdevOnError",
     .description = "Error handling policy, "
                    "report/ignore/enospc/stop/auto",
-    .enum_table = BlockdevOnError_lookup,
+    .enum_table = &BlockdevOnError_lookup,
     .get = get_enum,
     .set = set_enum,
     .set_default_value = set_default_value_enum,
@@ -625,7 +628,7 @@ const PropertyInfo qdev_prop_bios_chs_trans = {
     .name = "BiosAtaTranslation",
     .description = "Logical CHS translation algorithm, "
                    "auto/none/lba/large/rechs",
-    .enum_table = BiosAtaTranslation_lookup,
+    .enum_table = &BiosAtaTranslation_lookup,
     .get = get_enum,
     .set = set_enum,
     .set_default_value = set_default_value_enum,
@@ -637,7 +640,7 @@ const PropertyInfo qdev_prop_fdc_drive_type = {
     .name = "FdcDriveType",
     .description = "FDC drive type, "
                    "144/288/120/none/auto",
-    .enum_table = FloppyDriveType_lookup,
+    .enum_table = &FloppyDriveType_lookup,
     .get = get_enum,
     .set = set_enum,
     .set_default_value = set_default_value_enum,
@@ -881,6 +884,66 @@ const PropertyInfo qdev_prop_pci_host_devaddr = {
     .set = set_pci_host_devaddr,
 };
 
+/* --- UUID --- */
+
+static void get_uuid(Object *obj, Visitor *v, const char *name, void *opaque,
+                     Error **errp)
+{
+    DeviceState *dev = DEVICE(obj);
+    Property *prop = opaque;
+    QemuUUID *uuid = qdev_get_prop_ptr(dev, prop);
+    char buffer[UUID_FMT_LEN + 1];
+    char *p = buffer;
+
+    qemu_uuid_unparse(uuid, buffer);
+
+    visit_type_str(v, name, &p, errp);
+}
+
+#define UUID_VALUE_AUTO        "auto"
+
+static void set_uuid(Object *obj, Visitor *v, const char *name, void *opaque,
+                    Error **errp)
+{
+    DeviceState *dev = DEVICE(obj);
+    Property *prop = opaque;
+    QemuUUID *uuid = qdev_get_prop_ptr(dev, prop);
+    Error *local_err = NULL;
+    char *str;
+
+    if (dev->realized) {
+        qdev_prop_set_after_realize(dev, name, errp);
+        return;
+    }
+
+    visit_type_str(v, name, &str, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
+    }
+
+    if (!strcmp(str, UUID_VALUE_AUTO)) {
+        qemu_uuid_generate(uuid);
+    } else if (qemu_uuid_parse(str, uuid) < 0) {
+        error_set_from_qdev_prop_error(errp, EINVAL, dev, prop, str);
+    }
+    g_free(str);
+}
+
+static void set_default_uuid_auto(Object *obj, const Property *prop)
+{
+    object_property_set_str(obj, UUID_VALUE_AUTO, prop->name, &error_abort);
+}
+
+const PropertyInfo qdev_prop_uuid = {
+    .name  = "str",
+    .description = "UUID (aka GUID) or \"" UUID_VALUE_AUTO
+        "\" for random value (default)",
+    .get   = get_uuid,
+    .set   = set_uuid,
+    .set_default_value = set_default_uuid_auto,
+};
+
 /* --- support for array properties --- */
 
 /* Used as an opaque for the object properties we add for each
@@ -1095,7 +1158,8 @@ void qdev_prop_set_enum(DeviceState *dev, const char *name, int value)
     Property *prop;
 
     prop = qdev_prop_find(dev, name);
-    object_property_set_str(OBJECT(dev), prop->info->enum_table[value],
+    object_property_set_str(OBJECT(dev),
+                            qapi_enum_lookup(prop->info->enum_table, value),
                             name, &error_abort);
 }
 
@@ -1108,6 +1172,14 @@ void qdev_prop_set_ptr(DeviceState *dev, const char *name, void *value)
     assert(prop && prop->info == &qdev_prop_ptr);
     ptr = qdev_get_prop_ptr(dev, prop);
     *ptr = value;
+}
+
+static GList *machine_compat_props;
+static GList *accel_compat_props;
+
+void register_machine_compat_prop(GlobalProperty *prop)
+{
+    machine_compat_props = g_list_append(machine_compat_props, prop);
 }
 
 static GList *global_props;
@@ -1131,10 +1203,17 @@ void register_compat_prop(const char *driver,
     qdev_prop_register_global(p);
 }
 
-void register_compat_props_array(GlobalProperty *prop)
+void register_accel_compat_props(GlobalProperty *props)
 {
-    for (; prop && prop->driver; prop++) {
-        register_compat_prop(prop->driver, prop->property, prop->value);
+    GlobalProperty *p, *prop;
+
+    for (p = props; p && p->driver; p++) {
+        prop = g_new0(GlobalProperty, 1);
+        prop->errp = &error_abort;
+        prop->driver = p->driver;
+        prop->property = p->property;
+        prop->value = p->value;
+        accel_compat_props = g_list_append(accel_compat_props, prop);
     }
 }
 
@@ -1181,11 +1260,9 @@ int qdev_prop_check_globals(void)
     return ret;
 }
 
-void qdev_prop_set_globals(DeviceState *dev)
+static void qdev_prop_set_globals_1(DeviceState *dev, GList *l)
 {
-    GList *l;
-
-    for (l = global_props; l; l = l->next) {
+    for (; l; l = l->next) {
         GlobalProperty *prop = l->data;
         Error *err = NULL;
 
@@ -1205,6 +1282,13 @@ void qdev_prop_set_globals(DeviceState *dev)
             }
         }
     }
+}
+
+void qdev_prop_set_globals(DeviceState *dev)
+{
+    qdev_prop_set_globals_1(dev, accel_compat_props);
+    qdev_prop_set_globals_1(dev, machine_compat_props);
+    qdev_prop_set_globals_1(dev, global_props);
 }
 
 /* --- 64bit unsigned int 'size' type --- */
@@ -1245,11 +1329,22 @@ static void create_link_property(Object *obj, Property *prop, Error **errp)
     object_property_add_link(obj, prop->name, prop->link_type,
                              child,
                              qdev_prop_allow_set_link_before_realize,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             OBJ_PROP_LINK_STRONG,
                              errp);
 }
 
 const PropertyInfo qdev_prop_link = {
     .name = "link",
     .create = create_link_property,
+};
+
+/* --- OffAutoPCIBAR off/auto/bar0/bar1/bar2/bar3/bar4/bar5 --- */
+
+const PropertyInfo qdev_prop_off_auto_pcibar = {
+    .name = "OffAutoPCIBAR",
+    .description = "off/auto/bar0/bar1/bar2/bar3/bar4/bar5",
+    .enum_table = &OffAutoPCIBAR_lookup,
+    .get = get_enum,
+    .set = set_enum,
+    .set_default_value = set_default_value_enum,
 };

@@ -24,6 +24,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <limits.h>
+#include <inttypes.h>
 
 #include <ccan/array_size/array_size.h>
 
@@ -42,7 +43,9 @@
 
 #define CLEARED_RECORD_ID 0xFFFFFFFF
 
-#define FDT_ACTIVE_FLASH_PATH "/proc/device-tree/chosen/ibm,system-flash"
+#define FDT_PATH "/proc/device-tree"
+#define FDT_FSP_NODE FDT_PATH"/fsps"
+#define FDT_ACTIVE_FLASH_PATH FDT_PATH"/chosen/ibm,system-flash"
 #define SYSFS_MTD_PATH "/sys/class/mtd/"
 #define FLASH_GARD_PART "GUARD"
 
@@ -259,6 +262,9 @@ static int do_iterate(struct gard_ctx *ctx,
 
 static int get_largest_pos_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, void *priv)
 {
+	(void)ctx;
+	(void)gard;
+
 	if (!priv)
 		return -1;
 
@@ -271,6 +277,8 @@ static int get_largest_pos(struct gard_ctx *ctx)
 {
 	int rc, largest = -1;
 
+	(void)ctx;
+
 	rc = do_iterate(ctx, &get_largest_pos_i, &largest);
 	if (rc)
 		return -1;
@@ -280,6 +288,9 @@ static int get_largest_pos(struct gard_ctx *ctx)
 
 static int count_valid_records_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, void *priv)
 {
+	(void)ctx;
+	(void)pos;
+
 	if (!gard || !priv)
 		return -1;
 
@@ -302,6 +313,10 @@ static int count_valid_records(struct gard_ctx *ctx)
 
 static int do_list_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, void *priv)
 {
+	(void)ctx;
+	(void)pos;
+	(void)priv;
+
 	if (!gard)
 		return -1;
 
@@ -315,6 +330,9 @@ static int do_list_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, vo
 static int do_list(struct gard_ctx *ctx, int argc, char **argv)
 {
 	int rc;
+
+	(void)argc;
+	(void)argv;
 
 	/* No entries */
 	if (count_valid_records(ctx) == 0) {
@@ -333,6 +351,9 @@ static int do_list(struct gard_ctx *ctx, int argc, char **argv)
 static int do_show_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, void *priv)
 {
 	uint32_t id;
+
+	(void)ctx;
+	(void)pos;
 
 	if (!priv || !gard)
 		return -1;
@@ -433,24 +454,31 @@ static int do_clear_i(struct gard_ctx *ctx, int pos, struct gard_record *gard, v
 
 static int reset_partition(struct gard_ctx *ctx)
 {
-	int i, rc;
-	struct gard_record gard;
-	memset(&gard, 0xFF, sizeof(gard));
+	int len, num_entries, rc = 0;
+	struct gard_record *gard;
 
-	rc = blocklevel_erase(ctx->bl, ctx->gard_data_pos, ctx->gard_data_len);
+	num_entries = ctx->gard_data_len / sizeof_gard(ctx);
+	len = num_entries * sizeof(*gard);
+	gard = malloc(len);
+	if (!gard) {
+		return FLASH_ERR_MALLOC_FAILED;
+	}
+	memset(gard, 0xFF, len);
+
+	rc = blocklevel_smart_erase(ctx->bl, ctx->gard_data_pos, ctx->gard_data_len);
 	if (rc) {
 		fprintf(stderr, "Couldn't erase the gard partition. Bailing out\n");
-		return rc;
+		goto out;
 	}
-	for (i = 0; i + sizeof_gard(ctx) < ctx->gard_data_len; i += sizeof_gard(ctx)) {
-		rc = blocklevel_write(ctx->bl, ctx->gard_data_pos + i, &gard, sizeof(gard));
-		if (rc) {
-			fprintf(stderr, "Couldn't reset the entire gard partition. Bailing out\n");
-			return rc;
-		}
+	rc = blocklevel_write(ctx->bl, ctx->gard_data_pos, gard, len);
+	if (rc) {
+		fprintf(stderr, "Couldn't reset the entire gard partition. Bailing out\n");
+		goto out;
 	}
 
-	return 0;
+out:
+	free(gard);
+	return rc;
 }
 
 static int do_clear(struct gard_ctx *ctx, int argc, char **argv)
@@ -476,7 +504,7 @@ static int do_clear(struct gard_ctx *ctx, int argc, char **argv)
 	return rc;
 }
 
-int check_gard_partition(struct gard_ctx *ctx)
+static int check_gard_partition(struct gard_ctx *ctx)
 {
 	int rc;
 	struct gard_record gard;
@@ -519,6 +547,8 @@ int check_gard_partition(struct gard_ctx *ctx)
 __attribute__ ((unused))
 static int do_nop(struct gard_ctx *ctx, int argc, char **argv)
 {
+	(void)ctx;
+	(void)argc;
 	fprintf(stderr, "Unimplemented action '%s'\n", argv[0]);
 	return EXIT_SUCCESS;
 }
@@ -562,6 +592,11 @@ static void usage(const char *progname)
 	}
 }
 
+static bool is_fsp(void)
+{
+	return access(FDT_FSP_NODE, F_OK) == 0;
+}
+
 static struct option global_options[] = {
 	{ "file", required_argument, 0, 'f' },
 	{ "part", no_argument, 0, 'p' },
@@ -575,6 +610,7 @@ int main(int argc, char **argv)
 	const char *action, *progname;
 	char *filename = NULL;
 	struct gard_ctx _ctx, *ctx;
+	uint64_t bl_size;
 	int rc, i = 0;
 	bool part = 0;
 	bool ecc = 0;
@@ -583,6 +619,12 @@ int main(int argc, char **argv)
 
 	ctx = &_ctx;
 	memset(ctx, 0, sizeof(*ctx));
+
+	if (is_fsp()) {
+		fprintf(stderr, "This is the OpenPower gard tool which does "
+				"not support FSP systems\n");
+		return EXIT_FAILURE;
+	}
 
 	/* process global options */
 	for (;;) {
@@ -643,9 +685,17 @@ int main(int argc, char **argv)
 		goto out_free;
 	}
 
-	rc = blocklevel_get_info(ctx->bl, NULL, &(ctx->f_size), NULL);
+	rc = blocklevel_get_info(ctx->bl, NULL, &bl_size, NULL);
 	if (rc)
 		goto out;
+
+	if (bl_size > UINT_MAX) {
+		fprintf(stderr, "MTD device bigger than %i: size: %" PRIu64 "\n",
+			UINT_MAX, bl_size);
+		rc = EXIT_FAILURE;
+		goto out;
+	}
+	ctx->f_size = bl_size;
 
 	if (!part) {
 		rc = ffs_init(0, ctx->f_size, ctx->bl, &ctx->ffs, 1);

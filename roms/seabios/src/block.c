@@ -20,6 +20,7 @@
 #include "hw/usb-uas.h" // uas_process_op
 #include "hw/virtio-blk.h" // process_virtio_blk_op
 #include "hw/virtio-scsi.h" // virtio_scsi_process_op
+#include "hw/nvme.h" // nvme_process_op
 #include "malloc.h" // malloc_low
 #include "output.h" // dprintf
 #include "stacks.h" // call32
@@ -297,7 +298,7 @@ map_floppy_drive(struct drive_s *drive)
 
 // Fill in EDD info
 static int
-fill_generic_edd(struct segoff_s edd, struct drive_s *drive_gf
+fill_generic_edd(struct segoff_s edd, struct drive_s *drive_fl
                  , u32 dpte_so, u8 bus_iface, u32 iface_path, u32 device_path)
 {
     u16 seg = edd.seg;
@@ -311,12 +312,12 @@ fill_generic_edd(struct segoff_s edd, struct drive_s *drive_gf
 
     // EDD 1.x
 
-    u8  type    = GET_GLOBALFLAT(drive_gf->type);
-    u16 npc     = GET_GLOBALFLAT(drive_gf->pchs.cylinder);
-    u16 nph     = GET_GLOBALFLAT(drive_gf->pchs.head);
-    u16 nps     = GET_GLOBALFLAT(drive_gf->pchs.sector);
-    u64 lba     = GET_GLOBALFLAT(drive_gf->sectors);
-    u16 blksize = GET_GLOBALFLAT(drive_gf->blksize);
+    u8  type    = GET_FLATPTR(drive_fl->type);
+    u16 npc     = GET_FLATPTR(drive_fl->pchs.cylinder);
+    u16 nph     = GET_FLATPTR(drive_fl->pchs.head);
+    u16 nps     = GET_FLATPTR(drive_fl->pchs.sector);
+    u64 lba     = GET_FLATPTR(drive_fl->sectors);
+    u16 blksize = GET_FLATPTR(drive_fl->blksize);
 
     dprintf(DEBUG_HDL_13, "disk_1348 size=%d t=%d chs=%d,%d,%d lba=%d bs=%d\n"
             , size, type, npc, nph, nps, (u32)lba, blksize);
@@ -466,19 +467,19 @@ fill_ata_edd(struct segoff_s edd, struct drive_s *drive_gf)
 
 // Fill Extended Disk Drive (EDD) "Get drive parameters" info for a drive
 int noinline
-fill_edd(struct segoff_s edd, struct drive_s *drive_gf)
+fill_edd(struct segoff_s edd, struct drive_s *drive_fl)
 {
-    switch (GET_GLOBALFLAT(drive_gf->type)) {
+    switch (GET_FLATPTR(drive_fl->type)) {
     case DTYPE_ATA:
     case DTYPE_ATA_ATAPI:
-        return fill_ata_edd(edd, drive_gf);
+        return fill_ata_edd(edd, drive_fl);
     case DTYPE_VIRTIO_BLK:
     case DTYPE_VIRTIO_SCSI:
         return fill_generic_edd(
-            edd, drive_gf, 0xffffffff, EDD_PCI | EDD_SCSI
-            , edd_pci_path(GET_GLOBALFLAT(drive_gf->cntl_id), 0), 0);
+            edd, drive_fl, 0xffffffff, EDD_PCI | EDD_SCSI
+            , edd_pci_path(GET_FLATPTR(drive_fl->cntl_id), 0), 0);
     default:
-        return fill_generic_edd(edd, drive_gf, 0, 0, 0, 0);
+        return fill_generic_edd(edd, drive_fl, 0, 0, 0, 0);
     }
 }
 
@@ -502,6 +503,7 @@ block_setup(void)
     megasas_setup();
     pvscsi_setup();
     mpt_scsi_setup();
+    nvme_setup();
 }
 
 // Fallback handler for command requests not implemented by drivers
@@ -525,7 +527,7 @@ default_process_op(struct disk_op_s *op)
 static int
 process_op_both(struct disk_op_s *op)
 {
-    switch (GET_GLOBALFLAT(op->drive_gf->type)) {
+    switch (GET_FLATPTR(op->drive_fl->type)) {
     case DTYPE_ATA_ATAPI:
         return ata_atapi_process_op(op);
     case DTYPE_USB:
@@ -554,7 +556,7 @@ int VISIBLE32FLAT
 process_op_32(struct disk_op_s *op)
 {
     ASSERT32FLAT();
-    switch (op->drive_gf->type) {
+    switch (op->drive_fl->type) {
     case DTYPE_VIRTIO_BLK:
         return virtio_blk_process_op(op);
     case DTYPE_AHCI:
@@ -571,6 +573,8 @@ process_op_32(struct disk_op_s *op)
         return virtio_scsi_process_op(op);
     case DTYPE_PVSCSI:
         return pvscsi_process_op(op);
+    case DTYPE_NVME:
+        return nvme_process_op(op);
     default:
         return process_op_both(op);
     }
@@ -581,7 +585,7 @@ static int
 process_op_16(struct disk_op_s *op)
 {
     ASSERT16();
-    switch (GET_GLOBALFLAT(op->drive_gf->type)) {
+    switch (GET_FLATPTR(op->drive_fl->type)) {
     case DTYPE_FLOPPY:
         return floppy_process_op(op);
     case DTYPE_ATA:
@@ -600,11 +604,11 @@ int
 process_op(struct disk_op_s *op)
 {
     dprintf(DEBUG_HDL_13, "disk_op d=%p lba=%d buf=%p count=%d cmd=%d\n"
-            , op->drive_gf, (u32)op->lba, op->buf_fl
+            , op->drive_fl, (u32)op->lba, op->buf_fl
             , op->count, op->command);
 
     int ret, origcount = op->count;
-    if (origcount * GET_GLOBALFLAT(op->drive_gf->blksize) > 64*1024) {
+    if (origcount * GET_FLATPTR(op->drive_fl->blksize) > 64*1024) {
         op->count = 0;
         return DISK_RET_EBOUNDARY;
     }

@@ -16,7 +16,7 @@ static int is_leap_year(int year)
 
 static int days_in_month(int month, int year)
 {
-	static int month_days[] = {
+	static char month_days[] = {
 		31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
 	};
 
@@ -121,7 +121,7 @@ time_t mktime(struct tm *tm)
 	for (d = days_in_month(month, year); mday > d;
 			d = days_in_month(month, year)) {
 		month++;
-		if (month > 12) {
+		if (month > 11) {
 			month = 0;
 			year++;
 		}

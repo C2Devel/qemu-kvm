@@ -111,7 +111,7 @@ static void update_max_chunk_size(BDRVDMGState *s, uint32_t chunk,
         uncompressed_sectors = s->sectorcounts[chunk];
         break;
     case 1: /* copy */
-        uncompressed_sectors = (s->lengths[chunk] + 511) / 512;
+        uncompressed_sectors = DIV_ROUND_UP(s->lengths[chunk], 512);
         break;
     case 2: /* zero */
         /* as the all-zeroes block may be large, it is treated specially: the
@@ -413,15 +413,15 @@ static int dmg_open(BlockDriverState *bs, QDict *options, int flags,
     int64_t offset;
     int ret;
 
+    ret = bdrv_apply_auto_read_only(bs, NULL, errp);
+    if (ret < 0) {
+        return ret;
+    }
+
     bs->file = bdrv_open_child(NULL, options, "file", bs, &child_file,
                                false, errp);
     if (!bs->file) {
         return -EINVAL;
-    }
-
-    ret = bdrv_set_read_only(bs, true, errp);
-    if (ret < 0) {
-        return ret;
     }
 
     block_module_load_one("dmg-bz2");

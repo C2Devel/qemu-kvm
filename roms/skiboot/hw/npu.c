@@ -18,6 +18,7 @@
 #include <timebase.h>
 #include <pci.h>
 #include <pci-cfg.h>
+#include <pci-virt.h>
 #include <pci-slot.h>
 #include <interrupts.h>
 #include <opal.h>
@@ -122,63 +123,6 @@ static struct npu_dev_cap *npu_dev_find_capability(struct npu_dev *dev,
 
 #define VENDOR_CAP_PCI_DEV_OFFSET 0x0d
 
-/* PCI config raw accessors */
-#define NPU_DEV_CFG_NORMAL_RD(d, o, s, v)	\
-	npu_dev_cfg_read_raw(d, NPU_DEV_CFG_NORMAL, o, s, v)
-#define NPU_DEV_CFG_NORMAL_WR(d, o, s, v)	\
-	npu_dev_cfg_write_raw(d, NPU_DEV_CFG_NORMAL, o, s, v)
-#define NPU_DEV_CFG_RDONLY_RD(d, o, s, v)	\
-	npu_dev_cfg_read_raw(d, NPU_DEV_CFG_RDONLY, o, s, v)
-#define NPU_DEV_CFG_RDONLY_WR(d, o, s, v)	\
-	npu_dev_cfg_write_raw(d, NPU_DEV_CFG_RDONLY, o, s, v)
-#define NPU_DEV_CFG_W1CLR_RD(d, o, s, v)		\
-	npu_dev_cfg_read_raw(d, NPU_DEV_CFG_W1CLR, o, s, v)
-#define NPU_DEV_CFG_W1CLR_WR(d, o, s, v)		\
-	npu_dev_cfg_write_raw(d, NPU_DEV_CFG_W1CLR, o, s, v)
-
-#define NPU_DEV_CFG_INIT(d, o, s, v, ro, w1)		\
-	do {						\
-		NPU_DEV_CFG_NORMAL_WR(d, o, s, v);	\
-		NPU_DEV_CFG_RDONLY_WR(d, o, s, ro);	\
-		NPU_DEV_CFG_W1CLR_WR(d, o, s, w1);	\
-	} while(0)
-
-#define NPU_DEV_CFG_INIT_RO(d, o, s, v)			\
-	NPU_DEV_CFG_INIT(d, o, s, v, 0xffffffff, 0)
-
-static void npu_dev_cfg_read_raw(struct npu_dev *dev,
-				 uint32_t index,
-				 uint32_t offset,
-				 uint32_t size,
-				 uint32_t *val)
-{
-	uint8_t *pcfg = dev->config[index];
-	uint32_t r, t, i;
-
-	r = 0;
-	for (i = 0; i < size; i++) {
-		t = pcfg[offset + i];
-		r |= (t << (i * 8));
-	}
-
-	*val = r;
-}
-
-static void npu_dev_cfg_write_raw(struct npu_dev *dev,
-				  uint32_t index,
-				  uint32_t offset,
-				  uint32_t size,
-				  uint32_t val)
-{
-	uint8_t *pcfg = dev->config[index];
-	uint32_t i;
-
-	for (i = offset; i < (offset + size); i++) {
-		pcfg[i] = val;
-		val = (val >> 8);
-	}
-}
-
 /* Returns the scom base for the given link index */
 static uint64_t npu_link_scom_base(struct dt_node *dn, uint32_t scom_base,
 				   int index)
@@ -216,13 +160,17 @@ static void npu_dev_bar_update(uint32_t gcid, struct npu_dev_bar *bar,
 }
 
 /* Trap for PCI command (0x4) to enable or disable device's BARs */
-static int64_t npu_dev_cfg_write_cmd(struct npu_dev_trap *trap,
-				     uint32_t offset,
-				     uint32_t size,
-				     uint32_t data)
+static int64_t npu_dev_cfg_write_cmd(void *dev,
+				     struct pci_cfg_reg_filter *pcrf __unused,
+				     uint32_t offset, uint32_t size,
+				     uint32_t *data, bool write)
 {
-	struct npu_dev *dev = trap->dev;
+	struct pci_virt_device *pvd = dev;
+	struct npu_dev *ndev = pvd->data;
 	bool enable;
+
+	if (!write)
+		return OPAL_PARTIAL;
 
 	if (offset != PCI_CFG_CMD)
 		return OPAL_PARAMETER;
@@ -232,30 +180,30 @@ static int64_t npu_dev_cfg_write_cmd(struct npu_dev_trap *trap,
 	/* Update device BARs and link BARs will be syncrhonized
 	 * with hardware automatically.
 	 */
-	enable = !!(data & PCI_CFG_CMD_MEM_EN);
-	npu_dev_bar_update(dev->npu->chip_id, &dev->bar, enable);
+	enable = !!(*data & PCI_CFG_CMD_MEM_EN);
+	npu_dev_bar_update(ndev->npu->chip_id, &ndev->bar, enable);
 
 	/* Normal path to update PCI config buffer */
-	return OPAL_PARAMETER;
+	return OPAL_PARTIAL;
 }
 
 /*
  * Trap for memory BARs: 0xFF's should be written to BAR register
  * prior to getting its size.
  */
-static int64_t npu_dev_cfg_read_bar(struct npu_dev_trap *trap,
-				    uint32_t offset,
-				    uint32_t size,
+static int64_t npu_dev_cfg_bar_read(struct npu_dev *dev __unused,
+				    struct pci_cfg_reg_filter *pcrf,
+				    uint32_t offset, uint32_t size,
 				    uint32_t *data)
 {
-	struct npu_dev_bar *bar = trap->data;
+	struct npu_dev_bar *bar = (struct npu_dev_bar *)(pcrf->data);
 
 	/* Revert to normal path if we weren't trapped for BAR size */
 	if (!bar->trapped)
-		return OPAL_PARAMETER;
+		return OPAL_PARTIAL;
 
-	if (offset != trap->start &&
-	    offset != trap->start + 4)
+	if (offset != pcrf->start &&
+	    offset != pcrf->start + 4)
 		return OPAL_PARAMETER;
 	if (size != 4)
 		return OPAL_PARAMETER;
@@ -265,17 +213,17 @@ static int64_t npu_dev_cfg_read_bar(struct npu_dev_trap *trap,
 	return OPAL_SUCCESS;
 }
 
-static int64_t npu_dev_cfg_write_bar(struct npu_dev_trap *trap,
-				     uint32_t offset,
-				     uint32_t size,
+static int64_t npu_dev_cfg_bar_write(struct npu_dev *dev,
+				     struct pci_cfg_reg_filter *pcrf,
+				     uint32_t offset, uint32_t size,
 				     uint32_t data)
 {
-	struct npu_dev_bar *bar = trap->data;
-	struct npu_dev *dev = container_of(bar, struct npu_dev, bar);
+	struct pci_virt_device *pvd = dev->pvd;
+	struct npu_dev_bar *bar = (struct npu_dev_bar *)(pcrf->data);
 	uint32_t pci_cmd;
 
-	if (offset != trap->start &&
-	    offset != trap->start + 4)
+	if (offset != pcrf->start &&
+	    offset != pcrf->start + 4)
 		return OPAL_PARAMETER;
 	if (size != 4)
 		return OPAL_PARAMETER;
@@ -283,7 +231,7 @@ static int64_t npu_dev_cfg_write_bar(struct npu_dev_trap *trap,
 	/* Return BAR size on next read */
 	if (data == 0xffffffff) {
 		bar->trapped = true;
-		if (offset == trap->start)
+		if (offset == pcrf->start)
 			bar->bar_sz = (bar->size & 0xffffffff);
 		else
 			bar->bar_sz = (bar->size >> 32);
@@ -292,14 +240,14 @@ static int64_t npu_dev_cfg_write_bar(struct npu_dev_trap *trap,
 	}
 
 	/* Update BAR base address */
-	if (offset == trap->start) {
+	if (offset == pcrf->start) {
 		bar->base &= 0xffffffff00000000;
 		bar->base |= (data & 0xfffffff0);
 	} else {
 		bar->base &= 0x00000000ffffffff;
 		bar->base |= ((uint64_t)data << 32);
 
-		NPU_DEV_CFG_NORMAL_RD(dev, PCI_CFG_CMD, 4, &pci_cmd);
+		PCI_VIRT_CFG_NORMAL_RD(pvd, PCI_CFG_CMD, 4, &pci_cmd);
 		npu_dev_bar_update(dev->npu->chip_id, bar,
 				   !!(pci_cmd & PCI_CFG_CMD_MEM_EN));
 	}
@@ -310,194 +258,83 @@ static int64_t npu_dev_cfg_write_bar(struct npu_dev_trap *trap,
 	return OPAL_PARAMETER;
 }
 
+static int64_t npu_dev_cfg_bar(void *dev, struct pci_cfg_reg_filter *pcrf,
+			       uint32_t offset, uint32_t len, uint32_t *data,
+			       bool write)
+{
+	struct pci_virt_device *pvd = dev;
+	struct npu_dev *ndev = pvd->data;
+
+	if (write)
+		return npu_dev_cfg_bar_write(ndev, pcrf, offset, len, *data);
+
+	return npu_dev_cfg_bar_read(ndev, pcrf, offset, len, data);
+}
+
+static int64_t npu_dev_cfg_exp_devcap(void *dev,
+		struct pci_cfg_reg_filter *pcrf __unused,
+		uint32_t offset, uint32_t size,
+		uint32_t *data, bool write)
+{
+	struct pci_virt_device *pvd = dev;
+	struct npu_dev *ndev = pvd->data;
+
+	assert(write);
+
+	if ((size != 2) || (offset & 1)) {
+		/* Short config writes are not supported */
+		prlog(PR_ERR, "NPU%d: Unsupported write to pcie control register\n",
+		      ndev->phb->opal_id);
+		return OPAL_PARAMETER;
+	}
+
+	if (*data & PCICAP_EXP_DEVCTL_FUNC_RESET)
+		npu_dev_procedure_reset(ndev);
+
+	return OPAL_PARTIAL;
+}
+
 static struct npu_dev *bdfn_to_npu_dev(struct npu *p, uint32_t bdfn)
 {
-	int i;
+	struct pci_virt_device *pvd;
 
 	/* Sanity check */
 	if (bdfn & ~0xff)
 		return NULL;
 
-	for(i = 0; i < p->total_devices; i++) {
-		if (p->devices[i].bdfn == bdfn)
-			return &p->devices[i];
-	}
-
-	return NULL;
-
-}
-
-static struct npu_dev *npu_dev_cfg_check(struct npu *p,
-					 uint32_t bdfn,
-					 uint32_t offset,
-					 uint32_t size)
-{
-	/* Sanity check */
-	if (offset >= NPU_DEV_CFG_SIZE)
-		return NULL;
-	if (offset & (size - 1))
-		return NULL;
-
-	return bdfn_to_npu_dev(p, bdfn);
-}
-
-static struct npu_dev_trap *npu_dev_trap_check(struct npu_dev *dev,
-					       uint32_t offset,
-					       uint32_t size,
-					       bool read)
-{
-	struct npu_dev_trap *trap;
-
-	list_for_each(&dev->traps, trap, link) {
-		if (read && !trap->read)
-			continue;
-		if (!read && !trap->write)
-			continue;
-
-		/* The requested region is overlapped with the one
-		 * specified by the trap, to pick the trap and let it
-		 * handle the request
-		 */
-		if (offset <= trap->end &&
-		    (offset + size - 1) >= trap->start)
-			return trap;
-	}
+	pvd = pci_virt_find_device(&p->phb, bdfn);
+	if (pvd)
+		return pvd->data;
 
 	return NULL;
 }
 
-static int64_t _npu_dev_cfg_read(struct phb *phb, uint32_t bdfn,
-				uint32_t offset, uint32_t *data,
-				size_t size)
-{
-	struct npu *p = phb_to_npu(phb);
-	struct npu_dev *dev;
-	struct npu_dev_trap *trap;
-	int64_t ret;
-
-	/* Data returned upon errors */
-	*data = 0xffffffff;
-
-	/* If fenced, we want to return all 1s, so we're done. */
-	if (p->fenced)
-		return OPAL_SUCCESS;
-
-	/* Retrieve NPU device */
-	dev = npu_dev_cfg_check(p, bdfn, offset, size);
-	if (!dev)
-		return OPAL_PARAMETER;
-
-	/* Retrieve trap */
-	trap = npu_dev_trap_check(dev, offset, size, true);
-	if (trap) {
-		ret = trap->read(trap, offset,
-				 size, (uint32_t *)data);
-		if (ret == OPAL_SUCCESS)
-			return ret;
-	}
-
-	NPU_DEV_CFG_NORMAL_RD(dev, offset, size, data);
-
-	return OPAL_SUCCESS;
+#define NPU_CFG_READ(size, type)						\
+static int64_t npu_cfg_read##size(struct phb *phb, uint32_t bdfn,		\
+				  uint32_t offset, type *data)			\
+{										\
+	uint32_t val;								\
+	int64_t ret;								\
+										\
+	ret = pci_virt_cfg_read(phb, bdfn, offset, sizeof(*data), &val);	\
+	*data = (type)val;							\
+	return ret;								\
+}
+#define NPU_CFG_WRITE(size, type)						\
+static int64_t npu_cfg_write##size(struct phb *phb, uint32_t bdfn,		\
+				   uint32_t offset, type data)			\
+{										\
+	uint32_t val = data;                                            	\
+										\
+	return pci_virt_cfg_write(phb, bdfn, offset, sizeof(data), val);	\
 }
 
-#define NPU_DEV_CFG_READ(size, type)					\
-static int64_t npu_dev_cfg_read##size(struct phb *phb, uint32_t bdfn,	\
-				      uint32_t offset, type *data)	\
-{									\
-	int64_t rc;							\
-	uint32_t val;							\
-									\
-	/* Data returned upon errors */					\
-	rc = _npu_dev_cfg_read(phb, bdfn, offset, &val, sizeof(*data));	\
-	*data = (type)val;						\
-	return rc;							\
-}
-
-static int64_t _npu_dev_cfg_write(struct phb *phb, uint32_t bdfn,
-				  uint32_t offset, uint32_t data,
-				  size_t size)
-{
-	struct npu *p = phb_to_npu(phb);
-	struct npu_dev *dev;
-	struct npu_dev_trap *trap;
-	uint32_t val, v, r, c, i;
-	int64_t ret;
-
-	/* Retrieve NPU device */
-	dev = npu_dev_cfg_check(p, bdfn, offset, size);
-	if (!dev)
-		return OPAL_PARAMETER;
-
-	/* Retrieve trap */
-	trap = npu_dev_trap_check(dev, offset, size, false);
-	if (trap) {
-		ret = trap->write(trap, offset,
-				  size, (uint32_t)data);
-		if (ret == OPAL_SUCCESS)
-			return ret;
-	}
-
-	/* Handle read-only and W1C bits */
-	val = data;
-	for (i = 0; i < size; i++) {
-		v = dev->config[NPU_DEV_CFG_NORMAL][offset + i];
-		r = dev->config[NPU_DEV_CFG_RDONLY][offset + i];
-		c = dev->config[NPU_DEV_CFG_W1CLR][offset + i];
-
-		/* Drop read-only bits */
-		val &= ~(r << (i * 8));
-		val |= (r & v) << (i * 8);
-
-		/* Drop W1C bits */
-		val &= ~(val & ((c & v) << (i * 8)));
-	}
-
-	NPU_DEV_CFG_NORMAL_WR(dev, offset, size, val);
-	return OPAL_SUCCESS;
-}
-
-#define NPU_DEV_CFG_WRITE(size, type)					\
-static int64_t npu_dev_cfg_write##size(struct phb *phb, uint32_t bdfn,	\
-				       uint32_t offset, type data)	\
-{									\
-	return _npu_dev_cfg_write(phb, bdfn, offset,			\
-				  data, sizeof(data));			\
-}
-
-NPU_DEV_CFG_READ(8, u8)
-NPU_DEV_CFG_READ(16, u16)
-NPU_DEV_CFG_READ(32, u32)
-NPU_DEV_CFG_WRITE(8, u8)
-NPU_DEV_CFG_WRITE(16, u16)
-NPU_DEV_CFG_WRITE(32, u32)
-
-/*
- * Add calls to trap reads and writes to a NPU config space.
- */
-static void npu_dev_add_cfg_trap(struct npu_dev *dev, uint32_t start,
-				 uint32_t size, void *data,
-				 int64_t (*read)(struct npu_dev_trap *,
-						 uint32_t,
-						 uint32_t,
-						 uint32_t *),
-				 int64_t (*write)(struct npu_dev_trap *,
-						  uint32_t,
-						  uint32_t,
-						  uint32_t))
-{
-	struct npu_dev_trap *trap;
-
-	trap = zalloc(sizeof(struct npu_dev_trap));
-	assert(trap);
-	trap->dev   = dev;
-	trap->start = start;
-	trap->end   = start + size - 1;
-	trap->read  = read;
-	trap->write = write;
-	trap->data  = data;
-	list_add_tail(&dev->traps, &trap->link);
-}
+NPU_CFG_READ(8,   u8);
+NPU_CFG_READ(16,  u16);
+NPU_CFG_READ(32,  u32);
+NPU_CFG_WRITE(8,  u8);
+NPU_CFG_WRITE(16, u16);
+NPU_CFG_WRITE(32, u32);
 
 static int __npu_dev_bind_pci_dev(struct phb *phb __unused,
 				  struct pci_device *pd,
@@ -550,7 +387,7 @@ static void npu_dev_bind_pci_dev(struct npu_dev *dev)
 		if (dev->pd) {
 			dev->phb = phb;
 			/* Found the device, set the bit in config space */
-			NPU_DEV_CFG_INIT_RO(dev, VENDOR_CAP_START +
+			PCI_VIRT_CFG_INIT_RO(dev->pvd, VENDOR_CAP_START +
 				VENDOR_CAP_PCI_DEV_OFFSET, 1, 0x01);
 			return;
 		}
@@ -774,25 +611,27 @@ static void npu_err_interrupt(struct irq_source *is, uint32_t isn)
 	}
 }
 
-/* LSIs (OS owned) */
+static uint64_t npu_lsi_attributes(struct irq_source *is, uint32_t isn)
+{
+	struct npu *p = is->data;
+	uint32_t idx = isn - p->base_lsi;
+
+	if (idx >= 4)
+		return IRQ_ATTR_TARGET_OPAL | IRQ_ATTR_TARGET_RARE;
+	return IRQ_ATTR_TARGET_LINUX;
+}
+
+/* Error LSIs (skiboot owned) */
 static const struct irq_source_ops npu_lsi_irq_ops = {
 	.get_xive	= npu_lsi_get_xive,
 	.set_xive	= npu_lsi_set_xive,
-};
-
-/* Error LSIs (skiboot owned) */
-static const struct irq_source_ops npu_err_lsi_irq_ops = {
-	.get_xive	= npu_lsi_get_xive,
-	.set_xive	= npu_lsi_set_xive,
+	.attributes	= npu_lsi_attributes,
 	.interrupt	= npu_err_interrupt,
 };
 
 static void npu_register_irq(struct npu *p)
 {
-	register_irq_source(&npu_lsi_irq_ops, p,
-			    p->base_lsi, 4);
-	register_irq_source(&npu_err_lsi_irq_ops, p,
-			    p->base_lsi + 4, 4);
+	register_irq_source(&npu_lsi_irq_ops, p, p->base_lsi, 8);
 }
 
 static void npu_hw_init(struct npu *p)
@@ -806,7 +645,7 @@ static void npu_hw_init(struct npu *p)
 }
 
 static int64_t npu_map_pe_dma_window_real(struct phb *phb,
-					   uint16_t pe_num,
+					   uint64_t pe_number,
 					   uint16_t window_id,
 					   uint64_t pci_start_addr,
 					   uint64_t pci_mem_size)
@@ -816,8 +655,8 @@ static int64_t npu_map_pe_dma_window_real(struct phb *phb,
 	uint64_t tve;
 
 	/* Sanity check. Each PE has one corresponding TVE */
-	if (pe_num >= NPU_NUM_OF_PES ||
-	    window_id != pe_num)
+	if (pe_number >= NPU_NUM_OF_PES ||
+	    window_id != pe_number)
 		return OPAL_PARAMETER;
 
 	if (pci_mem_size) {
@@ -862,7 +701,7 @@ static int64_t npu_map_pe_dma_window_real(struct phb *phb,
 }
 
 static int64_t npu_map_pe_dma_window(struct phb *phb,
-					 uint16_t pe_num,
+					 uint64_t pe_number,
 					 uint16_t window_id,
 					 uint16_t tce_levels,
 					 uint64_t tce_table_addr,
@@ -874,8 +713,8 @@ static int64_t npu_map_pe_dma_window(struct phb *phb,
 	uint64_t data64 = 0;
 
 	/* Sanity check. Each PE has one corresponding TVE */
-	if (pe_num >= NPU_NUM_OF_PES ||
-	    window_id != pe_num)
+	if (pe_number >= NPU_NUM_OF_PES ||
+	    window_id != pe_number)
 		return OPAL_PARAMETER;
 
 	/* Special condition, zero TCE table size used to disable
@@ -930,7 +769,7 @@ static int64_t npu_map_pe_dma_window(struct phb *phb,
 }
 
 static int64_t npu_set_pe(struct phb *phb,
-			      uint64_t pe_num,
+			      uint64_t pe_number,
 			      uint64_t bdfn,
 			      uint8_t bcompare,
 			      uint8_t dcompare,
@@ -946,7 +785,7 @@ static int64_t npu_set_pe(struct phb *phb,
 	if (action != OPAL_MAP_PE &&
 	    action != OPAL_UNMAP_PE)
 		return OPAL_PARAMETER;
-	if (pe_num >= NPU_NUM_OF_PES)
+	if (pe_number >= NPU_NUM_OF_PES)
 		return OPAL_PARAMETER;
 
 	/* All emulated PCI devices hooked to root bus, whose
@@ -957,7 +796,7 @@ static int64_t npu_set_pe(struct phb *phb,
 		return OPAL_PARAMETER;
 
 	link_idx = dev->index;
-	dev->pe_num = pe_num;
+	dev->pe_number = pe_number;
 
 	/* Separate links will be mapped to different PEs */
 	if (bcompare != OpalPciBusAll ||
@@ -969,7 +808,7 @@ static int64_t npu_set_pe(struct phb *phb,
 	data64 = &p->pce_cache[link_idx];
 	if (action == OPAL_MAP_PE)
 		*data64 = SETFIELD(NPU_IODA_PCT_PE, *data64,
-				   pe_num);
+				   pe_number);
 	else
 		*data64 = SETFIELD(NPU_IODA_PCT_PE, *data64,
 				   NPU_NUM_OF_PES);
@@ -1034,7 +873,6 @@ static struct pci_slot *npu_slot_create(struct phb *phb)
 	slot->ops.poll_link           = NULL;
 	slot->ops.hreset              = npu_hreset;
 	slot->ops.freset              = npu_freset;
-	slot->ops.pfreset             = NULL;
 	slot->ops.creset              = NULL;
 
 	return slot;
@@ -1105,7 +943,7 @@ void npu_set_fence_state(struct npu *p, bool fence) {
 }
 
 /* Sets the NPU to trigger an error when a DMA occurs */
-static int64_t npu_err_inject(struct phb *phb, uint32_t pe_num,
+static int64_t npu_err_inject(struct phb *phb, uint64_t pe_number,
 			      uint32_t type, uint32_t func __unused,
 			      uint64_t addr __unused, uint64_t mask __unused)
 {
@@ -1113,20 +951,20 @@ static int64_t npu_err_inject(struct phb *phb, uint32_t pe_num,
 	struct npu_dev *dev = NULL;
 	int i;
 
-	if (pe_num >= NPU_NUM_OF_PES) {
+	if (pe_number >= NPU_NUM_OF_PES) {
 		prlog(PR_ERR, "NPU: error injection failed, bad PE given\n");
 		return OPAL_PARAMETER;
 	}
 
 	for (i = 0; i < p->total_devices; i++) {
-		if (p->devices[i].pe_num == pe_num) {
+		if (p->devices[i].pe_number == pe_number) {
 			dev = &p->devices[i];
 			break;
 		}
 	}
 
 	if (!dev) {
-		prlog(PR_ERR, "NPU: couldn't find device with PE %x\n", pe_num);
+		prlog(PR_ERR, "NPU: couldn't find device with PE%llx\n", pe_number);
 		return OPAL_PARAMETER;
 	}
 
@@ -1149,12 +987,12 @@ static int64_t npu_err_inject(struct phb *phb, uint32_t pe_num,
 }
 
 static const struct phb_ops npu_ops = {
-	.cfg_read8		= npu_dev_cfg_read8,
-	.cfg_read16		= npu_dev_cfg_read16,
-	.cfg_read32		= npu_dev_cfg_read32,
-	.cfg_write8		= npu_dev_cfg_write8,
-	.cfg_write16		= npu_dev_cfg_write16,
-	.cfg_write32		= npu_dev_cfg_write32,
+	.cfg_read8		= npu_cfg_read8,
+	.cfg_read16		= npu_cfg_read16,
+	.cfg_read32		= npu_cfg_read32,
+	.cfg_write8		= npu_cfg_write8,
+	.cfg_write16		= npu_cfg_write16,
+	.cfg_write32		= npu_cfg_write32,
 	.choose_bus		= NULL,
 	.get_reserved_pe_number	= NULL,
 	.device_init		= NULL,
@@ -1314,37 +1152,44 @@ static void npu_probe_phb(struct dt_node *dn)
 	dt_add_property_cells(np, "ibm,npcq", dn->phandle);
 	dt_add_property_cells(np, "ibm,links", links);
 	dt_add_property(np, "ibm,mmio-window", mm_win, sizeof(mm_win));
+	dt_add_property_cells(np, "ibm,phb-diag-data-size", 0);
+
+	/* Disable fast reboot - not currently supported */
+	disable_fast_reboot("NVLink device enabled");
 }
 
 static void npu_dev_populate_vendor_cap(struct npu_dev_cap *cap)
 {
 	struct npu_dev *dev = cap->dev;
+	struct pci_virt_device *pvd = dev->pvd;
 	uint32_t offset = cap->start;
 	uint8_t val;
 
 	/* Add length and version information */
 	val = cap->end - cap->start;
-	NPU_DEV_CFG_INIT_RO(dev, offset + 2, 1, val);
-	NPU_DEV_CFG_INIT_RO(dev, offset + 3, 1, OPAL_NPU_VERSION);
+	PCI_VIRT_CFG_INIT_RO(pvd, offset + 2, 1, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, offset + 3, 1, OPAL_NPU_VERSION);
 	offset += 4;
 
 	/* Defaults when the trap can't handle the read/write (eg. due
 	 * to reading/writing less than 4 bytes). */
 	val = 0x0;
-	NPU_DEV_CFG_INIT_RO(dev, offset, 4, val);
-	NPU_DEV_CFG_INIT_RO(dev, offset + 4, 4, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, offset, 4, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, offset + 4, 4, val);
 
 	/* Create a trap for AT/PL procedures */
-	npu_dev_add_cfg_trap(dev, offset, 8, NULL, npu_dev_procedure_read,
-			     npu_dev_procedure_write);
+	pci_virt_add_filter(pvd, offset, 8,
+			    PCI_REG_FLAG_READ | PCI_REG_FLAG_WRITE,
+			    npu_dev_procedure, NULL);
 	offset += 8;
 
-	NPU_DEV_CFG_INIT_RO(dev, offset, 1, dev->index);
+	PCI_VIRT_CFG_INIT_RO(pvd, offset, 1, dev->index);
 }
 
 static void npu_dev_populate_pcie_cap(struct npu_dev_cap *cap)
 {
 	struct npu_dev *dev = cap->dev;
+	struct pci_virt_device *pvd = dev->pvd;
 	uint32_t base = cap->start;
 	uint32_t val;
 
@@ -1365,11 +1210,11 @@ static void npu_dev_populate_pcie_cap(struct npu_dev_cap *cap)
 	/* 0x00 - ID/PCIE capability */
 	val = cap->id;
 	val |= ((0x2 << 16) | (PCIE_TYPE_ENDPOINT << 20));
-	NPU_DEV_CFG_INIT_RO(dev, base, 4, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, base, 4, val);
 
 	/* 0x04 - Device capability
 	 *
-	 * We should support FLR. Oterwhsie, it might have
+	 * We should support FLR. Otherwise, it might have
 	 * problem passing it through to userland via Linux
 	 * VFIO infrastructure
 	 */
@@ -1378,53 +1223,57 @@ static void npu_dev_populate_pcie_cap(struct npu_dev_cap *cap)
 	       (PCIE_L0SL_MAX_NO_LIMIT << 6) |
 	       (PCIE_L1L_MAX_NO_LIMIT << 9) |
 	       (PCICAP_EXP_DEVCAP_FUNC_RESET));
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_DEVCAP, 4, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_DEVCAP, 4, val);
+
+	pci_virt_add_filter(pvd, base + PCICAP_EXP_DEVCTL, 2,
+			    PCI_REG_FLAG_WRITE,
+			    npu_dev_cfg_exp_devcap, NULL);
 
 	/* 0x08 - Device control and status */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_DEVCTL, 4, 0x00002810,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_DEVCTL, 4, 0x00002810,
 			 0xffff0000, 0x000f0000);
 
 	/* 0x0c - Link capability */
 	val = (PCIE_LSPEED_VECBIT_2 | (PCIE_LWIDTH_1X << 4));
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_LCAP, 4, val);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_LCAP, 4, val);
 
 	/* 0x10 - Link control and status */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_LCTL, 4, 0x00130000,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_LCTL, 4, 0x00130000,
 			 0xfffff000, 0xc0000000);
 
 	/* 0x14 - Slot capability */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_SLOTCAP, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_SLOTCAP, 4, 0x00000000);
 
 	/* 0x18 - Slot control and status */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_SLOTCTL, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_SLOTCTL, 4, 0x00000000);
 
 	/* 0x1c - Root control and capability */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_RC, 4, 0x00000000,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_RC, 4, 0x00000000,
 			 0xffffffe0, 0x00000000);
 
 	/* 0x20 - Root status */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_RSTAT, 4, 0x00000000,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_RSTAT, 4, 0x00000000,
 			 0xffffffff, 0x00010000);
 
 	/* 0x24 - Device capability 2 */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCIECAP_EXP_DCAP2, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCIECAP_EXP_DCAP2, 4, 0x00000000);
 
 	/* 0x28 - Device Control and status 2 */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_DCTL2, 4, 0x00070000,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_DCTL2, 4, 0x00070000,
 			 0xffff0000, 0x00000000);
 
 	/* 0x2c - Link capability 2 */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_LCAP2, 4, 0x00000007);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_LCAP2, 4, 0x00000007);
 
 	/* 0x30 - Link control and status 2 */
-	NPU_DEV_CFG_INIT(dev, base + PCICAP_EXP_LCTL2, 4, 0x00000003,
+	PCI_VIRT_CFG_INIT(pvd, base + PCICAP_EXP_LCTL2, 4, 0x00000003,
 			 0xffff0000, 0x00200000);
 
 	/* 0x34 - Slot capability 2 */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_SCAP2, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_SCAP2, 4, 0x00000000);
 
 	/* 0x38 - Slot control and status 2 */
-	NPU_DEV_CFG_INIT_RO(dev, base + PCICAP_EXP_SCTL2, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, base + PCICAP_EXP_SCTL2, 4, 0x00000000);
 }
 
 static struct npu_dev_cap *npu_dev_create_capability(struct npu_dev *dev,
@@ -1490,31 +1339,29 @@ static void npu_dev_create_capabilities(struct npu_dev *dev)
 
 static void npu_dev_create_cfg(struct npu_dev *dev)
 {
+	struct pci_virt_device *pvd = dev->pvd;
 	struct npu_dev_cap *cap;
 	uint32_t offset;
 	uint32_t last_cap_offset;
 
-	/* Initialize config traps */
-	list_head_init(&dev->traps);
-
 	/* 0x00 - Vendor/Device ID */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_VENDOR_ID, 4, 0x04ea1014);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_VENDOR_ID, 4, 0x04ea1014);
 
 	/* 0x04 - Command/Status
 	 *
 	 * Create one trap to trace toggling memory BAR enable bit
 	 */
-	NPU_DEV_CFG_INIT(dev, PCI_CFG_CMD, 4, 0x00100000, 0xffb802b8,
+	PCI_VIRT_CFG_INIT(pvd, PCI_CFG_CMD, 4, 0x00100000, 0xffb802b8,
 			 0xf9000000);
 
-	npu_dev_add_cfg_trap(dev, PCI_CFG_CMD, 1, NULL, NULL,
-			     npu_dev_cfg_write_cmd);
+	pci_virt_add_filter(pvd, PCI_CFG_CMD, 1, PCI_REG_FLAG_WRITE,
+			    npu_dev_cfg_write_cmd, NULL);
 
 	/* 0x08 - Rev/Class/Cache */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_REV_ID, 4, 0x06800100);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_REV_ID, 4, 0x06800100);
 
 	/* 0x0c - CLS/Latency Timer/Header/BIST */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_CACHE_LINE_SIZE, 4, 0x00800000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_CACHE_LINE_SIZE, 4, 0x00800000);
 
 	/* 0x10 - BARs, always 64-bits non-prefetchable
 	 *
@@ -1523,49 +1370,50 @@ static void npu_dev_create_cfg(struct npu_dev *dev)
 	 */
 
 	/* Low 32-bits */
-	NPU_DEV_CFG_INIT(dev, PCI_CFG_BAR0, 4,
+	PCI_VIRT_CFG_INIT(pvd, PCI_CFG_BAR0, 4,
 			 (dev->bar.base & 0xfffffff0) | dev->bar.flags,
 			 0x0000000f, 0x00000000);
 
 	/* High 32-bits */
-	NPU_DEV_CFG_INIT(dev, PCI_CFG_BAR1, 4, (dev->bar.base >> 32),
+	PCI_VIRT_CFG_INIT(pvd, PCI_CFG_BAR1, 4, (dev->bar.base >> 32),
 			 0x00000000, 0x00000000);
 
 	/*
 	 * Create trap. Writting 0xFF's to BAR registers should be
 	 * trapped and return size on next read
 	 */
-	npu_dev_add_cfg_trap(dev, PCI_CFG_BAR0, 8, &dev->bar,
-			     npu_dev_cfg_read_bar, npu_dev_cfg_write_bar);
+	pci_virt_add_filter(pvd, PCI_CFG_BAR0, 8,
+			    PCI_REG_FLAG_READ | PCI_REG_FLAG_WRITE,
+			    npu_dev_cfg_bar, &dev->bar);
 
 	/* 0x18/1c/20/24 - Disabled BAR#2/3/4/5
 	 *
 	 * Mark those BARs readonly so that 0x0 will be returned when
 	 * probing the length and the BARs will be skipped.
 	 */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_BAR2, 4, 0x00000000);
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_BAR3, 4, 0x00000000);
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_BAR4, 4, 0x00000000);
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_BAR5, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_BAR2, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_BAR3, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_BAR4, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_BAR5, 4, 0x00000000);
 
 	/* 0x28 - Cardbus CIS pointer */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_CARDBUS_CIS, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_CARDBUS_CIS, 4, 0x00000000);
 
 	/* 0x2c - Subsystem ID */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_SUBSYS_VENDOR_ID, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_SUBSYS_VENDOR_ID, 4, 0x00000000);
 
 	/* 0x30 - ROM BAR
 	 *
 	 * Force its size to be zero so that the kernel will skip
 	 * probing the ROM BAR. We needn't emulate ROM BAR.
 	 */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_ROMBAR, 4, 0xffffffff);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_ROMBAR, 4, 0xffffffff);
 
 	/* 0x34 - PCI Capability
 	 *
 	 * By default, we don't have any capabilities
 	 */
-	NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_CAP, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_CAP, 4, 0x00000000);
 
 	last_cap_offset = PCI_CFG_CAP - 1;
 	list_for_each(&dev->capabilities, cap, link) {
@@ -1576,22 +1424,22 @@ static void npu_dev_create_cfg(struct npu_dev *dev)
 			cap->populate(cap);
 
 		/* Add capability header */
-		NPU_DEV_CFG_INIT_RO(dev, offset, 2, cap->id);
+		PCI_VIRT_CFG_INIT_RO(pvd, offset, 2, cap->id);
 
 		/* Update the next capability pointer */
-		NPU_DEV_CFG_NORMAL_WR(dev, last_cap_offset + 1, 1, offset);
+		PCI_VIRT_CFG_NORMAL_WR(pvd, last_cap_offset + 1, 1, offset);
 
 		last_cap_offset = offset;
 	}
 
 	/* 0x38 - Reserved */
-	NPU_DEV_CFG_INIT_RO(dev, 0x38, 4, 0x00000000);
+	PCI_VIRT_CFG_INIT_RO(pvd, 0x38, 4, 0x00000000);
 
 	/* 0x3c - INT line/pin/Minimal grant/Maximal latency */
 	if (!(dev->index % 2))
-		NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_INT_LINE, 4, 0x00000100);
+		PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_INT_LINE, 4, 0x00000100);
 	else
-		NPU_DEV_CFG_INIT_RO(dev, PCI_CFG_INT_LINE, 4, 0x00000200);
+		PCI_VIRT_CFG_INIT_RO(pvd, PCI_CFG_INT_LINE, 4, 0x00000200);
 }
 
 static uint32_t npu_allocate_bdfn(struct npu *p, uint32_t group)
@@ -1600,10 +1448,8 @@ static uint32_t npu_allocate_bdfn(struct npu *p, uint32_t group)
 	int bdfn = (group << 3);
 
 	for (i = 0; i < p->total_devices; i++) {
-		if (p->devices[i].bdfn == bdfn) {
+		if ((p->devices[i].pvd->bdfn & 0xf8) == (bdfn & 0xf8))
 			bdfn++;
-			break;
-		}
 	}
 
 	return bdfn;
@@ -1613,7 +1459,7 @@ static void npu_create_devices(struct dt_node *dn, struct npu *p)
 {
 	struct npu_dev *dev;
 	struct dt_node *npu_dn, *link;
-	uint32_t npu_phandle, index = 0;
+	uint32_t bdfn, npu_phandle, index = 0;
 	uint64_t buid_reg;
 	uint64_t lsisrcid;
 	uint64_t buid;
@@ -1638,11 +1484,11 @@ static void npu_create_devices(struct dt_node *dn, struct npu *p)
 	/* Walk the link@x nodes to initialize devices */
 	p->total_devices = 0;
 	p->phb.scan_map = 0;
+	list_head_init(&p->phb.virt_devices);
 	dt_for_each_compatible(npu_dn, link, "ibm,npu-link") {
 		struct npu_dev_bar *bar;
 		uint32_t group_id;
 		uint64_t val;
-		uint32_t j;
 
 		dev = &p->devices[index];
 		dev->index = dt_prop_get_u32(link, "ibm,npu-link-index");
@@ -1656,12 +1502,12 @@ static void npu_create_devices(struct dt_node *dn, struct npu *p)
 		dev->pl_base = NULL;
 
 		group_id = dt_prop_get_u32(link, "ibm,npu-group-id");
-		dev->bdfn = npu_allocate_bdfn(p, group_id);
+		bdfn = npu_allocate_bdfn(p, group_id);
 
 		/* This must be done after calling
 		 * npu_allocate_bdfn() */
 		p->total_devices++;
-		p->phb.scan_map |= 0x1 << ((dev->bdfn & 0xf8) >> 3);
+		p->phb.scan_map |= 0x1 << ((bdfn & 0xf8) >> 3);
 
 		dev->pl_xscom_base = dt_prop_get_u64(link, "ibm,npu-phy");
 		dev->lane_mask = dt_prop_get_u32(link, "ibm,npu-lane-mask");
@@ -1669,9 +1515,9 @@ static void npu_create_devices(struct dt_node *dn, struct npu *p)
 		/* Setup BUID/ISRN */
 		xscom_write(p->chip_id, dev->xscom + NX_NP_BUID, buid_reg);
 
-		/* Setup emulated config space */
-		for (j = 0; j < NPU_DEV_CFG_MAX; j++)
-			dev->config[j] = zalloc(NPU_DEV_CFG_SIZE);
+		/* Create PCI virtual device */
+		dev->pvd = pci_virt_add_device(&p->phb, bdfn, NPU_DEV_CFG_SIZE, dev);
+		assert(dev->pvd);
 		bar = &dev->bar;
 		bar->flags = (PCI_CFG_BAR_TYPE_MEM |
 			      PCI_CFG_BAR_MEM64);
@@ -1746,8 +1592,7 @@ static void npu_add_phb_properties(struct npu *p)
 			      NPU_NUM_OF_PES);
 	dt_add_property_cells(np, "ibm,opal-reserved-pe",
 			      0);
-        dt_add_property_cells(np, "ibm,opal-tce-kill",
-			      hi32(tkill), lo32(tkill));
+        dt_add_property_u64(np, "ibm,opal-tce-kill", tkill);
 
 	/* Memory window is exposed as 32-bits non-prefetchable
 	 * one because 64-bits prefetchable one is kind of special

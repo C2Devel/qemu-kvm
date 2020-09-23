@@ -20,6 +20,7 @@
  */
 #if 1 /* CONFIG_LIVE_BLOCK_MIGRATION */
 int blk_mig_active(void);
+int blk_mig_bulk_active(void);
 uint64_t blk_mig_bytes_transferred(void);
 uint64_t blk_mig_bytes_remaining(void);
 uint64_t blk_mig_bytes_total(void);
@@ -29,6 +30,12 @@ static inline int blk_mig_active(void)
 {
     return false;
 }
+
+static inline int blk_mig_bulk_active(void)
+{
+    return false;
+}
+
 static inline uint64_t blk_mig_bytes_transferred(void)
 {
     return 0;

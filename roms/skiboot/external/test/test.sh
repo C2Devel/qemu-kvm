@@ -1,6 +1,6 @@
 #! /bin/sh
 
-# Copyright 2013-2014 IBM Corp.
+# Copyright 2013-2017 IBM Corp.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,8 +26,6 @@ run_binary() {
 }
 
 fail_test() {
-	rm -rf "$STDERR_OUT";
-	rm -rf "$STDOUT_OUT";
 	echo "$0 ($CUR_TEST): test failed";
 	exit ${1:-1};
 }
@@ -50,18 +48,23 @@ diff_with_result() {
 		fi
 	# Otherwise just diff result.out with stdout and result.err with stderr
 	else
-		if ! diff -u "${RESULT}.out" "$STDOUT_OUT" ; then
+		#Strip carriage returns, useful for pflash which does fancy
+		#'progress bars'. The main reason for this is is that email
+		#doesn't barf at really really long lines
+		if ! cat "$STDOUT_OUT" | tr '\r' '\n' | \
+			diff -u	"${RESULT}.out" - ; then
 			fail_test;
 		fi
-		if ! diff -u "${RESULT}.err" "$STDERR_OUT" ; then
+		if ! cat "$STDERR_OUT" | tr '\r' '\n' | \
+			diff -u "${RESULT}.err" - ; then
 			fail_test;
 		fi
 	fi
 }
 
 run_tests() {
-	if [ $# -ne 2 ] ; then
-		echo "Usage run_tests test_dir result_dir";
+	if [ $# -lt 2 ] ; then
+		echo "Usage run_tests test_dir result_dir [data_dir]";
 		exit 1;
 	fi
 
@@ -75,6 +78,10 @@ run_tests() {
 
 	export STDERR_OUT=$(mktemp --tmpdir external-test-stderr.XXXXXX);
 	export STDOUT_OUT=$(mktemp --tmpdir external-test-stdout.XXXXXX);
+	export DATA_DIR=$(mktemp --tmpdir -d external-test-datadir.XXXXXX);
+	if [ $# -eq 3 ] ; then
+		cp -r $3/* "$DATA_DIR"
+	fi
 
 
 	for the_test in $all_tests; do
@@ -93,6 +100,7 @@ run_tests() {
 
 	rm -rf $STDERR_OUT;
 	rm -rf $STDOUT_OUT;
+	rm -rf $DATA_DIR;
 
 	echo "$0 tests passed"
 

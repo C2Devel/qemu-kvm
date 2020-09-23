@@ -172,6 +172,9 @@ static int __create_dtb(void *fdt, size_t len,
 	fdt_create(fdt, len);
 	if (root == dt_root && !exclusive)
 		create_dtb_reservemap(fdt, root);
+	else
+		fdt_finish_reservemap(fdt);
+
 	flatten_dt_node(fdt, root, exclusive);
 
 	save_err(fdt_finish(fdt));
@@ -188,11 +191,11 @@ void *create_dtb(const struct dt_node *root, bool exclusive)
 {
 	void *fdt = NULL;
 	size_t len = DEVICE_TREE_MAX_SIZE;
-	uint32_t old_last_phandle = last_phandle;
+	uint32_t old_last_phandle = get_last_phandle();
 	int ret;
 
 	do {
-		last_phandle = old_last_phandle;
+		set_last_phandle(old_last_phandle);
 		fdt_error = 0;
 		fdt = malloc(len);
 		if (!fdt) {
@@ -221,6 +224,9 @@ static int64_t opal_get_device_tree(uint32_t phandle,
 	int64_t totalsize;
 	int ret;
 
+	if (!opal_addr_valid(fdt))
+		return OPAL_PARAMETER;
+
 	root = dt_find_by_phandle(dt_root, phandle);
 	if (!root)
 		return OPAL_PARAMETER;
@@ -238,10 +244,10 @@ static int64_t opal_get_device_tree(uint32_t phandle,
 		return OPAL_PARAMETER;
 
 	fdt_error = 0;
-	old_last_phandle = last_phandle;
+	old_last_phandle = get_last_phandle();
 	ret = __create_dtb(fdt, len, root, true);
 	if (ret) {
-		last_phandle = old_last_phandle;
+		set_last_phandle(old_last_phandle);
 		if (ret == -FDT_ERR_NOSPACE)
 			return OPAL_NO_MEM;
 

@@ -21,6 +21,7 @@
 #include <libfdt/libfdt_internal.h>
 #include <ccan/str/str.h>
 #include <ccan/endian/endian.h>
+#include <inttypes.h>
 
 /* Used to give unique handles. */
 u32 last_phandle = 0;
@@ -56,7 +57,7 @@ static struct dt_node *new_node(const char *name)
 	list_head_init(&node->properties);
 	list_head_init(&node->children);
 	/* FIXME: locking? */
-	node->phandle = ++last_phandle;
+	node->phandle = new_phandle();
 	return node;
 }
 
@@ -153,6 +154,55 @@ struct dt_node *dt_new(struct dt_node *parent, const char *name)
 		return NULL;
 	}
 	return new;
+}
+
+/*
+ * low level variant, we export this because there are "weird" address
+ * formats, such as LPC/ISA bus addresses which have a letter to identify
+ * which bus space the address is inside of.
+ */
+struct dt_node *__dt_find_by_name_addr(struct dt_node *parent, const char *name,
+	const char *addr)
+{
+	struct dt_node *node;
+
+	if (list_empty(&parent->children))
+		return NULL;
+
+	dt_for_each_child(parent, node) {
+		const char *unit = get_unitname(node);
+		int len;
+
+		if (!unit)
+			continue;
+
+		/* match the name */
+		len = (int) (unit - node->name) - 1;
+		if (strncmp(node->name, name, len))
+			continue;
+
+		/* match the unit */
+		if (strcmp(unit, addr) == 0)
+			return node;
+	}
+
+	dt_for_each_child(parent, node) {
+		struct dt_node *ret = __dt_find_by_name_addr(node, name, addr);
+
+		if (ret)
+			return ret;
+	}
+
+	return NULL;
+}
+
+struct dt_node *dt_find_by_name_addr(struct dt_node *parent, const char *name,
+	uint64_t addr)
+{
+	char addr_str[16 + 1]; /* max size of a 64bit int */
+	snprintf(addr_str, sizeof(addr_str), "%" PRIx64, addr);
+
+	return __dt_find_by_name_addr(parent, name, addr_str);
 }
 
 struct dt_node *dt_new_addr(struct dt_node *parent, const char *name,
@@ -352,6 +402,20 @@ struct dt_node *dt_find_by_name(struct dt_node *root, const char *name)
 	return NULL;
 }
 
+
+struct dt_node *dt_new_check(struct dt_node *parent, const char *name)
+{
+	struct dt_node *node = dt_find_by_name(parent, name);
+
+	if (!node) {
+		node = dt_new(parent, name);
+		assert(node);
+	}
+
+	return node;
+}
+
+
 struct dt_node *dt_find_by_phandle(struct dt_node *root, u32 phandle)
 {
 	struct dt_node *node;
@@ -405,7 +469,7 @@ struct dt_property *dt_add_property(struct dt_node *node,
 		assert(size == 4);
 		node->phandle = *(const u32 *)val;
 		if (node->phandle >= last_phandle)
-			last_phandle = node->phandle;
+			set_last_phandle(node->phandle);
 		return NULL;
 	}
 
@@ -581,6 +645,14 @@ const struct dt_property *dt_find_property(const struct dt_node *node,
 	return NULL;
 }
 
+void dt_check_del_prop(struct dt_node *node, const char *name)
+{
+	struct dt_property *p;
+
+	p = __dt_find_property(node, name);
+	if (p)
+		dt_del_property(node, p);
+}
 const struct dt_property *dt_require_property(const struct dt_node *node,
 					      const char *name, int wanted_len)
 {
@@ -791,7 +863,25 @@ int dt_expand_node(struct dt_node *node, const void *fdt, int fdt_node)
 			 * going for now, we may ultimately want to
 			 * assert
 			 */
-			(void)dt_attach_root(node, child);
+			if (!dt_attach_root(node, child))
+	                       /**
+	                         * @fwts-label DTHasDuplicateNodeID
+	                         * @fwts-advice OPAL will parse the Flattened
+				 * Device Tree(FDT), which can be generated
+				 * from different firmware sources. During
+				 * expansion of FDT, OPAL observed a node
+				 * assigned multiple times (a duplicate). This
+				 * indicates either a Hostboot bug *OR*, more
+				 * likely, a bug in the platform XML. Check
+				 * the platform XML for duplicate IDs for
+				 * this type of device. Because of this
+				 * duplicate node, OPAL won't add the hardware
+				 * device found with a duplicate node ID into
+				 * DT, rendering the corresponding device not
+				 * functional.
+	                         */
+				prlog(PR_ERR, "DT: Found duplicate node: %s\n",
+				      child->name);
 			break;
 		case FDT_END:
 			return -1;
@@ -803,9 +893,7 @@ int dt_expand_node(struct dt_node *node, const void *fdt, int fdt_node)
 
 void dt_expand(const void *fdt)
 {
-	printf("FDT: Parsing fdt @%p\n", fdt);
-
-	dt_root = dt_new_root("");
+	prlog(PR_DEBUG, "FDT: Parsing fdt @%p\n", fdt);
 
 	if (dt_expand_node(dt_root, fdt, 0) < 0)
 		abort();
@@ -904,11 +992,72 @@ unsigned int dt_count_addresses(const struct dt_node *node)
 	return p->len / n;
 }
 
+/* Translates an address from the given bus into its parent's address space */
+static u64 dt_translate_one(const struct dt_node *bus, u64 addr)
+{
+	u32 ranges_count, na, ns, parent_na;
+	const struct dt_property *p;
+	const u32 *ranges;
+	int i, stride;
+
+	assert(bus->parent);
+
+	na = dt_prop_get_u32_def(bus, "#address-cells", 2);
+	ns = dt_prop_get_u32_def(bus, "#size-cells", 2);
+	parent_na = dt_n_address_cells(bus);
+
+	stride = na + ns + parent_na;
+
+	/*
+	 * FIXME: We should handle arbitrary length addresses, rather than
+	 *        limiting it to 64bit. If someone wants/needs that they
+	 *        can implement the bignum math for it :)
+	 */
+	assert(na <= 2);
+	assert(parent_na <= 2);
+
+	/* We should never be trying to translate an address without a ranges */
+	p = dt_require_property(bus, "ranges", -1);
+
+	ranges = (u32 *) &p->prop;
+	ranges_count = (p->len / 4) / (na + parent_na + ns);
+
+	/* An empty ranges property implies 1-1 translation */
+	if (ranges_count == 0)
+		return addr;
+
+	for (i = 0; i < ranges_count; i++, ranges += stride) {
+		/* ranges format: <child base> <parent base> <size> */
+		u64 child_base = dt_get_number(ranges, na);
+		u64 parent_base = dt_get_number(ranges + na, parent_na);
+		u64 size = dt_get_number(ranges + na + parent_na, ns);
+
+		if (addr >= child_base && addr < child_base + size)
+			return (addr - child_base) + parent_base;
+	}
+
+	/* input address was outside the any of our mapped ranges */
+	return 0;
+}
+
 u64 dt_translate_address(const struct dt_node *node, unsigned int index,
 			 u64 *out_size)
 {
-	/* XXX TODO */
-	return dt_get_address(node, index, out_size);
+	u64 addr = dt_get_address(node, index, NULL);
+	struct dt_node *bus = node->parent;
+
+	/* FIXME: One day we will probably want to use this, but for now just
+	 * force it it to be zero since we only support returning a u64 or u32
+	 */
+	assert(!out_size);
+
+	/* apply each translation until we hit the root bus */
+	while (bus->parent) {
+		addr = dt_translate_one(bus, addr);
+		bus = bus->parent;
+	}
+
+	return addr;
 }
 
 bool dt_node_is_enabled(struct dt_node *node)
@@ -919,4 +1068,42 @@ bool dt_node_is_enabled(struct dt_node *node)
 		return true;
 
 	return p->len > 1 && p->prop[0] == 'o' && p->prop[1] == 'k';
+}
+
+/*
+ * Function to fixup the phandle in the subtree.
+ */
+void dt_adjust_subtree_phandle(struct dt_node *dev,
+			const char** (get_properties_to_fix)(struct dt_node *n))
+{
+	struct dt_node *node;
+	struct dt_property *prop;
+	u32 phandle, max_phandle = 0, import_phandle = new_phandle();
+	const char **name;
+
+	dt_for_each_node(dev, node) {
+		const char **props_to_update;
+		node->phandle += import_phandle;
+
+		/*
+		 * calculate max_phandle(new_tree), needed to update
+		 * last_phandle.
+		 */
+		if (node->phandle >= max_phandle)
+			max_phandle = node->phandle;
+
+		props_to_update = get_properties_to_fix(node);
+		if (!props_to_update)
+			continue;
+		for (name = props_to_update; *name != NULL; name++) {
+			prop = __dt_find_property(node, *name);
+			if (!prop)
+				continue;
+			phandle = dt_prop_get_u32(node, *name);
+			phandle += import_phandle;
+			memcpy((char *)&prop->prop, &phandle, prop->len);
+		}
+       }
+
+       set_last_phandle(max_phandle);
 }

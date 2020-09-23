@@ -2,6 +2,7 @@
 #include "hw/hw.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 #include "hw/scsi/scsi.h"
 #include "scsi/constants.h"
 #include "hw/qdev.h"
@@ -205,8 +206,8 @@ static void scsi_qdev_realize(DeviceState *qdev, Error **errp)
         error_propagate(errp, local_err);
         return;
     }
-    dev->vmsentry = qemu_add_vm_change_state_handler(scsi_dma_restart_cb,
-                                                     dev);
+    dev->vmsentry = qdev_add_vm_change_state_handler(DEVICE(dev),
+            scsi_dma_restart_cb, dev);
 }
 
 static void scsi_qdev_unrealize(DeviceState *qdev, Error **errp)
@@ -225,6 +226,8 @@ static void scsi_qdev_unrealize(DeviceState *qdev, Error **errp)
 SCSIDevice *scsi_bus_legacy_add_drive(SCSIBus *bus, BlockBackend *blk,
                                       int unit, bool removable, int bootindex,
                                       bool share_rw,
+                                      BlockdevOnError rerror,
+                                      BlockdevOnError werror,
                                       const char *serial, Error **errp)
 {
     const char *driver;
@@ -261,6 +264,10 @@ SCSIDevice *scsi_bus_legacy_add_drive(SCSIBus *bus, BlockBackend *blk,
         object_unparent(OBJECT(dev));
         return NULL;
     }
+
+    qdev_prop_set_enum(dev, "rerror", rerror);
+    qdev_prop_set_enum(dev, "werror", werror);
+
     object_property_set_bool(OBJECT(dev), true, "realized", &err);
     if (err != NULL) {
         error_propagate(errp, err);
@@ -270,7 +277,7 @@ SCSIDevice *scsi_bus_legacy_add_drive(SCSIBus *bus, BlockBackend *blk,
     return SCSI_DEVICE(dev);
 }
 
-void scsi_bus_legacy_handle_cmdline(SCSIBus *bus, bool deprecated)
+void scsi_bus_legacy_handle_cmdline(SCSIBus *bus)
 {
     Location loc;
     DriveInfo *dinfo;
@@ -283,66 +290,14 @@ void scsi_bus_legacy_handle_cmdline(SCSIBus *bus, bool deprecated)
             continue;
         }
         qemu_opts_loc_restore(dinfo->opts);
-        if (deprecated) {
-#if 0 /* Disabled for Red Hat Enterprise Linux */
-            /* Handling -drive not claimed by machine initialization */
-            if (blk_get_attached_dev(blk_by_legacy_dinfo(dinfo))) {
-                continue;       /* claimed */
-            }
-            if (!dinfo->is_default) {
-                warn_report("bus=%d,unit=%d is deprecated with this"
-                            " machine type",
-                            bus->busnr, unit);
-            }
-#else
-            continue;
-#endif
-        }
         scsi_bus_legacy_add_drive(bus, blk_by_legacy_dinfo(dinfo),
-                                  unit, false, -1, false, NULL, &error_fatal);
+                                  unit, false, -1, false,
+                                  BLOCKDEV_ON_ERROR_AUTO,
+                                  BLOCKDEV_ON_ERROR_AUTO,
+                                  NULL, &error_fatal);
     }
     loc_pop(&loc);
 }
-
-#if 0 /* Disabled for Red Hat Enterprise Linux */
-
-static bool is_scsi_hba_with_legacy_magic(Object *obj)
-{
-    static const char *magic[] = {
-        "am53c974", "dc390", "esp", "lsi53c810", "lsi53c895a",
-        "megasas", "megasas-gen2", "mptsas1068", "spapr-vscsi",
-        "virtio-scsi-device",
-        NULL
-    };
-    const char *typename = object_get_typename(obj);
-    int i;
-
-    for (i = 0; magic[i]; i++)
-        if (!strcmp(typename, magic[i])) {
-            return true;
-    }
-
-    return false;
-}
-
-static int scsi_legacy_handle_cmdline_cb(Object *obj, void *opaque)
-{
-    SCSIBus *bus = (SCSIBus *)object_dynamic_cast(obj, TYPE_SCSI_BUS);
-
-    if (bus && is_scsi_hba_with_legacy_magic(OBJECT(bus->qbus.parent))) {
-        scsi_bus_legacy_handle_cmdline(bus, true);
-    }
-
-    return 0;
-}
-
-void scsi_legacy_handle_cmdline(void)
-{
-    object_child_foreach_recursive(object_get_root(),
-                                   scsi_legacy_handle_cmdline_cb, NULL);
-}
-
-#endif
 
 static int32_t scsi_invalid_field(SCSIRequest *req, uint8_t *buf)
 {
@@ -555,20 +510,8 @@ static int32_t scsi_target_send_command(SCSIRequest *req, uint8_t *buf)
         if (req->lun != 0) {
             const struct SCSISense sense = SENSE_CODE(LUN_NOT_SUPPORTED);
 
-            if (fixed_sense) {
-                r->buf[0] = 0x70;
-                r->buf[2] = sense.key;
-                r->buf[10] = 10;
-                r->buf[12] = sense.asc;
-                r->buf[13] = sense.ascq;
-                r->len = MIN(req->cmd.xfer, SCSI_SENSE_LEN);
-            } else {
-                r->buf[0] = 0x72;
-                r->buf[1] = sense.key;
-                r->buf[2] = sense.asc;
-                r->buf[3] = sense.ascq;
-                r->len = 8;
-            }
+            r->len = scsi_build_sense_buf(r->buf, req->cmd.xfer,
+                                          sense, fixed_sense);
         } else {
             r->len = scsi_device_get_sense(r->req.dev, r->buf,
                                            MIN(req->cmd.xfer, r->buf_len),
@@ -1010,7 +953,7 @@ static int scsi_req_xfer(SCSICommand *cmd, SCSIDevice *dev, uint8_t *buf)
         break;
     case WRITE_SAME_10:
     case WRITE_SAME_16:
-        cmd->xfer = dev->blocksize;
+        cmd->xfer = buf[1] & 1 ? 0 : dev->blocksize;
         break;
     case READ_CAPACITY_10:
         cmd->xfer = 8;

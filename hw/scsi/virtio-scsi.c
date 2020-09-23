@@ -20,6 +20,7 @@
 #include "qemu/error-report.h"
 #include "qemu/iov.h"
 #include "sysemu/block-backend.h"
+#include "sysemu/blockdev.h"
 #include "hw/scsi/scsi.h"
 #include "scsi/constants.h"
 #include "hw/virtio/virtio-bus.h"
@@ -800,14 +801,29 @@ static void virtio_scsi_hotplug(HotplugHandler *hotplug_dev, DeviceState *dev,
         return;
     }
     if (s->ctx && !s->dataplane_fenced) {
+        AioContext *ctx;
         if (blk_op_is_blocked(sd->conf.blk, BLOCK_OP_TYPE_DATAPLANE, errp)) {
+            return;
+        }
+        ctx = blk_get_aio_context(sd->conf.blk);
+        if (ctx != s->ctx && ctx != qemu_get_aio_context()) {
+            error_setg(errp, "Cannot attach a blockdev that is using "
+                       "a different iothread");
             return;
         }
         virtio_scsi_acquire(s);
         blk_set_aio_context(sd->conf.blk, s->ctx);
         virtio_scsi_release(s);
-
     }
+}
+
+/* Announce the new device after it has been plugged */
+static void virtio_scsi_post_hotplug(HotplugHandler *hotplug_dev,
+                                     DeviceState *dev)
+{
+    VirtIODevice *vdev = VIRTIO_DEVICE(hotplug_dev);
+    VirtIOSCSI *s = VIRTIO_SCSI(vdev);
+    SCSIDevice *sd = SCSI_DEVICE(dev);
 
     if (virtio_vdev_has_feature(vdev, VIRTIO_SCSI_F_HOTPLUG)) {
         virtio_scsi_acquire(s);
@@ -824,6 +840,9 @@ static void virtio_scsi_hotunplug(HotplugHandler *hotplug_dev, DeviceState *dev,
     VirtIODevice *vdev = VIRTIO_DEVICE(hotplug_dev);
     VirtIOSCSI *s = VIRTIO_SCSI(vdev);
     SCSIDevice *sd = SCSI_DEVICE(dev);
+    AioContext *ctx = s->ctx ?: qemu_get_aio_context();
+    BlockDriverState *bs;
+    DriveInfo *dinfo;
 
     if (virtio_vdev_has_feature(vdev, VIRTIO_SCSI_F_HOTPLUG)) {
         virtio_scsi_acquire(s);
@@ -833,7 +852,31 @@ static void virtio_scsi_hotunplug(HotplugHandler *hotplug_dev, DeviceState *dev,
         virtio_scsi_release(s);
     }
 
+    /*
+     * This SCSIDevice goes away after calling qdev_simple_device_unplug_cb(),
+     * so get a reference to the underlying BDS here to be able to switch
+     * its AioContext afterwards.
+     */
+    bs = blk_bs(sd->conf.blk);
+
+    /*
+     * Drives attached to a legacy device will get auto deleted while
+     * unplugging the latter, so we don't need to switch their context.
+     * Get a reference to dinfo here, which is only NULL for non-legacy
+     * devices, and use it to avoid doing the switch for drives attached
+     * to legacy devices.
+     */
+    dinfo = blk_legacy_dinfo(sd->conf.blk);
+
+    aio_disable_external(ctx);
     qdev_simple_device_unplug_cb(hotplug_dev, dev, errp);
+    aio_enable_external(ctx);
+
+    if (s->ctx && bs && !dinfo) {
+        virtio_scsi_acquire(s);
+        bdrv_set_aio_context(bs, qemu_get_aio_context());
+        virtio_scsi_release(s);
+    }
 }
 
 static struct SCSIBusInfo virtio_scsi_scsi_info = {
@@ -876,10 +919,10 @@ void virtio_scsi_common_realize(DeviceState *dev,
     s->sense_size = VIRTIO_SCSI_SENSE_DEFAULT_SIZE;
     s->cdb_size = VIRTIO_SCSI_CDB_DEFAULT_SIZE;
 
-    s->ctrl_vq = virtio_add_queue(vdev, VIRTIO_SCSI_VQ_SIZE, ctrl);
-    s->event_vq = virtio_add_queue(vdev, VIRTIO_SCSI_VQ_SIZE, evt);
+    s->ctrl_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, ctrl);
+    s->event_vq = virtio_add_queue(vdev, s->conf.virtqueue_size, evt);
     for (i = 0; i < s->conf.num_queues; i++) {
-        s->cmd_vqs[i] = virtio_add_queue(vdev, VIRTIO_SCSI_VQ_SIZE, cmd);
+        s->cmd_vqs[i] = virtio_add_queue(vdev, s->conf.virtqueue_size, cmd);
     }
 }
 
@@ -926,6 +969,8 @@ static void virtio_scsi_device_unrealize(DeviceState *dev, Error **errp)
 
 static Property virtio_scsi_properties[] = {
     DEFINE_PROP_UINT32("num_queues", VirtIOSCSI, parent_obj.conf.num_queues, 1),
+    DEFINE_PROP_UINT32("virtqueue_size", VirtIOSCSI,
+                                         parent_obj.conf.virtqueue_size, 128),
     DEFINE_PROP_UINT32("max_sectors", VirtIOSCSI, parent_obj.conf.max_sectors,
                                                   0xFFFF),
     DEFINE_PROP_UINT32("cmd_per_lun", VirtIOSCSI, parent_obj.conf.cmd_per_lun,
@@ -975,6 +1020,7 @@ static void virtio_scsi_class_init(ObjectClass *klass, void *data)
     vdc->start_ioeventfd = virtio_scsi_dataplane_start;
     vdc->stop_ioeventfd = virtio_scsi_dataplane_stop;
     hc->plug = virtio_scsi_hotplug;
+    hc->post_plug = virtio_scsi_post_hotplug;
     hc->unplug = virtio_scsi_hotunplug;
 }
 

@@ -44,7 +44,7 @@
 #include "exec/address-spaces.h"
 
 #define FLASH_BASE 0x00000000
-#define FLASH_SIZE 0x02000000
+#define FLASH_SIZE (16 * MiB)
 
 #define SDRAM_BASE 0x0c000000 /* Physical location of SDRAM: Area 3 */
 #define SDRAM_SIZE 0x04000000
@@ -225,7 +225,6 @@ static struct QEMU_PACKED
 
 static void r2d_init(MachineState *machine)
 {
-    const char *cpu_model = machine->cpu_model;
     const char *kernel_filename = machine->kernel_filename;
     const char *kernel_cmdline = machine->kernel_cmdline;
     const char *initrd_filename = machine->initrd_filename;
@@ -242,15 +241,7 @@ static void r2d_init(MachineState *machine)
     MemoryRegion *address_space_mem = get_system_memory();
     PCIBus *pci_bus;
 
-    if (cpu_model == NULL) {
-        cpu_model = "SH7751R";
-    }
-
-    cpu = cpu_sh4_init(cpu_model);
-    if (cpu == NULL) {
-        fprintf(stderr, "Unable to find CPU definition\n");
-        exit(1);
-    }
+    cpu = SUPERH_CPU(cpu_create(machine->cpu_type));
     env = &cpu->env;
 
     reset_info = g_malloc0(sizeof(ResetData));
@@ -297,12 +288,19 @@ static void r2d_init(MachineState *machine)
     sysbus_mmio_map(busdev, 1, 0x1400080c);
     mmio_ide_init_drives(dev, dinfo, NULL);
 
-    /* onboard flash memory */
+    /*
+     * Onboard flash memory
+     * According to the old board user document in Japanese (under
+     * NDA) what is referred to as FROM (Area0) is connected via a
+     * 32-bit bus and CS0 to CN8. The docs mention a Cypress
+     * S29PL127J60TFI130 chipsset.  Per the 'S29PL-J 002-00615
+     * Rev. *E' datasheet, it is a 128Mbit NOR parallel flash
+     * addressable in words of 16bit.
+     */
     dinfo = drive_get(IF_PFLASH, 0, 0);
-    pflash_cfi02_register(0x0, NULL, "r2d.flash", FLASH_SIZE,
+    pflash_cfi02_register(0x0, "r2d.flash", FLASH_SIZE,
                           dinfo ? blk_by_legacy_dinfo(dinfo) : NULL,
-                          (16 * 1024), FLASH_SIZE >> 16,
-                          1, 4, 0x0000, 0x0000, 0x0000, 0x0000,
+                          64 * KiB, 1, 2, 0x0001, 0x227e, 0x2220, 0x2200,
                           0x555, 0x2aa, 0);
 
     /* NIC: rtl8139 on-board, and 2 slots. */
@@ -369,6 +367,7 @@ static void r2d_machine_init(MachineClass *mc)
     mc->desc = "r2d-plus board";
     mc->init = r2d_init;
     mc->block_default_type = IF_IDE;
+    mc->default_cpu_type = TYPE_SH7751R_CPU;
 }
 
 DEFINE_MACHINE("r2d", r2d_machine_init)

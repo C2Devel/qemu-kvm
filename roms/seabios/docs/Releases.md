@@ -1,6 +1,19 @@
 History of SeaBIOS releases. Please see [download](Download) for
 information on obtaining these releases.
 
+SeaBIOS 1.11.0
+==============
+
+Available on 20171110. Major changes in this release:
+
+* Initial support for NVME drives
+* Support for vga emulation over a serial port in SeaBIOS (sercon)
+* Support for serial debugging using MMIO based serial ports
+* Support for scsi devices with multiple LUNs
+* Support for boot-to-boot persistent coreboot cbmem logs
+* Improved coreboot vga (cbvga) mode setting compatibility
+* Several bug fixes and code cleanups
+
 SeaBIOS 1.10.0
 ==============
 
@@ -11,6 +24,22 @@ Available on 20161026. Major changes in this release:
 * Support for "LSI MPT Fusion" scsi controllers on QEMU
 * Support for virtio devices mapped above 4GB
 * Several bug fixes and code cleanups
+
+SeaBIOS 1.10.1
+--------------
+
+Available on 20161122. Stable release containing only bug fixes.
+
+
+SeaBIOS 1.10.2
+--------------
+
+Available on 20170228. Stable release containing only bug fixes.
+
+SeaBIOS 1.10.3
+--------------
+
+Available on 20171019. Stable release containing only bug fixes.
 
 SeaBIOS 1.9.0
 =============

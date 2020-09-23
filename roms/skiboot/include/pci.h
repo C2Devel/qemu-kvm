@@ -20,15 +20,17 @@
 #include <opal.h>
 #include <device.h>
 #include <lock.h>
+#include <bitmap.h>
 #include <ccan/list/list.h>
 
 struct pci_device;
 struct pci_cfg_reg_filter;
 
-typedef void (*pci_cfg_reg_func)(struct pci_device *pd,
-				 struct pci_cfg_reg_filter *pcrf,
-				 uint32_t offset, uint32_t len,
-				 uint32_t *data, bool write);
+typedef int64_t (*pci_cfg_reg_func)(void *dev,
+				    struct pci_cfg_reg_filter *pcrf,
+				    uint32_t offset, uint32_t len,
+				    uint32_t *data, bool write);
+typedef void (*pci_cap_free_data_func)(void *data);
 struct pci_cfg_reg_filter {
 	uint32_t		flags;
 #define PCI_REG_FLAG_READ	0x1
@@ -64,6 +66,7 @@ struct pci_device {
 	uint16_t		bdfn;
 	bool			is_bridge;
 	bool			is_multifunction;
+	bool			is_vf;
 	uint8_t			dev_type; /* PCIE */
 	uint8_t			primary_bus;
 	uint8_t			secondary_bus;
@@ -72,9 +75,15 @@ struct pci_device {
 
 	uint32_t		vdid;
 	uint32_t		sub_vdid;
+#define PCI_VENDOR_ID(x)	((x) & 0xFFFF)
+#define PCI_DEVICE_ID(x)	((x) >> 8)
 	uint32_t		class;
 	uint64_t		cap_list;
-	uint32_t		cap[64];
+	struct {
+		uint32_t	pos;
+		void		*data;
+		pci_cap_free_data_func free_func;
+	} cap[64];
 	uint32_t		mps;		/* Max payload size capability */
 
 	uint32_t		pcrf_start;
@@ -84,19 +93,25 @@ struct pci_device {
 	struct dt_node		*dn;
 	struct pci_slot		*slot;
 	struct pci_device	*parent;
+	struct phb		*phb;
 	struct list_head	children;
 	struct list_node	link;
 };
 
-static inline void pci_set_cap(struct pci_device *pd,
-			       int id, int pos, bool ext)
+static inline void pci_set_cap(struct pci_device *pd, int id, int pos,
+			       void *data, pci_cap_free_data_func free_func,
+			       bool ext)
 {
 	if (!ext) {
 		pd->cap_list |= (0x1ul << id);
-		pd->cap[id] = pos;
+		pd->cap[id].pos = pos;
+		pd->cap[id].data = data;
+		pd->cap[id].free_func = free_func;
 	} else {
 		pd->cap_list |= (0x1ul << (id + 32));
-		pd->cap[id + 32] = pos;
+		pd->cap[id + 32].pos = pos;
+		pd->cap[id + 32].data = data;
+		pd->cap[id + 32].free_func = free_func;
 	}
 }
 
@@ -113,9 +128,17 @@ static inline int pci_cap(struct pci_device *pd,
 			  int id, bool ext)
 {
 	if (!ext)
-		return pd->cap[id];
+		return pd->cap[id].pos;
 	else
-		return pd->cap[id + 32];
+		return pd->cap[id + 32].pos;
+}
+
+static inline void *pci_cap_data(struct pci_device *pd, int id, bool ext)
+{
+	if (!ext)
+		return pd->cap[id].data;
+	else
+		return pd->cap[id + 32].data;
 }
 
 /*
@@ -194,6 +217,7 @@ struct phb_ops {
 	 */
 	int (*device_init)(struct phb *phb, struct pci_device *device,
 			   void *data);
+	void (*device_remove)(struct phb *phb, struct pci_device *pd);
 
 	/* PHB final fixup is called after PCI probing is completed */
 	void (*phb_final_fixup)(struct phb *phb);
@@ -213,8 +237,9 @@ struct phb_ops {
 				    uint64_t eeh_action_token);
 	int64_t (*eeh_freeze_set)(struct phb *phb, uint64_t pe_number,
 				  uint64_t eeh_action_token);
-	int64_t (*err_inject)(struct phb *phb, uint32_t pe_no, uint32_t type,
-			      uint32_t func, uint64_t addr, uint64_t mask);
+	int64_t (*err_inject)(struct phb *phb, uint64_t pe_number,
+			      uint32_t type, uint32_t func, uint64_t addr,
+			      uint64_t mask);
 	int64_t (*get_diag_data)(struct phb *phb, void *diag_buffer,
 				 uint64_t diag_buffer_len);
 	int64_t (*get_diag_data2)(struct phb *phb, void *diag_buffer,
@@ -236,7 +261,7 @@ struct phb_ops {
 				      uint16_t window_num, uint64_t addr,
 				      uint64_t pci_addr, uint64_t size);
 
-	int64_t (*map_pe_mmio_window)(struct phb *phb, uint16_t pe_number,
+	int64_t (*map_pe_mmio_window)(struct phb *phb, uint64_t pe_number,
 				      uint16_t window_type, uint16_t window_num,
 				      uint16_t segment_num);
 
@@ -248,34 +273,34 @@ struct phb_ops {
 	int64_t (*set_peltv)(struct phb *phb, uint32_t parent_pe,
 			     uint32_t child_pe, uint8_t state);
 
-	int64_t (*map_pe_dma_window)(struct phb *phb, uint16_t pe_number,
+	int64_t (*map_pe_dma_window)(struct phb *phb, uint64_t pe_number,
 				     uint16_t window_id, uint16_t tce_levels,
 				     uint64_t tce_table_addr,
 				     uint64_t tce_table_size,
 				     uint64_t tce_page_size);
 
-	int64_t (*map_pe_dma_window_real)(struct phb *phb, uint16_t pe_number,
+	int64_t (*map_pe_dma_window_real)(struct phb *phb, uint64_t pe_number,
 					  uint16_t dma_window_number,
 					  uint64_t pci_start_addr,
 					  uint64_t pci_mem_size);
 
 	int64_t (*set_mve)(struct phb *phb, uint32_t mve_number,
-			   uint32_t pe_number);
+			   uint64_t pe_number);
 
 	int64_t (*set_mve_enable)(struct phb *phb, uint32_t mve_number,
 				  uint32_t state);
 
-	int64_t (*set_xive_pe)(struct phb *phb, uint32_t pe_number,
+	int64_t (*set_xive_pe)(struct phb *phb, uint64_t pe_number,
 			       uint32_t xive_num);
 
 	int64_t (*get_xive_source)(struct phb *phb, uint32_t xive_num,
 				   int32_t *interrupt_source_number);
 
-	int64_t (*get_msi_32)(struct phb *phb, uint32_t mve_number,
+	int64_t (*get_msi_32)(struct phb *phb, uint64_t mve_number,
 			      uint32_t xive_num, uint8_t msi_range,
 			      uint32_t *msi_address, uint32_t *message_data);
 
-	int64_t (*get_msi_64)(struct phb *phb, uint32_t mve_number,
+	int64_t (*get_msi_64)(struct phb *phb, uint64_t mve_number,
 			      uint32_t xive_num, uint8_t msi_range,
 			      uint64_t *msi_address, uint32_t *message_data);
 
@@ -296,13 +321,18 @@ struct phb_ops {
 
 	/* TCE Kill abstraction */
 	int64_t (*tce_kill)(struct phb *phb, uint32_t kill_type,
-			    uint32_t pe_num, uint32_t tce_size,
+			    uint64_t pe_number, uint32_t tce_size,
 			    uint64_t dma_addr, uint32_t npages);
 
 	/* Put phb in capi mode or pcie mode */
-	int64_t (*set_capi_mode)(struct phb *phb, uint64_t mode, uint64_t pe_number);
+	int64_t (*set_capi_mode)(struct phb *phb, uint64_t mode,
+				 uint64_t pe_number);
 
 	int64_t (*set_capp_recovery)(struct phb *phb);
+
+	/* PCI peer-to-peer setup */
+	void (*set_p2p)(struct phb *phb, uint64_t mode, uint64_t flags,
+			uint16_t pe_number);
 };
 
 enum phb_type {
@@ -313,6 +343,7 @@ enum phb_type {
 	phb_type_pcie_v2,
 	phb_type_pcie_v3,
 	phb_type_pcie_v4,
+	phb_type_npu_v2,
 };
 
 struct phb {
@@ -322,9 +353,11 @@ struct phb {
 	enum phb_type		phb_type;
 	struct lock		lock;
 	struct list_head	devices;
+	struct list_head	virt_devices;
 	const struct phb_ops	*ops;
 	struct pci_lsi_state	lstate;
 	uint32_t		mps;
+	bitmap_t		*filter_map;
 
 	/* PCI-X only slot info, for PCI-E this is in the RC bridge */
 	struct pci_slot		*slot;
@@ -396,6 +429,8 @@ extern void pci_add_device_nodes(struct phb *phb,
 extern int64_t pci_find_cap(struct phb *phb, uint16_t bdfn, uint8_t cap);
 extern int64_t pci_find_ecap(struct phb *phb, uint16_t bdfn, uint16_t cap,
 			     uint8_t *version);
+extern void pci_init_capabilities(struct phb *phb, struct pci_device *pd);
+extern bool pci_wait_crs(struct phb *phb, uint16_t bdfn, uint32_t *out_vdid);
 extern void pci_device_init(struct phb *phb, struct pci_device *pd);
 extern struct pci_device *pci_walk_dev(struct phb *phb,
 				       struct pci_device *pd,
@@ -407,6 +442,9 @@ extern struct pci_device *pci_find_dev(struct phb *phb, uint16_t bdfn);
 extern void pci_restore_bridge_buses(struct phb *phb, struct pci_device *pd);
 extern struct pci_cfg_reg_filter *pci_find_cfg_reg_filter(struct pci_device *pd,
 					uint32_t start, uint32_t len);
+extern int64_t pci_handle_cfg_filters(struct phb *phb, uint32_t bdfn,
+				      uint32_t offset, uint32_t len,
+				      uint32_t *data, bool write);
 extern struct pci_cfg_reg_filter *pci_add_cfg_reg_filter(struct pci_device *pd,
 					uint32_t start, uint32_t len,
 					uint32_t flags, pci_cfg_reg_func func);

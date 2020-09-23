@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/pmem.h"
 #include "qapi/error.h"
 #include "qapi/visitor.h"
 #include "hw/mem/nvdimm.h"
@@ -64,11 +65,36 @@ out:
     error_propagate(errp, local_err);
 }
 
+static bool nvdimm_get_unarmed(Object *obj, Error **errp)
+{
+    NVDIMMDevice *nvdimm = NVDIMM(obj);
+
+    return nvdimm->unarmed;
+}
+
+static void nvdimm_set_unarmed(Object *obj, bool value, Error **errp)
+{
+    NVDIMMDevice *nvdimm = NVDIMM(obj);
+    Error *local_err = NULL;
+
+    if (memory_region_size(&nvdimm->nvdimm_mr)) {
+        error_setg(&local_err, "cannot change property value");
+        goto out;
+    }
+
+    nvdimm->unarmed = value;
+
+ out:
+    error_propagate(errp, local_err);
+}
+
 static void nvdimm_init(Object *obj)
 {
-    object_property_add(obj, "label-size", "int",
+    object_property_add(obj, NVDIMM_LABLE_SIZE_PROP, "int",
                         nvdimm_get_label_size, nvdimm_set_label_size, NULL,
                         NULL, NULL);
+    object_property_add_bool(obj, NVDIMM_UNARMED_PROP,
+                             nvdimm_get_unarmed, nvdimm_set_unarmed, NULL);
 }
 
 static MemoryRegion *nvdimm_get_memory_region(PCDIMMDevice *dimm, Error **errp)
@@ -80,7 +106,7 @@ static MemoryRegion *nvdimm_get_memory_region(PCDIMMDevice *dimm, Error **errp)
 
 static void nvdimm_realize(PCDIMMDevice *dimm, Error **errp)
 {
-    MemoryRegion *mr = host_memory_backend_get_memory(dimm->hostmem, errp);
+    MemoryRegion *mr = host_memory_backend_get_memory(dimm->hostmem);
     NVDIMMDevice *nvdimm = NVDIMM(dimm);
     uint64_t align, pmem_size, size = memory_region_size(mr);
 
@@ -130,20 +156,21 @@ static void nvdimm_write_label_data(NVDIMMDevice *nvdimm, const void *buf,
 {
     MemoryRegion *mr;
     PCDIMMDevice *dimm = PC_DIMM(nvdimm);
+    bool is_pmem = object_property_get_bool(OBJECT(dimm->hostmem),
+                                            "pmem", NULL);
     uint64_t backend_offset;
 
     nvdimm_validate_rw_label_data(nvdimm, size, offset);
 
-    memcpy(nvdimm->label_data + offset, buf, size);
+    if (!is_pmem) {
+        memcpy(nvdimm->label_data + offset, buf, size);
+    } else {
+        pmem_memcpy_persist(nvdimm->label_data + offset, buf, size);
+    }
 
-    mr = host_memory_backend_get_memory(dimm->hostmem, &error_abort);
+    mr = host_memory_backend_get_memory(dimm->hostmem);
     backend_offset = memory_region_size(mr) - nvdimm->label_size + offset;
     memory_region_set_dirty(mr, backend_offset, size);
-}
-
-static MemoryRegion *nvdimm_get_vmstate_memory_region(PCDIMMDevice *dimm)
-{
-    return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
 }
 
 static void nvdimm_class_init(ObjectClass *oc, void *data)
@@ -153,7 +180,6 @@ static void nvdimm_class_init(ObjectClass *oc, void *data)
 
     ddc->realize = nvdimm_realize;
     ddc->get_memory_region = nvdimm_get_memory_region;
-    ddc->get_vmstate_memory_region = nvdimm_get_vmstate_memory_region;
 
     nvc->read_label_data = nvdimm_read_label_data;
     nvc->write_label_data = nvdimm_write_label_data;

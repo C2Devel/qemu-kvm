@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,368 +71,261 @@ static const struct card_info card_table[] = {
 	/* Other cards */
 };
 
-static struct dt_node *dt_create_vpd_node(struct dt_node *parent,
-					  const struct slca_entry *entry);
+struct vpd_key_map {
+	const char *keyword;		/* 2 char keyword  */
+	const char *description;
+};
+
+static const struct vpd_key_map vpd_key_table[] = {
+	{"AA", "ac-power-supply"},
+	{"AM", "air-mover"},
+	{"AV", "anchor-card"},
+
+	{"BA", "bus-adapter-card"},
+	{"BC", "battery-charger"},
+	{"BD", "bus-daughter-card"},
+	{"BE", "bus-expansion-card"},
+	{"BP", "backplane"},
+	{"BR", "backplane-riser"},
+	{"BX", "backplane-extender"},
+
+	{"CA", "calgary-bridge"},
+	{"CB", "infiniband-connector"},
+	{"CC", "clock-card"},
+	{"CD", "card-connector"},
+	{"CE", "ethernet-connector"},
+	{"CL", "calgary-phb"},
+	{"CI", "capacity-card"},
+	{"CO", "sma-connector"},
+	{"CP", "processor-capacity-card"},
+	{"CR", "rio-connector"},
+	{"CS", "serial-connector"},
+	{"CU", "usb-connector"},
+
+	{"DB", "dasd-backplane"},
+	{"DC", "drawer-card"},
+	{"DE", "drawer-extension"},
+	{"DI", "drawer-interposer"},
+	{"DL", "p7ih-dlink-connector"},
+	{"DT", "legacy-pci-card"},
+	{"DV", "media-drawer-led"},
+
+	{"EI", "enclosure-led"},
+	{"EF", "enclosure-fault-led"},
+	{"ES", "embedded-sas"},
+	{"ET", "ethernet-riser"},
+	{"EV", "enclosure"},
+
+	{"FM", "frame"},
+
+	{"HB", "host-rio-pci-card"},
+	{"HD", "high-speed-card"},
+	{"HM", "hmc-connector"},
+
+	{"IB", "io-backplane"},
+	{"IC", "io-card"},
+	{"ID", "ide-connector"},
+	{"II", "io-drawer-led"},
+	{"IP", "interplane-card"},
+	{"IS", "smp-vbus-cable"},
+	{"IT", "enclosure-cable"},
+	{"IV", "io-enclosure"},
+
+	{"KV", "keyboard-led"},
+
+	{"L2", "l2-cache-module"},
+	{"L3", "l3-cache-module"},
+	{"LC", "squadrons-light-connector"},
+	{"LR", "p7ih-connector"},
+	{"LO", "system-locate-led"},
+	{"LT", "squadrons-light-strip"},
+
+	{"MB", "media-backplane"},
+	{"ME", "map-extension"},
+	{"MM", "mip-meter"},
+	{"MS", "ms-dimm"},
+
+	{"NB", "nvram-battery"},
+	{"NC", "sp-node-controller"},
+	{"ND", "numa-dimm"},
+
+	{"OD", "cuod-card"},
+	{"OP", "op-panel"},
+	{"OS", "oscillator"},
+
+	{"P2", "ioc"},
+	{"P5", "ioc-bridge"},
+	{"PB", "io-drawer-backplane"},
+	{"PC", "power-capacitor"},
+	{"PD", "processor-card"},
+	{"PF", "processor"},
+	{"PI", "ioc-phb"},
+	{"PO", "spcn"},
+	{"PN", "spcn-connector"},
+	{"PR", "pci-riser-card"},
+	{"PS", "power-supply"},
+	{"PT", "pass-through-card"},
+	{"PX", "psc-sync-card"},
+	{"PW", "power-connector"},
+
+	{"RG", "regulator"},
+	{"RI", "riser"},
+	{"RK", "rack-indicator"},
+	{"RW", "riscwatch-connector"},
+
+	{"SA", "sys-attn-led"},
+	{"SB", "backup-sysvpd"},
+	{"SC", "scsi-connector"},
+	{"SD", "sas-connector"},
+	{"SI", "scsi-ide-converter"},
+	{"SL", "phb-slot"},
+	{"SP", "service-processor"},
+	{"SR", "service-card"},
+	{"SS", "soft-switch"},
+	{"SV", "system-vpd"},
+	{"SY", "legacy-sysvpd"},
+
+	{"TD", "tod-clock"},
+	{"TI", "torrent-pcie-phb"},
+	{"TL", "torrent-riser"},
+	{"TM", "thermal-sensor"},
+	{"TP", "tpmd-adapter"},
+	{"TR", "torrent-bridge"},
+
+	{"VV", "root-node-vpd"},
+
+	{"WD", "water_device"},
+};
+
+static const char *vpd_map_name(const char *vpd_name)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(vpd_key_table); i++)
+		if (!strcmp(vpd_key_table[i].keyword, vpd_name))
+			return vpd_key_table[i].description;
+
+	prlog(PR_WARNING, "VPD: Could not map FRU ID %s to a known name\n",
+	      vpd_name);
+
+	return "Unknown";
+}
 
 static const struct card_info *card_info_lookup(char *ccin)
 {
 	int i;
 	for(i = 0; i < ARRAY_SIZE(card_table); i++)
-		if (!strcmp(card_table[i].ccin, ccin))
+		/* CCIN is always 4 bytes in size */
+		if (!strncmp(card_table[i].ccin, ccin, 4))
 			return &card_table[i];
 	return NULL;
+}
+
+/*
+ * For OpenPOWER, we only decipher OPFR records. While OP HDAT have VINI
+ * records too, populating the fields in there is optional. Also, there
+ * is an overlap in the fields contained therein.
+ */
+static void vpd_opfr_parse(struct dt_node *node,
+		const void *fruvpd, unsigned int fruvpd_sz)
+{
+	const void *kw;
+	uint8_t sz;
+
+	/* Vendor Name */
+	kw = vpd_find(fruvpd, fruvpd_sz, "OPFR", "VN", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "vendor", kw, sz);
+
+	/* FRU Description */
+	kw = vpd_find(fruvpd, fruvpd_sz, "OPFR", "DR", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "description", kw, sz);
+
+	/* Part number */
+	kw = vpd_find(fruvpd, fruvpd_sz, "OPFR", "VP", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "part-number", kw, sz);
+
+	/* Serial number */
+	kw = vpd_find(fruvpd, fruvpd_sz, "OPFR", "VS", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "serial-number", kw, sz);
+
+	/* Build date in BCD */
+	kw = vpd_find(fruvpd, fruvpd_sz, "OPFR", "MB", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "build-date", kw, sz);
+
+	return;
 }
 
 static void vpd_vini_parse(struct dt_node *node,
 			   const void *fruvpd, unsigned int fruvpd_sz)
 {
 	const void *kw;
-	char *str;
-	uint8_t kwsz;
+	uint8_t sz;
 	const struct card_info *cinfo;
 
 	/* FRU Stocking Part Number */
-	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "FN", &kwsz);
-	if (kw) {
-		str = zalloc(kwsz + 1);
-		if (!str)
-			goto no_memory;
-		memcpy(str, kw, kwsz);
-		dt_add_property_string(node, "fru-number", str);
-		free(str);
-	}
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "FN", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "fru-number", kw, sz);
 
 	/* Serial Number */
-	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "SN", &kwsz);
-	if (kw) {
-		str = zalloc(kwsz + 1);
-		if (!str)
-			goto no_memory;
-		memcpy(str, kw, kwsz);
-		dt_add_property_string(node, "serial-number", str);
-		free(str);
-	}
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "SN", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "serial-number", kw, sz);
 
 	/* Part Number */
-	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "PN", &kwsz);
-	if (kw) {
-		str = zalloc(kwsz + 1);
-		if (!str)
-			goto no_memory;
-		memcpy(str, kw, kwsz);
-		dt_add_property_string(node, "part-number", str);
-		free(str);
-	}
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "PN", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "part-number", kw, sz);
+
+	/* CCIN Extension */
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "CE", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "ccin-extension", kw, sz);
+
+	/* HW Version info */
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "HW", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "hw-version", kw, sz);
+
+	/* Card type info */
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "CT", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "card-type", kw, sz);
+
+	/* HW characteristics info */
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "B3", &sz);
+	if (kw)
+		dt_add_property_nstr(node, "hw-characteristics", kw, sz);
 
 	/* Customer Card Identification Number (CCIN) */
-	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "CC", &kwsz);
+	kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "CC", &sz);
 	if (kw) {
-		str = zalloc(kwsz + 1);
-		if (!str)
-			goto no_memory;
-		memcpy(str, kw, kwsz);
-		dt_add_property_string(node, "ccin", str);
-		cinfo = card_info_lookup(str);
+		dt_add_property_nstr(node, "ccin", kw, sz);
+
+		cinfo = card_info_lookup((char *)kw);
 		if (cinfo) {
 			dt_add_property_string(node,
 				       "description", cinfo->description);
 		} else {
-			dt_add_property_string(node, "description", "Unknown");
-			prlog(PR_WARNING,
-			      "VPD: CCIN desc not available for : %s\n", str);
+			kw = vpd_find(fruvpd, fruvpd_sz, "VINI", "DR", &sz);
+			if (kw) {
+				dt_add_property_nstr(node,
+						     "description", kw, sz);
+			} else {
+				dt_add_property_string(node, "description", "Unknown");
+				prlog(PR_WARNING,
+				      "VPD: CCIN desc not available for: %s\n",
+				      (char *)kw);
+			}
 		}
-		free(str);
 	}
+
 	return;
-no_memory:
-	prerror("VPD: memory allocation failure in VINI parsing\n");
-}
-
-static const char *vpd_map_name(const char *vpd_name)
-{
-	/* vpd_name is a 2 char array */
-	switch (vpd_name[0]) {
-	case 'A':
-		switch (vpd_name[1]) {
-		case 'A':
-			return "ac-power-supply";
-		case 'M':
-			return "air-mover";
-		case 'V':
-			return "anchor-card";
-		}
-		break;
-	case 'B':
-		switch (vpd_name[1]) {
-		case 'A':
-			return "bus-adapter-card";
-		case 'C':
-			return "battery-charger";
-		case 'D':
-			return "bus-daughter-card";
-		case 'E':
-			return "bus-expansion-card";
-		case 'P':
-			return "backplane";
-		case 'R':
-			return "backplane-riser";
-		case 'X':
-			return "backplane-extender";
-		}
-		break;
-	case 'C':
-		switch (vpd_name[1]) {
-		case 'A':
-			return "calgary-bridge";
-		case 'B':
-			return "infiniband-connector";
-		case 'C':
-			return "clock-card";
-		case 'D':
-			return "card-connector";
-		case 'E':
-			return "ethernet-connector";
-		case 'L':
-			return "calgary-phb";
-		case 'I':
-			return "capacity-card";
-		case 'O':
-			return "sma-connector";
-		case 'P':
-			return "processor-capacity-card";
-		case 'R':
-			return "rio-connector";
-		case 'S':
-			return "serial-connector";
-		case 'U':
-			return "usb-connector";
-		}
-		break;
-	case 'D':
-		switch (vpd_name[1]) {
-		case 'B':
-			return "dasd-backplane";
-		case 'C':
-			return "drawer-card";
-		case 'E':
-			return "drawer-extension";
-		case 'I':
-			return "drawer-interposer";
-		case 'L':
-			return "p7ih-dlink-connector";
-		case 'T':
-			return "legacy-pci-card";
-		case 'V':
-			return "media-drawer-led";
-		}
-		break;
-	case 'E':
-		switch (vpd_name[1]) {
-		case 'I':
-			return "enclosure-led";
-		case 'F':
-			return "enclosure-fault-led";
-		case 'S':
-			return "embedded-sas";
-		case 'T':
-			return "ethernet-riser";
-		case 'V':
-			return "enclosure";
-		}
-		break;
-	case 'F':
-		switch (vpd_name[1]) {
-		case 'M':
-			return "frame";
-		}
-		break;
-	case 'H':
-		switch (vpd_name[1]) {
-		case 'B':
-			return "host-rio-pci-card";
-		case 'D':
-			return "high-speed-card";
-		case 'M':
-			return "hmc-connector";
-		}
-		break;
-	case 'I':
-		switch (vpd_name[1]) {
-		case 'B':
-			return "io-backplane";
-		case 'C':
-			return "io-card";
-		case 'D':
-			return "ide-connector";
-		case 'I':
-			return "io-drawer-led";
-		case 'P':
-			return "interplane-card";
-		case 'S':
-			return "smp-vbus-cable";
-		case 'T':
-			return "enclosure-cable";
-		case 'V':
-			return "io-enclosure";
-		}
-		break;
-	case 'K':
-		switch (vpd_name[1]) {
-		case 'V':
-			return "keyboard-led";
-		}
-		break;
-	case 'L':
-		switch (vpd_name[1]) {
-		case '2':
-			return "l2-cache-module";
-		case '3':
-			return "l3-cache-module";
-		case 'C':
-			return "squadrons-light-connector";
-		case 'R':
-			return "p7ih-connector";
-		case 'O':
-			return "system-locate-led";
-		case 'T':
-			return "squadrons-light-strip";
-		}
-		break;
-	case 'M':
-		switch (vpd_name[1]) {
-		case 'B':
-			return "media-backplane";
-		case 'E':
-			return "map-extension";
-		case 'M':
-			return "mip-meter";
-		case 'S':
-			return "ms-dimm";
-		}
-		break;
-	case 'N':
-		switch (vpd_name[1]) {
-		case 'B':
-			return "nvram-battery";
-		case 'C':
-			return "sp-node-controller";
-		case 'D':
-			return "numa-dimm";
-		}
-		break;
-	case 'O':
-		switch (vpd_name[1]) {
-		case 'D':
-			return "cuod-card";
-		case 'P':
-			return "op-panel";
-		case 'S':
-			return "oscillator";
-		}
-		break;
-	case 'P':
-		switch (vpd_name[1]) {
-		case '2':
-			return "ioc";
-		case '5':
-			return "ioc-bridge";
-		case 'B':
-			return "io-drawer-backplane";
-		case 'C':
-			return "power-capacitor";
-		case 'D':
-			return "processor-card";
-		case 'F':
-			return "processor";
-		case 'I':
-			return "ioc-phb";
-		case 'O':
-			return "spcn";
-		case 'N':
-			return "spcn-connector";
-		case 'R':
-			return "pci-riser-card";
-		case 'S':
-			return "power-supply";
-		case 'T':
-			return "pass-through-card";
-		case 'X':
-			return "psc-sync-card";
-		case 'W':
-			return "power-connector";
-		}
-		break;
-	case 'R':
-		switch (vpd_name[1]) {
-		case 'G':
-			return "regulator";
-		case 'I':
-			return "riser";
-		case 'K':
-			return "rack-indicator";
-		case 'W':
-			return "riscwatch-connector";
-		}
-		break;
-	case 'S':
-		switch (vpd_name[1]) {
-		case 'A':
-			return "sys-attn-led";
-		case 'B':
-			return "backup-sysvpd";
-		case 'C':
-			return "scsi-connector";
-		case 'D':
-			return "sas-connector";
-		case 'I':
-			return "scsi-ide-converter";
-		case 'L':
-			return "phb-slot";
-		case 'P':
-			return "service-processor";
-		case 'R':
-			return "service-card";
-		case 'S':
-			return "soft-switch";
-		case 'V':
-			return "system-vpd";
-		case 'Y':
-			return "legacy-sysvpd";
-		}
-		break;
-	case 'T':
-		switch (vpd_name[1]) {
-		case 'D':
-			return "tod-clock";
-		case 'I':
-			return "torrent-pcie-phb";
-		case 'L':
-			return "torrent-riser";
-		case 'M':
-			return "thermal-sensor";
-		case 'P':
-			return "tpmd-adapter";
-		case 'R':
-			return "torrent-bridge";
-		}
-		break;
-	case 'V':
-		switch (vpd_name[1]) {
-		case 'V':
-			return "root-node-vpd";
-		}
-		break;
-	case 'W':
-		switch (vpd_name[1]) {
-		case 'D':
-			return "water_device";
-		}
-		break;
-	}
-
-	prlog(PR_WARNING,
-	      "VPD: Could not map FRU ID %s to a known name\n", vpd_name);
-	return "Unknown";
 }
 
 static bool valid_child_entry(const struct slca_entry *entry)
@@ -444,77 +337,92 @@ static bool valid_child_entry(const struct slca_entry *entry)
 	return false;
 }
 
-static void vpd_add_children(struct dt_node *parent, uint16_t slca_index)
+void vpd_data_parse(struct dt_node *node, const void *fruvpd, u32 fruvpd_sz)
 {
-	const struct slca_entry *s_entry, *child;
-	uint16_t current_child_index, max_index;
-
-	s_entry = slca_get_entry(slca_index);
-	if (!s_entry || (s_entry->nr_child == 0))
-		return;
-
-	/*
-	 * This slca_entry has children. Parse the children array
-	 * and add nodes for valid entries.
-	 *
-	 * A child entry is valid if all of the following criteria is met
-	 *	a. SLCA_INSTALL_INSTALLED is set in s_entry->install_indic
-	 *	b. SLCA_VPD_COLLECTED is set in s_entry->vpd_collected
-	 *	c. The SLCA is not a duplicate entry.
-	 */
-
-	/* current_index tracks where we are right now in the array */
-	current_child_index = be16_to_cpu(s_entry->child_index);
-
-	/* max_index tracks how far down the array we must traverse */
-	max_index = be16_to_cpu(s_entry->child_index)
-				+ be16_to_cpu(s_entry->nr_child);
-
-	while (current_child_index < max_index) {
-		child = slca_get_entry(current_child_index);
-		if (!child)
-			return;
-
-		if (valid_child_entry(child)) {
-			struct dt_node *node;
-
-			node = dt_create_vpd_node(parent, child);
-			if (!node)
-				return;
-		}
-
-		/* Skip dups -- currently we presume dups are contiguous */
-		if (child->nr_dups > 0)
-			current_child_index += child->nr_dups;
-		current_child_index++;
-	}
-	return;
+	if (vpd_find_record(fruvpd, fruvpd_sz, "OPFR", NULL))
+		vpd_opfr_parse(node, fruvpd, fruvpd_sz);
+	else
+		vpd_vini_parse(node, fruvpd, fruvpd_sz);
 }
 
-/* Create the vpd node and add its children */
-static struct dt_node *dt_create_vpd_node(struct dt_node *parent,
-					  const struct slca_entry *entry)
+/* Create the /vpd node and add its children */
+void dt_init_vpd_node(void)
 {
-	struct dt_node *node;
-	const char *name;
-	uint64_t addr;
+	const char *name, *p_name;
+	int count, index;
+	uint64_t addr, p_addr;
+	struct dt_node *dt_vpd;
+	struct HDIF_common_hdr *slca_hdr;
+	struct dt_node *parent, *node;
+	const struct slca_entry *entry, *p_entry;
 
-	name = vpd_map_name(entry->fru_id);
-	addr = (uint64_t)be16_to_cpu(entry->rsrc_id);
-	node = dt_new_addr(parent, name, addr);
-	if (!node) {
-		prerror("VPD: Creating node at %s@%"PRIx64" failed\n", name, addr);
-		return NULL;
+	dt_vpd = dt_new(dt_root, "vpd");
+	assert(dt_vpd);
+	dt_add_property_string(dt_vpd, "compatible", "ibm,opal-v3-vpd");
+
+	slca_hdr = get_hdif(&spira.ntuples.slca, SLCA_HDIF_SIG);
+	if (!slca_hdr) {
+		prerror("SLCA Invalid\n");
+		return;
 	}
 
-	/* Add location code */
-	slca_vpd_add_loc_code(node, be16_to_cpu(entry->my_index));
-	/* Add FRU label */
-	dt_add_property(node, "fru-type", entry->fru_id, 2);
-	/* Recursively add children */
-	vpd_add_children(node, be16_to_cpu(entry->my_index));
+	count = HDIF_get_iarray_size(slca_hdr, SLCA_IDATA_ARRAY);
+	if (count < 0) {
+		prerror("SLCA: Can't find SLCA array size!\n");
+		return;
+	}
 
-	return node;
+	for (index = 0; index < count; index++) {
+		/* Get SLCA entry */
+		entry = slca_get_entry(index);
+		if (!entry)
+			goto next_entry;
+
+		/*
+		 * A child entry is valid if all of the following criteria is met
+		 *   a. SLCA_INSTALL_INSTALLED is set in s_entry->install_indic
+		 *   b. SLCA_VPD_COLLECTED is set in s_entry->vpd_collected
+		 *   c. The SLCA is not a duplicate entry.
+		 */
+		if (!valid_child_entry(entry))
+			goto next_entry;
+
+		name = vpd_map_name(entry->fru_id);
+		addr = be16_to_cpu(entry->rsrc_id);
+		/* Check node is already created or not */
+		if (dt_find_by_name_addr(dt_vpd, name, addr))
+			goto next_entry;
+
+		/* Get parent node */
+		if (index == SLCA_ROOT_INDEX) {
+			parent = dt_vpd;
+		} else {
+			p_entry = slca_get_entry(be16_to_cpu(entry->parent_index));
+			if (!p_entry)
+				goto next_entry;
+			p_name = vpd_map_name(p_entry->fru_id);
+			p_addr = be16_to_cpu(p_entry->rsrc_id);
+			parent = dt_find_by_name_addr(dt_vpd, p_name, p_addr);
+		}
+		if (!parent)
+			goto next_entry;
+
+		node = dt_new_addr(parent, name, addr);
+		if (!node) {
+			prerror("VPD: Creating node at %s@%"PRIx64" failed\n",
+				name, addr);
+			goto next_entry;
+		}
+
+		/* Add location code */
+		slca_vpd_add_loc_code(node, be16_to_cpu(entry->my_index));
+		/* Add FRU label */
+		dt_add_property(node, "fru-type", entry->fru_id, 2);
+
+next_entry:
+		/* Skip dups -- dups are contiguous */
+		index += entry->nr_dups;
+	}
 }
 
 struct dt_node *dt_add_vpd_node(const struct HDIF_common_hdr *hdr,
@@ -524,12 +432,9 @@ struct dt_node *dt_add_vpd_node(const struct HDIF_common_hdr *hdr,
 	unsigned int fruvpd_sz, fru_id_sz;
 	const struct slca_entry *entry;
 	struct dt_node *dt_vpd, *node;
-	static bool first = true;
 	const void *fruvpd;
 	const char *name;
 	uint64_t addr;
-	char *lname;
-	int len;
 
 	fru_id = HDIF_get_idata(hdr, indx_fru, &fru_id_sz);
 	if (!fru_id)
@@ -543,87 +448,130 @@ struct dt_node *dt_add_vpd_node(const struct HDIF_common_hdr *hdr,
 	if (!dt_vpd)
 		return NULL;
 
-	if (first) {
-		entry = slca_get_entry(SLCA_ROOT_INDEX);
-		if (!entry) {
-			prerror("VPD: Could not find the slca root entry\n");
-			return NULL;
-		}
-
-		node = dt_create_vpd_node(dt_vpd, entry);
-		if (!node)
-			return NULL;
-
-		first = false;
-	}
-
 	entry = slca_get_entry(be16_to_cpu(fru_id->slca_index));
 	if (!entry)
 		return NULL;
 
 	name = vpd_map_name(entry->fru_id);
-	addr = (uint64_t)be16_to_cpu(entry->rsrc_id);
-	len = strlen(name) + STR_MAX_CHARS(addr) + 2;
-	lname = zalloc(len);
-	if (!lname) {
-		prerror("VPD: Failed to allocate memory\n");
-		return NULL;
-	}
-
-	snprintf(lname, len, "%s@%llx", name, (long long)addr);
-
+	addr = be16_to_cpu(entry->rsrc_id);
 	/* Get the node already created */
-	node = dt_find_by_name(dt_vpd, lname);
-	free(lname);
+	node = dt_find_by_name_addr(dt_vpd, name, addr);
 	/*
 	 * It is unlikely that node not found because vpd nodes have the
 	 * corresponding slca entry which we would have used to populate the vpd
 	 * tree during the 'first' pass above so that we just need to perform
 	 * VINI parse and add the vpd data..
-	 * Still, we consider this case and create fresh node under '/vpd' if
-	 * 'node' not found.
 	 */
-	if (!node) {
-		node = dt_create_vpd_node(dt_vpd, entry);
-		if (!node)
-			return NULL;
-	}
+	if (!node)
+		return NULL;
 
 	/* Parse VPD fields, ensure that it has not been added already */
-	if (!dt_find_property(node, "ibm,vpd")) {
+	if (vpd_valid(fruvpd, fruvpd_sz)
+	    && !dt_find_property(node, "ibm,vpd")) {
 		dt_add_property(node, "ibm,vpd", fruvpd, fruvpd_sz);
-		vpd_vini_parse(node, fruvpd, fruvpd_sz);
+		vpd_data_parse(node, fruvpd, fruvpd_sz);
 	}
 
 	return node;
 }
 
-static void sysvpd_parse(void)
+static void dt_add_model_name(void)
+{
+	const char *model_name = NULL;
+	const struct machine_info *mi;
+	const struct iplparams_sysparams *p;
+	const struct HDIF_common_hdr *iplp;
+	const struct dt_property *model;
+
+	model = dt_find_property(dt_root, "model");
+
+	iplp = get_hdif(&spira.ntuples.ipl_parms, "IPLPMS");
+	if (!iplp)
+		goto def_model;
+
+	p = HDIF_get_idata(iplp, IPLPARAMS_SYSPARAMS, NULL);
+	if (!CHECK_SPPTR(p))
+		goto def_model;
+
+	if (be16_to_cpu(iplp->version) >= 0x60)
+		model_name = p->sys_type_str;
+
+def_model:
+	if ((!model_name || model_name[0] == '\0') && model) {
+		mi = machine_info_lookup(model->prop);
+		if (mi)
+			model_name = mi->name;
+	}
+
+	if(model_name)
+		dt_add_property_string(dt_root, "model-name", model_name);
+}
+
+static void sysvpd_parse_opp(const void *sysvpd, unsigned int sysvpd_sz)
+{
+	const char *v;
+	uint8_t sz;
+
+	v = vpd_find(sysvpd, sysvpd_sz, "OSYS", "MM", &sz);
+	if (v)
+		dt_add_property_nstr(dt_root, "model", v, sz);
+	else
+		dt_add_property_string(dt_root, "model", "Unknown");
+
+	v = vpd_find(sysvpd, sysvpd_sz, "OSYS", "SS", &sz);
+	if (v)
+		dt_add_property_nstr(dt_root, "system-id", v, sz);
+	else
+		dt_add_property_string(dt_root, "system-id", "Unknown");
+}
+
+
+static void sysvpd_parse_legacy(const void *sysvpd, unsigned int sysvpd_sz)
 {
 	const char *model;
 	const char *system_id;
 	const char *brand;
-	char *str;
 	uint8_t sz;
+
+	model = vpd_find(sysvpd, sysvpd_sz, "VSYS", "TM", &sz);
+	if (model)
+		dt_add_property_nstr(dt_root, "model", model, sz);
+	else
+		dt_add_property_string(dt_root, "model", "Unknown");
+
+	system_id = vpd_find(sysvpd, sysvpd_sz, "VSYS", "SE", &sz);
+	if (system_id)
+		dt_add_property_nstr(dt_root, "system-id", system_id, sz);
+	else
+		dt_add_property_string(dt_root, "system-id", "Unknown");
+
+	brand = vpd_find(sysvpd, sysvpd_sz, "VSYS", "BR", &sz);
+	if (brand)
+		dt_add_property_nstr(dt_root, "system-brand", brand, sz);
+	else
+		dt_add_property_string(dt_root, "brand", "Unknown");
+}
+
+static void sysvpd_parse(void)
+{
 	const void *sysvpd;
 	unsigned int sysvpd_sz;
 	unsigned int fru_id_sz;
 	struct dt_node *dt_vpd;
 	const struct spira_fru_id *fru_id;
 	struct HDIF_common_hdr *sysvpd_hdr;
-	const struct machine_info *mi;
 
 	sysvpd_hdr = get_hdif(&spira.ntuples.system_vpd, SYSVPD_HDIF_SIG);
 	if (!sysvpd_hdr)
-		goto no_sysvpd;
+		return;
 
 	fru_id = HDIF_get_idata(sysvpd_hdr, SYSVPD_IDATA_FRU_ID, &fru_id_sz);
 	if (!fru_id)
-		goto no_sysvpd;;
+		return;
 
 	sysvpd = HDIF_get_idata(sysvpd_hdr, SYSVPD_IDATA_KW_VPD, &sysvpd_sz);
 	if (!CHECK_SPPTR(sysvpd))
-		goto no_sysvpd;
+		return;
 
 	/* Add system VPD */
 	dt_vpd = dt_find_by_path(dt_root, "/vpd");
@@ -632,57 +580,13 @@ static void sysvpd_parse(void)
 		slca_vpd_add_loc_code(dt_vpd, be16_to_cpu(fru_id->slca_index));
 	}
 
-	model = vpd_find(sysvpd, sysvpd_sz, "VSYS", "TM", &sz);
-	if (!model)
-		goto no_sysvpd;
-	str = zalloc(sz + 1);
-	if (!str)
-		goto no_sysvpd;
-	memcpy(str, model, sz);
-	dt_add_property_string(dt_root, "model", str);
-	mi = machine_info_lookup(str);
-	if (mi) {
-		dt_add_property_string(dt_root, "model-name", mi->name);
-	} else {
-		dt_add_property_string(dt_root, "model-name", "Unknown");
-		prlog(PR_WARNING, "VPD: Model name %s not known\n", str);
-	}
+	/* Look for the new OpenPower "OSYS" first */
+	if (vpd_find_record(sysvpd, sysvpd_sz, "OSYS", NULL))
+		sysvpd_parse_opp(sysvpd, sysvpd_sz);
+	else
+		sysvpd_parse_legacy(sysvpd, sysvpd_sz);
 
-	free(str);
-	dt_add_property_string(dt_root, "vendor", "IBM");
-
-	system_id = vpd_find(sysvpd, sysvpd_sz, "VSYS", "SE", &sz);
-	if (!system_id)
-		goto no_sysid;
-	str = zalloc(sz + 1);
-	if (!str)
-		goto no_sysid;
-	memcpy(str, system_id, sz);
-	dt_add_property_string(dt_root, "system-id", str);
-	free(str);
-
-	brand = vpd_find(sysvpd, sysvpd_sz, "VSYS", "BR", &sz);
-	if (!brand)
-		goto no_brand;
-	str = zalloc(sz + 1);
-	if (!str)
-		goto no_brand;
-	memcpy(str, brand, sz);
-	dt_add_property_string(dt_root, "system-brand", str);
-	free(str);
-
-	return;
-
-no_brand:
-	dt_add_property_string(dt_root, "system-brand", "Unknown");
-	return;
-
-no_sysid:
-	dt_add_property_string(dt_root, "system-id", "Unknown");
-	return;
-
- no_sysvpd:
-	dt_add_property_string(dt_root, "model", "Unknown");
+	dt_add_model_name();
 }
 
 static void iokid_vpd_parse(const struct HDIF_common_hdr *iohub_hdr)
@@ -759,14 +663,14 @@ void vpd_parse(void)
 {
 	const struct HDIF_common_hdr *fruvpd_hdr;
 
+	/* System VPD uses the VSYS record, so its special */
+	sysvpd_parse();
+
 	/* Enclosure */
 	_vpd_parse(spira.ntuples.nt_enclosure_vpd);
 
 	/* Backplane */
 	_vpd_parse(spira.ntuples.backplane_vpd);
-
-	/* System VPD uses the VSYS record, so its special */
-	sysvpd_parse();
 
 	/* clock card -- does this use the FRUVPD sig? */
 	_vpd_parse(spira.ntuples.clock_vpd);

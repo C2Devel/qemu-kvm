@@ -98,6 +98,12 @@ find-qemu-rtas
 ;
 
 : rtas-quiesce ( -- )
+    fdt-flatten-tree
+    dup hv-update-dt ?dup IF
+        \ Ignore hcall not implemented error, print error otherwise
+        dup -2 <> IF ." HV-UPDATE-DT error: " . cr ELSE drop THEN
+    THEN
+    fdt-flatten-tree-free
     " quiesce" rtas-get-token rtas-cb rtas>token l!
     0 rtas-cb rtas>nargs l!
     0 rtas-cb rtas>nret l!
@@ -170,16 +176,16 @@ rtas-node set-node
 : open true ;
 : close ;
 
+: store-rtas-loc ( adr )
+    s" /rtas" find-node >r
+    encode-int s" slof,rtas-base" r@ set-property
+    rtas-size encode-int s" slof,rtas-size" r> set-property
+;
+
 : instantiate-rtas ( adr -- entry )
+    dup store-rtas-loc
     dup rtas-base swap rtas-size move
-    dup rtas-entry rtas-base - +
-    2dup hv-rtas-update dup 0 <> IF
-	\ Ignore hcall not implemented error, print error otherwise
-	dup -2 <> IF ." HV-RTAS-UPDATE error: " . cr ELSE drop THEN
-    ELSE
-	drop
-    THEN
-    nip
+    rtas-entry rtas-base - +
 ;
 
 device-end

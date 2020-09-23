@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2016 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,15 @@
  * limitations under the License.
  */
 
+#ifndef __CAPP_H
+#define __CAPP_H
+
+/*
+ * eyecatcher PHB3:  'CAPPLIDH' in ASCII
+ * eyecatcher PHB4:  'CAPPPSLL' in ASCII
+ */
 struct capp_lid_hdr {
-	be64 eyecatcher;	/* 'CAPPLIDH' in ASCII */
+	be64 eyecatcher;
 	be64 version;
 	be64 lid_no;
 	be64 pad;
@@ -24,7 +31,7 @@ struct capp_lid_hdr {
 };
 
 struct capp_ucode_data_hdr {
-	be64 eyecatcher;  	/* 'CAPPUCOD' in ASCII */
+	be64 eyecatcher;	/* 'CAPPUCOD' in ASCII */
 	u8 version;
 	u8 reg;
 	u8 reserved[2];
@@ -44,7 +51,6 @@ struct capp_ucode_lid {
 	struct capp_ucode_data data; /* This repeats */
 };
 
-
 enum capp_reg {
 	apc_master_cresp		= 0x1,
 	apc_master_uop_table		= 0x2,
@@ -59,31 +65,35 @@ enum capp_reg {
 	apc_master_powerbus_ctrl	= 0xB
 };
 
-#define CAPP_SNP_ARRAY_ADDR_REG			0x2013028
-#define CAPP_APC_MASTER_ARRAY_ADDR_REG		0x201302A
-#define CAPP_SNP_ARRAY_WRITE_REG		0x2013801
-#define CAPP_APC_MASTER_ARRAY_WRITE_REG		0x2013802
+struct capp_info {
+	unsigned int capp_index;
+	unsigned int phb_index;
+	uint64_t capp_fir_reg;
+	uint64_t capp_fir_mask_reg;
+	uint64_t capp_fir_action0_reg;
+	uint64_t capp_fir_action1_reg;
+	uint64_t capp_err_status_ctrl_reg;
+};
 
-#define CAPP_FIR                                0x2013000
-#define CAPP_ERR_RPT_CLR                        0x2013013
-#define APC_MASTER_PB_CTRL			0x2013018
-#define APC_MASTER_CAPI_CTRL			0x2013019
-#define TRANSPORT_CONTROL			0x201301C
-#define CANNED_PRESP_MAP0			0x201301D
-#define CANNED_PRESP_MAP1			0x201301E
-#define CANNED_PRESP_MAP2			0x201301F
-#define CAPP_ERR_STATUS_CTRL			0x201300E
-#define FLUSH_SUE_STATE_MAP			0x201300F
-#define CAPP_TB					0x2013026
-#define CAPP_TFMR				0x2013027
-#define CAPP_EPOCH_TIMER_CTRL			0x201302C
-#define FLUSH_UOP_CONFIG1			0x2013803
-#define FLUSH_UOP_CONFIG2			0x2013804
-#define SNOOP_CAPI_CONFIG			0x201301A
+struct capp_ops {
+	int64_t (*get_capp_info)(int, struct phb *, struct capp_info *);
+};
 
-/*
- * Naples has two CAPP units, statically mapped:
- * CAPP0 attached to PHB0, and CAPP1 attached to PHB1.
- * The addresses of CAPP1 XSCOMS registers are 0x180 away.
- */
-#define CAPP1_REG_OFFSET 0x180
+struct proc_chip;
+extern struct lock capi_lock;
+extern struct capp_ops capi_ops;
+
+extern bool capp_ucode_loaded(struct proc_chip *chip, unsigned int index);
+
+extern int64_t capp_load_ucode(unsigned int chip_id, uint32_t opal_id,
+			       unsigned int index, u64 lid_eyecatcher,
+			       uint32_t reg_offset,
+			       uint64_t apc_master_addr,
+			       uint64_t apc_master_write,
+			       uint64_t snp_array_addr,
+			       uint64_t snp_array_write);
+
+extern int64_t capp_get_info(int chip_id, struct phb *phb,
+			     struct capp_info *info);
+
+#endif /* __CAPP_H */

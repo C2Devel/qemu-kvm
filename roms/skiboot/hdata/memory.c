@@ -19,7 +19,9 @@
 #include <vpd.h>
 #include <ccan/str/str.h>
 #include <libfdt/libfdt.h>
+#include <mem_region.h>
 #include <types.h>
+#include <inttypes.h>
 
 #include "spira.h"
 #include "hdata.h"
@@ -29,16 +31,12 @@ struct HDIF_ram_area_id {
 #define RAM_AREA_INSTALLED	0x8000
 #define RAM_AREA_FUNCTIONAL	0x4000
 	__be16 flags;
-};
+} __packed;
 
 struct HDIF_ram_area_size {
-	__be64 mb;
-};
-
-struct ram_area {
-	const struct HDIF_ram_area_id *raid;
-	const struct HDIF_ram_area_size *rasize;
-};
+	__be32 reserved1;
+	__be32 mb;
+} __packed;
 
 struct HDIF_ms_area_address_range {
 	__be64 start;
@@ -46,7 +44,7 @@ struct HDIF_ms_area_address_range {
 	__be32 chip;
 	__be32 mirror_attr;
 	__be64 mirror_start;
-};
+} __packed;
 
 struct HDIF_ms_area_id {
 	__be16 id;
@@ -60,7 +58,7 @@ struct HDIF_ms_area_id {
 #define MS_AREA_SHARED		0x2000
 	__be16 flags;
 	__be16 share_id;
-};
+} __packed;
 
 static struct dt_node *find_shared(struct dt_node *root, u16 id, u64 start, u64 len)
 {
@@ -225,9 +223,8 @@ static void add_bus_freq_to_ram_area(struct dt_node *ram_node, u32 chip_id)
 		return;
 	}
 
-	freq = ((u64)be32_to_cpu(timebase->memory_bus_frequency)) *1000000ul;
-	dt_add_property_cells(ram_node, "ibm,memory-bus-frequency", hi32(freq),
-			      lo32(freq));
+	freq = ((u64)be32_to_cpu(timebase->memory_bus_frequency)) * 1000000ul;
+	dt_add_property_u64(ram_node, "ibm,memory-bus-frequency", freq);
 }
 
 static void add_size_to_ram_area(struct dt_node *ram_node,
@@ -268,6 +265,7 @@ static void vpd_add_ram_area(const struct HDIF_common_hdr *msarea)
 	const struct HDIF_ram_area_id *ram_id;
 	struct dt_node *ram_node;
 	u32 chip_id;
+	const void *vpd_blob;
 
 	ramptr = HDIF_child_arr(msarea, 0);
 	if (!CHECK_SPPTR(ramptr)) {
@@ -284,15 +282,33 @@ static void vpd_add_ram_area(const struct HDIF_common_hdr *msarea)
 		if (!CHECK_SPPTR(ram_id))
 			continue;
 
-		if ((be16_to_cpu(ram_id->flags) & RAM_AREA_INSTALLED) &&
-		    (be16_to_cpu(ram_id->flags) & RAM_AREA_FUNCTIONAL)) {
-			ram_node = dt_add_vpd_node(ramarea, 0, 1);
-			if (ram_node) {
-				chip_id = add_chip_id_to_ram_area(msarea,
-								  ram_node);
-				add_bus_freq_to_ram_area(ram_node, chip_id);
-				add_size_to_ram_area(ram_node, ramarea, 1);
-			}
+		/* Don't add VPD for non-existent RAM */
+		if (!(be16_to_cpu(ram_id->flags) & RAM_AREA_INSTALLED))
+			continue;
+
+		ram_node = dt_add_vpd_node(ramarea, 0, 1);
+		if (!ram_node)
+			continue;
+
+		chip_id = add_chip_id_to_ram_area(msarea, ram_node);
+		add_bus_freq_to_ram_area(ram_node, chip_id);
+
+		vpd_blob = HDIF_get_idata(ramarea, 1, &ram_sz);
+
+		/*
+		 * For direct-attached memory we have a DDR "Serial
+		 * Presence Detection" blob rather than an IBM keyword
+		 * blob.
+		 */
+		if (vpd_valid(vpd_blob, ram_sz)) {
+			/* the ibm,vpd blob was added in dt_add_vpd_node() */
+			add_size_to_ram_area(ram_node, ramarea, 1);
+		} else {
+			/*
+			 * FIXME: There's probably a way to calculate the
+			 * size of the DIMM from the SPD info.
+			 */
+			dt_add_property(ram_node, "spd", vpd_blob, ram_sz);
 		}
 	}
 }
@@ -383,6 +399,172 @@ static void get_msareas(struct dt_node *root,
 	}
 }
 
+static struct dt_node *dt_hb_reserves;
+
+static struct dt_node *add_hb_reserve_node(const char *name, u64 start, u64 end)
+{
+	struct dt_node *node, *hb;
+
+	if (!dt_hb_reserves) {
+		hb = dt_new_check(dt_root, "ibm,hostboot");
+		dt_add_property_cells(hb, "#size-cells", 2);
+		dt_add_property_cells(hb, "#address-cells", 2);
+
+		dt_hb_reserves = dt_new_check(hb, "reserved-memory");
+		dt_add_property(dt_hb_reserves, "ranges", NULL, 0);
+		dt_add_property_cells(dt_hb_reserves, "#size-cells", 2);
+		dt_add_property_cells(dt_hb_reserves, "#address-cells", 2);
+	}
+
+	node = dt_new_addr(dt_hb_reserves, name, start);
+	if (!node) {
+		prerror("Unable to create node for %s@%llx\n",
+			name, (unsigned long long) start);
+		return NULL;
+	}
+
+	dt_add_property_u64s(node, "reg", start, end - start + 1);
+
+	return node;
+}
+
+#define HRMOR_BIT (1ul << 63)
+
+static void get_hb_reserved_mem(struct HDIF_common_hdr *ms_vpd)
+{
+	const struct msvpd_hb_reserved_mem *hb_resv_mem;
+	u64 start_addr, end_addr, label_size;
+	struct dt_node *node;
+	int count, i;
+	char *label;
+
+	/*
+	 * XXX: Reservation names only exist on P9 and on P7/8 we get the
+	 *      reserved ranges through the hostboot mini-FDT instead.
+	 */
+	if (proc_gen < proc_gen_p9)
+		return;
+
+	count = HDIF_get_iarray_size(ms_vpd, MSVPD_IDATA_HB_RESERVED_MEM);
+	if (count <= 0) {
+		prerror("MS VPD: No hostboot reserved memory found\n");
+		return;
+	}
+
+	for (i = 0; i < count; i++) {
+		hb_resv_mem = HDIF_get_iarray_item(ms_vpd,
+						   MSVPD_IDATA_HB_RESERVED_MEM,
+						   i, NULL);
+		if (!CHECK_SPPTR(hb_resv_mem))
+			continue;
+
+		label_size = be32_to_cpu(hb_resv_mem->label_size);
+		start_addr = be64_to_cpu(hb_resv_mem->start_addr);
+		end_addr = be64_to_cpu(hb_resv_mem->end_addr);
+
+		/* Zero length regions are a normal, but should be ignored */
+		if (start_addr - end_addr == 0) {
+			prlog(PR_DEBUG, "MEM: Ignoring zero length range\n");
+			continue;
+		}
+
+		/*
+		 * Workaround broken HDAT reserve regions which are
+		 * bigger than 512MB
+		 */
+		if ((end_addr - start_addr) > 0x20000000) {
+			prlog(PR_ERR, "MEM: Ignoring Bad HDAT reserve: too big\n");
+			continue;
+		}
+
+		/* remove the HRMOR bypass bit */
+		start_addr &= ~HRMOR_BIT;
+		end_addr &= ~HRMOR_BIT;
+		if (label_size > 64)
+			label_size = 64;
+
+		label = malloc(label_size+1);
+		assert(label);
+
+		memcpy(label, hb_resv_mem->label, label_size);
+		label[label_size] = '\0';
+
+		/* Unnamed reservations are always broken. Ignore them. */
+		if (strlen(label) == 0) {
+			free(label);
+			continue;
+		}
+
+		prlog(PR_DEBUG, "MEM: Reserve '%s' %#" PRIx64 "-%#" PRIx64 " (type/inst=0x%08x)\n",
+		      label, start_addr, end_addr, be32_to_cpu(hb_resv_mem->type_instance));
+
+		node = add_hb_reserve_node(label, start_addr, end_addr);
+		if (!node) {
+			prerror("unable to add node?\n");
+			continue;
+		}
+
+		/* the three low bytes of type_instance is the instance data */
+		dt_add_property_cells(node, "ibm,prd-instance",
+			(be32_to_cpu(hb_resv_mem->type_instance) & 0xffffff));
+
+		dt_add_property_string(node, "ibm,prd-label", label);
+	}
+}
+
+static void parse_trace_reservations(struct HDIF_common_hdr *ms_vpd)
+{
+	unsigned int size;
+	int count, i;
+
+	/*
+	 * The trace arrays are only setup when hostboot is explicitly
+	 * configured to enable them. We need to check and gracefully handle
+	 * when they're not present.
+	 */
+
+	if (!HDIF_get_idata(ms_vpd, MSVPD_IDATA_TRACE_AREAS, &size) || !size) {
+		prlog(PR_DEBUG, "MS VPD: No trace areas found\n");
+		return;
+	}
+
+	count = HDIF_get_iarray_size(ms_vpd, MSVPD_IDATA_TRACE_AREAS);
+	if (count <= 0) {
+		prlog(PR_DEBUG, "MS VPD: No trace areas found\n");
+		return;
+	}
+
+	prlog(PR_INFO, "MS VPD: Found %d trace areas\n", count);
+
+	for (i = 0; i < count; i++) {
+		const struct msvpd_trace *trace_area;
+		struct dt_node *node;
+		u64 start, end;
+
+		trace_area = HDIF_get_iarray_item(ms_vpd,
+				MSVPD_IDATA_TRACE_AREAS, i, &size);
+
+		if (!trace_area)
+			return; /* shouldn't happen */
+
+		start = be64_to_cpu(trace_area->start) & ~HRMOR_BIT;
+		end = be64_to_cpu(trace_area->end) & ~HRMOR_BIT;
+
+		prlog(PR_INFO,
+			"MS VPD: Trace area: 0x%.16"PRIx64"-0x%.16"PRIx64"\n",
+			start, end);
+
+		node = add_hb_reserve_node("trace-area", start, end);
+		if (!node) {
+			prerror("MEM: Unable to reserve trace area %p-%p\n",
+				(void *) start, (void *) end);
+			continue;
+		}
+
+		dt_add_property(node, "no-map", NULL, 0);
+	}
+}
+
 static bool __memory_parse(struct dt_node *root)
 {
 	struct HDIF_common_hdr *ms_vpd;
@@ -430,6 +612,10 @@ static bool __memory_parse(struct dt_node *root)
 	      (long long)be64_to_cpu(msac->max_possible_ms_address));
 
 	get_msareas(root, ms_vpd);
+
+	get_hb_reserved_mem(ms_vpd);
+
+	parse_trace_reservations(ms_vpd);
 
 	prlog(PR_INFO, "MS VPD: Total MB of RAM: 0x%llx\n",
 	       (long long)be64_to_cpu(tcms->total_in_mb));

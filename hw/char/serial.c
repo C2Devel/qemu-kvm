@@ -262,15 +262,20 @@ static void serial_xmit(SerialState *s)
         if (s->mcr & UART_MCR_LOOP) {
             /* in loopback mode, say that we just received a char */
             serial_receive1(s, &s->tsr, 1);
-        } else if (qemu_chr_fe_write(&s->chr, &s->tsr, 1) != 1 &&
-                   s->tsr_retry < MAX_XMIT_RETRY) {
-            assert(s->watch_tag == 0);
-            s->watch_tag =
-                qemu_chr_fe_add_watch(&s->chr, G_IO_OUT | G_IO_HUP,
-                                      serial_watch_cb, s);
-            if (s->watch_tag > 0) {
-                s->tsr_retry++;
-                return;
+        } else {
+            int rc = qemu_chr_fe_write(&s->chr, &s->tsr, 1);
+
+            if ((rc == 0 ||
+                 (rc == -1 && errno == EAGAIN)) &&
+                s->tsr_retry < MAX_XMIT_RETRY) {
+                assert(s->watch_tag == 0);
+                s->watch_tag =
+                    qemu_chr_fe_add_watch(&s->chr, G_IO_OUT | G_IO_HUP,
+                                          serial_watch_cb, s);
+                if (s->watch_tag > 0) {
+                    s->tsr_retry++;
+                    return;
+                }
             }
         }
         s->tsr_retry = 0;
@@ -631,10 +636,12 @@ static void serial_event(void *opaque, int event)
         serial_receive_break(s);
 }
 
-static void serial_pre_save(void *opaque)
+static int serial_pre_save(void *opaque)
 {
     SerialState *s = opaque;
     s->fcr_vmstate = s->fcr;
+
+    return 0;
 }
 
 static int serial_pre_load(void *opaque)
@@ -1019,7 +1026,7 @@ static void serial_mm_write(void *opaque, hwaddr addr,
                             uint64_t value, unsigned size)
 {
     SerialState *s = opaque;
-    value &= ~0u >> (32 - (size * 8));
+    value &= 255;
     serial_ioport_write(s, addr >> s->it_shift, value, 1);
 }
 
@@ -1028,16 +1035,22 @@ static const MemoryRegionOps serial_mm_ops[3] = {
         .read = serial_mm_read,
         .write = serial_mm_write,
         .endianness = DEVICE_NATIVE_ENDIAN,
+        .valid.max_access_size = 8,
+        .impl.max_access_size = 8,
     },
     [DEVICE_LITTLE_ENDIAN] = {
         .read = serial_mm_read,
         .write = serial_mm_write,
         .endianness = DEVICE_LITTLE_ENDIAN,
+        .valid.max_access_size = 8,
+        .impl.max_access_size = 8,
     },
     [DEVICE_BIG_ENDIAN] = {
         .read = serial_mm_read,
         .write = serial_mm_write,
         .endianness = DEVICE_BIG_ENDIAN,
+        .valid.max_access_size = 8,
+        .impl.max_access_size = 8,
     },
 };
 

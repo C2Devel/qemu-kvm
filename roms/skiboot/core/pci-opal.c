@@ -23,7 +23,27 @@
 #include <timebase.h>
 #include <timer.h>
 
-#define OPAL_PCICFG_ACCESS(op, cb, type)	\
+#define OPAL_PCICFG_ACCESS_READ(op, cb, type)	\
+static int64_t opal_pci_config_##op(uint64_t phb_id,			\
+				    uint64_t bus_dev_func,		\
+				    uint64_t offset, type data)		\
+{									\
+	struct phb *phb = pci_get_phb(phb_id);				\
+	int64_t rc;							\
+									\
+	if (!opal_addr_valid((void *)data))				\
+		return OPAL_PARAMETER;					\
+									\
+	if (!phb)							\
+		return OPAL_PARAMETER;					\
+	phb_lock(phb);							\
+	rc = phb->ops->cfg_##cb(phb, bus_dev_func, offset, data);	\
+	phb_unlock(phb);						\
+									\
+	return rc;							\
+}
+
+#define OPAL_PCICFG_ACCESS_WRITE(op, cb, type)	\
 static int64_t opal_pci_config_##op(uint64_t phb_id,			\
 				    uint64_t bus_dev_func,		\
 				    uint64_t offset, type data)		\
@@ -40,12 +60,12 @@ static int64_t opal_pci_config_##op(uint64_t phb_id,			\
 	return rc;							\
 }
 
-OPAL_PCICFG_ACCESS(read_byte,		read8, uint8_t *)
-OPAL_PCICFG_ACCESS(read_half_word,	read16, uint16_t *)
-OPAL_PCICFG_ACCESS(read_word,		read32, uint32_t *)
-OPAL_PCICFG_ACCESS(write_byte,		write8, uint8_t)
-OPAL_PCICFG_ACCESS(write_half_word,	write16, uint16_t)
-OPAL_PCICFG_ACCESS(write_word,		write32, uint32_t)
+OPAL_PCICFG_ACCESS_READ(read_byte,		read8, uint8_t *)
+OPAL_PCICFG_ACCESS_READ(read_half_word,		read16, uint16_t *)
+OPAL_PCICFG_ACCESS_READ(read_word,		read32, uint32_t *)
+OPAL_PCICFG_ACCESS_WRITE(write_byte,		write8, uint8_t)
+OPAL_PCICFG_ACCESS_WRITE(write_half_word,	write16, uint16_t)
+OPAL_PCICFG_ACCESS_WRITE(write_word,		write32, uint32_t)
 
 opal_call(OPAL_PCI_CONFIG_READ_BYTE, opal_pci_config_read_byte, 4);
 opal_call(OPAL_PCI_CONFIG_READ_HALF_WORD, opal_pci_config_read_half_word, 4);
@@ -81,6 +101,10 @@ static int64_t opal_pci_eeh_freeze_status(uint64_t phb_id, uint64_t pe_number,
 {
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
+
+	if (!opal_addr_valid(freeze_state) || !opal_addr_valid(pci_error_type)
+		|| !opal_addr_valid(phb_status))
+		return OPAL_PARAMETER;
 
 	if (!phb)
 		return OPAL_PARAMETER;
@@ -131,7 +155,7 @@ static int64_t opal_pci_eeh_freeze_set(uint64_t phb_id, uint64_t pe_number,
 }
 opal_call(OPAL_PCI_EEH_FREEZE_SET, opal_pci_eeh_freeze_set, 3);
 
-static int64_t opal_pci_err_inject(uint64_t phb_id, uint32_t pe_no,
+static int64_t opal_pci_err_inject(uint64_t phb_id, uint64_t pe_number,
 				   uint32_t type, uint32_t func,
 				   uint64_t addr, uint64_t mask)
 {
@@ -148,7 +172,7 @@ static int64_t opal_pci_err_inject(uint64_t phb_id, uint32_t pe_no,
 		return OPAL_PARAMETER;
 
 	phb_lock(phb);
-	rc = phb->ops->err_inject(phb, pe_no, type, func, addr, mask);
+	rc = phb->ops->err_inject(phb, pe_number, type, func, addr, mask);
 	phb_unlock(phb);
 
 	return rc;
@@ -196,7 +220,7 @@ static int64_t opal_pci_set_phb_mem_window(uint64_t phb_id,
 }
 opal_call(OPAL_PCI_SET_PHB_MEM_WINDOW, opal_pci_set_phb_mem_window, 6);
 
-static int64_t opal_pci_map_pe_mmio_window(uint64_t phb_id, uint16_t pe_number,
+static int64_t opal_pci_map_pe_mmio_window(uint64_t phb_id, uint64_t pe_number,
 					   uint16_t window_type,
 					   uint16_t window_num,
 					   uint16_t segment_num)
@@ -269,7 +293,7 @@ static int64_t opal_pci_set_peltv(uint64_t phb_id, uint32_t parent_pe,
 opal_call(OPAL_PCI_SET_PELTV, opal_pci_set_peltv, 4);
 
 static int64_t opal_pci_set_mve(uint64_t phb_id, uint32_t mve_number,
-				uint32_t pe_number)
+				uint64_t pe_number)
 {
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
@@ -344,7 +368,7 @@ opal_call(OPAL_PCI_MSI_EOI, opal_pci_msi_eoi, 2);
 
 static int64_t opal_pci_tce_kill(uint64_t phb_id,
 				 uint32_t kill_type,
-				 uint32_t pe_num, uint32_t tce_size,
+				 uint64_t pe_number, uint32_t tce_size,
 				 uint64_t dma_addr, uint32_t npages)
 {
 	struct phb *phb = pci_get_phb(phb_id);
@@ -355,7 +379,7 @@ static int64_t opal_pci_tce_kill(uint64_t phb_id,
 	if (!phb->ops->tce_kill)
 		return OPAL_UNSUPPORTED;
 	phb_lock(phb);
-	rc = phb->ops->tce_kill(phb, kill_type, pe_num, tce_size,
+	rc = phb->ops->tce_kill(phb, kill_type, pe_number, tce_size,
 				dma_addr, npages);
 	phb_unlock(phb);
 
@@ -363,7 +387,7 @@ static int64_t opal_pci_tce_kill(uint64_t phb_id,
 }
 opal_call(OPAL_PCI_TCE_KILL, opal_pci_tce_kill, 6);
 
-static int64_t opal_pci_set_xive_pe(uint64_t phb_id, uint32_t pe_number,
+static int64_t opal_pci_set_xive_pe(uint64_t phb_id, uint64_t pe_number,
 				    uint32_t xive_num)
 {
 	struct phb *phb = pci_get_phb(phb_id);
@@ -387,6 +411,9 @@ static int64_t opal_get_xive_source(uint64_t phb_id, uint32_t xive_num,
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
 
+	if (!opal_addr_valid(interrupt_source_number))
+		return OPAL_PARAMETER;
+
 	if (!phb)
 		return OPAL_PARAMETER;
 	if (!phb->ops->get_xive_source)
@@ -405,6 +432,9 @@ static int64_t opal_get_msi_32(uint64_t phb_id, uint32_t mve_number,
 {
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
+
+	if (!opal_addr_valid(msi_address) || !opal_addr_valid(message_data))
+		return OPAL_PARAMETER;
 
 	if (!phb)
 		return OPAL_PARAMETER;
@@ -426,6 +456,9 @@ static int64_t opal_get_msi_64(uint64_t phb_id, uint32_t mve_number,
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
 
+	if (!opal_addr_valid(msi_address) || !opal_addr_valid(message_data))
+		return OPAL_PARAMETER;
+
 	if (!phb)
 		return OPAL_PARAMETER;
 	if (!phb->ops->get_msi_64)
@@ -439,7 +472,7 @@ static int64_t opal_get_msi_64(uint64_t phb_id, uint32_t mve_number,
 }
 opal_call(OPAL_GET_MSI_64, opal_get_msi_64, 6);
 
-static int64_t opal_pci_map_pe_dma_window(uint64_t phb_id, uint16_t pe_number,
+static int64_t opal_pci_map_pe_dma_window(uint64_t phb_id, uint64_t pe_number,
 					  uint16_t window_id,
 					  uint16_t tce_levels,
 					  uint64_t tce_table_addr,
@@ -464,7 +497,7 @@ static int64_t opal_pci_map_pe_dma_window(uint64_t phb_id, uint16_t pe_number,
 opal_call(OPAL_PCI_MAP_PE_DMA_WINDOW, opal_pci_map_pe_dma_window, 7);
 
 static int64_t opal_pci_map_pe_dma_window_real(uint64_t phb_id,
-					       uint16_t pe_number,
+					       uint64_t pe_number,
 					       uint16_t window_id,
 					       uint64_t pci_start_addr,
 					       uint64_t pci_mem_size)
@@ -607,11 +640,11 @@ static int64_t opal_pci_poll(uint64_t id)
 
 	if (!slot || !phb)
 		return OPAL_PARAMETER;
-	if (!slot->ops.poll)
+	if (!slot->ops.run_sm)
 		return OPAL_UNSUPPORTED;
 
 	phb_lock(phb);
-	rc = slot->ops.poll(slot);
+	rc = slot->ops.run_sm(slot);
 	phb_unlock(phb);
 
 	/* Return milliseconds for caller to sleep: round up */
@@ -632,6 +665,9 @@ static int64_t opal_pci_get_presence_state(uint64_t id, uint64_t data)
 	uint8_t *presence = (uint8_t *)data;
 	int64_t rc;
 
+	if (!opal_addr_valid(presence))
+		return OPAL_PARAMETER;
+
 	if (!slot || !phb)
 		return OPAL_PARAMETER;
 	if (!slot->ops.get_presence_state)
@@ -651,6 +687,9 @@ static int64_t opal_pci_get_power_state(uint64_t id, uint64_t data)
 	struct phb *phb = slot ? slot->phb : NULL;
 	uint8_t *power_state = (uint8_t *)data;
 	int64_t rc;
+
+	if (!opal_addr_valid(power_state))
+		return OPAL_PARAMETER;
 
 	if (!slot || !phb)
 		return OPAL_PARAMETER;
@@ -739,6 +778,9 @@ static int64_t opal_pci_set_power_state(uint64_t async_token,
 	if (!slot || !phb)
 		return OPAL_PARAMETER;
 
+	if (!opal_addr_valid(state))
+		return OPAL_PARAMETER;
+
 	phb_lock(phb);
 	switch (*state) {
 	case OPAL_PCI_SLOT_POWER_OFF:
@@ -763,8 +805,8 @@ static int64_t opal_pci_set_power_state(uint64_t async_token,
 			return OPAL_PARAMETER;
 
 		pci_remove_bus(phb, &pd->children);
-		rc = OPAL_SUCCESS;
-		break;
+		phb_unlock(phb);
+		return OPAL_SUCCESS;
 	case OPAL_PCI_SLOT_ONLINE:
 		if (!pd)
 			return OPAL_PARAMETER;
@@ -772,19 +814,35 @@ static int64_t opal_pci_set_power_state(uint64_t async_token,
 			     &pd->children, pd, true);
 		pci_add_device_nodes(phb, &pd->children, pd->dn,
 				     &phb->lstate, 0);
-		rc = OPAL_SUCCESS;
-		break;
+		phb_unlock(phb);
+		return OPAL_SUCCESS;
 	default:
 		rc = OPAL_PARAMETER;
 	}
 
-	phb_unlock(phb);
+	/*
+	 * OPAL_ASYNC_COMPLETION is returned when delay is needed to change
+	 * the power state in the backend. When it can be finished without
+	 * delay, OPAL_SUCCESS is returned. The PCI topology needs to be
+	 * updated in both cases.
+	 */
 	if (rc == OPAL_ASYNC_COMPLETION) {
 		slot->retries = 500;
 		init_timer(&slot->timer, set_power_timer, slot);
 		schedule_timer(&slot->timer, msecs_to_tb(10));
+	} else if (rc == OPAL_SUCCESS) {
+		if (*state == OPAL_PCI_SLOT_POWER_OFF) {
+			pci_remove_bus(phb, &pd->children);
+		} else {
+			slot->ops.prepare_link_change(slot, true);
+			pci_scan_bus(phb, pd->secondary_bus,
+				pd->subordinate_bus, &pd->children, pd, true);
+			pci_add_device_nodes(phb, &pd->children, pd->dn,
+				&phb->lstate, 0);
+		}
 	}
 
+	phb_unlock(phb);
 	return rc;
 }
 opal_call(OPAL_PCI_SET_POWER_STATE, opal_pci_set_power_state, 3);
@@ -815,6 +873,9 @@ static int64_t opal_pci_get_phb_diag_data(uint64_t phb_id,
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
 
+	if (!opal_addr_valid(diag_buffer))
+		return OPAL_PARAMETER;
+
 	if (!phb)
 		return OPAL_PARAMETER;
 	if (!phb->ops->get_diag_data)
@@ -834,6 +895,9 @@ static int64_t opal_pci_get_phb_diag_data2(uint64_t phb_id,
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
 
+	if (!opal_addr_valid(diag_buffer))
+		return OPAL_PARAMETER;
+
 	if (!phb)
 		return OPAL_PARAMETER;
 	if (!phb->ops->get_diag_data2)
@@ -851,6 +915,10 @@ static int64_t opal_pci_next_error(uint64_t phb_id, uint64_t *first_frozen_pe,
 {
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
+
+	if (!opal_addr_valid(first_frozen_pe) ||
+		!opal_addr_valid(pci_error_type) || !opal_addr_valid(severity))
+		return OPAL_PARAMETER;
 
 	if (!phb)
 		return OPAL_PARAMETER;
@@ -875,6 +943,10 @@ static int64_t opal_pci_eeh_freeze_status2(uint64_t phb_id, uint64_t pe_number,
 {
 	struct phb *phb = pci_get_phb(phb_id);
 	int64_t rc;
+
+	if (!opal_addr_valid(freeze_state) || !opal_addr_valid(pci_error_type)
+		|| !opal_addr_valid(severity) || !opal_addr_valid(phb_status))
+		return OPAL_PARAMETER;
 
 	if (!phb)
 		return OPAL_PARAMETER;
@@ -905,3 +977,42 @@ static int64_t opal_pci_set_phb_capi_mode(uint64_t phb_id, uint64_t mode, uint64
 	return rc;
 }
 opal_call(OPAL_PCI_SET_PHB_CAPI_MODE, opal_pci_set_phb_capi_mode, 3);
+
+static int64_t opal_pci_set_p2p(uint64_t phbid_init, uint64_t phbid_target,
+				uint64_t desc, uint16_t pe_number)
+{
+	struct phb *phb_init = pci_get_phb(phbid_init);
+	struct phb *phb_target = pci_get_phb(phbid_target);
+
+	if (!phb_init || !phb_target)
+		return OPAL_PARAMETER;
+	/*
+	 * Having the 2 devices under the same PHB may require tuning
+	 * the configuration of intermediate switch(es), more easily
+	 * done from linux. And it shouldn't require a PHB config
+	 * change.
+	 * Return an error for the time being.
+	 */
+	if (phb_init == phb_target)
+		return OPAL_UNSUPPORTED;
+	if (!phb_init->ops->set_p2p || !phb_target->ops->set_p2p)
+		return OPAL_UNSUPPORTED;
+	/*
+	 * Loads would be supported on p9 if the 2 devices are under
+	 * the same PHB, but we ruled it out above.
+	 */
+	if (desc & OPAL_PCI_P2P_LOAD)
+		return OPAL_UNSUPPORTED;
+
+	phb_lock(phb_init);
+	phb_init->ops->set_p2p(phb_init, OPAL_PCI_P2P_INITIATOR, desc,
+			pe_number);
+	phb_unlock(phb_init);
+
+	phb_lock(phb_target);
+	phb_target->ops->set_p2p(phb_target, OPAL_PCI_P2P_TARGET, desc,
+				pe_number);
+	phb_unlock(phb_target);
+	return OPAL_SUCCESS;
+}
+opal_call(OPAL_PCI_SET_P2P, opal_pci_set_p2p, 4);

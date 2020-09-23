@@ -1,5 +1,8 @@
 # -*-Makefile-*-
-CORE_TEST := core/test/run-device \
+CORE_TEST := \
+	core/test/run-bitmap \
+	core/test/run-device \
+	core/test/run-flash-subpartition \
 	core/test/run-mem_region \
 	core/test/run-malloc \
 	core/test/run-malloc-speed \
@@ -15,11 +18,15 @@ CORE_TEST := core/test/run-device \
 	core/test/run-pool \
 	core/test/run-time-utils \
 	core/test/run-timebase \
-	core/test/run-timer
+	core/test/run-timer \
+	core/test/run-buddy
+
+HOSTCFLAGS+=-I . -I include
 
 CORE_TEST_NOSTUB := core/test/run-console-log
 CORE_TEST_NOSTUB += core/test/run-console-log-buf-overrun
 CORE_TEST_NOSTUB += core/test/run-console-log-pr_fmt
+CORE_TEST_NOSTUB += core/test/run-api-test
 
 LCOV_EXCLUDE += $(CORE_TEST:%=%.c) core/test/stubs.c
 LCOV_EXCLUDE += $(CORE_TEST_NOSTUB:%=%.c) /usr/include/*
@@ -59,10 +66,10 @@ $(CORE_TEST_NOSTUB) : % : %.c
 	$(call Q, HOSTCC ,$(HOSTCC) $(HOSTCFLAGS) -O0 -g -I include -I . -I libfdt -o $@ $< , $<)
 
 $(CORE_TEST:%=%-gcov): %-gcov : %.c %
-	$(call Q, HOSTCC ,$(HOSTCC) $(HOSTCFLAGS) -fprofile-arcs -ftest-coverage -O0 -g -I include -I . -I libfdt -lgcov -o $@ $< core/test/stubs.o, $<)
+	$(call Q, HOSTCC ,$(HOSTCC) $(HOSTCFLAGS) $(HOSTGCOVCFLAGS) -I include -I . -I libfdt -lgcov -o $@ $< core/test/stubs.o, $<)
 
 $(CORE_TEST_NOSTUB:%=%-gcov) : %-gcov : %.c %
-	$(call Q, HOSTCC ,$(HOSTCC) $(HOSTCFLAGS) -fprofile-arcs -ftest-coverage -O0 -g -I include -I . -I libfdt -lgcov -o $@ $< , $<)
+	$(call Q, HOSTCC ,$(HOSTCC) $(HOSTCFLAGS) $(HOSTGCOVCFLAGS) -I include -I . -I libfdt -lgcov -o $@ $< , $<)
 
 -include $(wildcard core/test/*.d)
 

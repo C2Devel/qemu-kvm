@@ -30,6 +30,48 @@ virtio_gpu_find_resource(VirtIOGPU *g, uint32_t resource_id);
 
 static void virtio_gpu_cleanup_mapping(struct virtio_gpu_simple_resource *res);
 
+static void
+virtio_gpu_ctrl_hdr_bswap(struct virtio_gpu_ctrl_hdr *hdr)
+{
+    le32_to_cpus(&hdr->type);
+    le32_to_cpus(&hdr->flags);
+    le64_to_cpus(&hdr->fence_id);
+    le32_to_cpus(&hdr->ctx_id);
+    le32_to_cpus(&hdr->padding);
+}
+
+static void virtio_gpu_bswap_32(void *ptr,
+                                size_t size)
+{
+#ifdef HOST_WORDS_BIGENDIAN
+
+    size_t i;
+    struct virtio_gpu_ctrl_hdr *hdr = (struct virtio_gpu_ctrl_hdr *) ptr;
+
+    virtio_gpu_ctrl_hdr_bswap(hdr);
+
+    i = sizeof(struct virtio_gpu_ctrl_hdr);
+    while (i < size) {
+        le32_to_cpus((uint32_t *)(ptr + i));
+        i = i + sizeof(uint32_t);
+    }
+
+#endif
+}
+
+static void
+virtio_gpu_t2d_bswap(struct virtio_gpu_transfer_to_host_2d *t2d)
+{
+    virtio_gpu_ctrl_hdr_bswap(&t2d->hdr);
+    le32_to_cpus(&t2d->r.x);
+    le32_to_cpus(&t2d->r.y);
+    le32_to_cpus(&t2d->r.width);
+    le32_to_cpus(&t2d->r.height);
+    le64_to_cpus(&t2d->offset);
+    le32_to_cpus(&t2d->resource_id);
+    le32_to_cpus(&t2d->padding);
+}
+
 #ifdef CONFIG_VIRGL
 #include <virglrenderer.h>
 #define VIRGL(_g, _virgl, _simple, ...)                     \
@@ -205,6 +247,7 @@ void virtio_gpu_ctrl_response(VirtIOGPU *g,
         resp->fence_id = cmd->cmd_hdr.fence_id;
         resp->ctx_id = cmd->cmd_hdr.ctx_id;
     }
+    virtio_gpu_ctrl_hdr_bswap(resp);
     s = iov_from_buf(cmd->elem.in_sg, cmd->elem.in_num, 0, resp, resp_len);
     if (s != resp_len) {
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -236,8 +279,8 @@ virtio_gpu_fill_display_info(VirtIOGPU *g,
     for (i = 0; i < g->conf.max_outputs; i++) {
         if (g->enabled_output_bitmask & (1 << i)) {
             dpy_info->pmodes[i].enabled = 1;
-            dpy_info->pmodes[i].r.width = g->req_state[i].width;
-            dpy_info->pmodes[i].r.height = g->req_state[i].height;
+            dpy_info->pmodes[i].r.width = cpu_to_le32(g->req_state[i].width);
+            dpy_info->pmodes[i].r.height = cpu_to_le32(g->req_state[i].height);
         }
     }
 }
@@ -279,6 +322,18 @@ static pixman_format_code_t get_pixman_format(uint32_t virtio_gpu_format)
     }
 }
 
+static uint32_t calc_image_hostmem(pixman_format_code_t pformat,
+                                   uint32_t width, uint32_t height)
+{
+    /* Copied from pixman/pixman-bits-image.c, skip integer overflow check.
+     * pixman_image_create_bits will fail in case it overflow.
+     */
+
+    int bpp = PIXMAN_FORMAT_BPP(pformat);
+    int stride = ((width * bpp + 0x1f) >> 5) * sizeof(uint32_t);
+    return height * stride;
+}
+
 static void virtio_gpu_resource_create_2d(VirtIOGPU *g,
                                           struct virtio_gpu_ctrl_command *cmd)
 {
@@ -287,6 +342,7 @@ static void virtio_gpu_resource_create_2d(VirtIOGPU *g,
     struct virtio_gpu_resource_create_2d c2d;
 
     VIRTIO_GPU_FILL_CMD(c2d);
+    virtio_gpu_bswap_32(&c2d, sizeof(c2d));
     trace_virtio_gpu_cmd_res_create_2d(c2d.resource_id, c2d.format,
                                        c2d.width, c2d.height);
 
@@ -322,7 +378,7 @@ static void virtio_gpu_resource_create_2d(VirtIOGPU *g,
         return;
     }
 
-    res->hostmem = PIXMAN_FORMAT_BPP(pformat) * c2d.width * c2d.height;
+    res->hostmem = calc_image_hostmem(pformat, c2d.width, c2d.height);
     if (res->hostmem + g->hostmem < g->conf.max_hostmem) {
         res->image = pixman_image_create_bits(pformat,
                                               c2d.width,
@@ -343,9 +399,47 @@ static void virtio_gpu_resource_create_2d(VirtIOGPU *g,
     g->hostmem += res->hostmem;
 }
 
+static void virtio_gpu_disable_scanout(VirtIOGPU *g, int scanout_id)
+{
+    struct virtio_gpu_scanout *scanout = &g->scanout[scanout_id];
+    struct virtio_gpu_simple_resource *res;
+    DisplaySurface *ds = NULL;
+
+    if (scanout->resource_id == 0) {
+        return;
+    }
+
+    res = virtio_gpu_find_resource(g, scanout->resource_id);
+    if (res) {
+        res->scanout_bitmask &= ~(1 << scanout_id);
+    }
+
+    if (scanout_id == 0) {
+        /* primary head */
+        ds = qemu_create_message_surface(scanout->width  ?: 640,
+                                         scanout->height ?: 480,
+                                         "Guest disabled display.");
+    }
+    dpy_gfx_replace_surface(scanout->con, ds);
+    scanout->resource_id = 0;
+    scanout->ds = NULL;
+    scanout->width = 0;
+    scanout->height = 0;
+}
+
 static void virtio_gpu_resource_destroy(VirtIOGPU *g,
                                         struct virtio_gpu_simple_resource *res)
 {
+    int i;
+
+    if (res->scanout_bitmask) {
+        for (i = 0; i < g->conf.max_outputs; i++) {
+            if (res->scanout_bitmask & (1 << i)) {
+                virtio_gpu_disable_scanout(g, i);
+            }
+        }
+    }
+
     pixman_image_unref(res->image);
     virtio_gpu_cleanup_mapping(res);
     QTAILQ_REMOVE(&g->reslist, res, next);
@@ -360,6 +454,7 @@ static void virtio_gpu_resource_unref(VirtIOGPU *g,
     struct virtio_gpu_resource_unref unref;
 
     VIRTIO_GPU_FILL_CMD(unref);
+    virtio_gpu_bswap_32(&unref, sizeof(unref));
     trace_virtio_gpu_cmd_res_unref(unref.resource_id);
 
     res = virtio_gpu_find_resource(g, unref.resource_id);
@@ -383,6 +478,7 @@ static void virtio_gpu_transfer_to_host_2d(VirtIOGPU *g,
     struct virtio_gpu_transfer_to_host_2d t2d;
 
     VIRTIO_GPU_FILL_CMD(t2d);
+    virtio_gpu_t2d_bswap(&t2d);
     trace_virtio_gpu_cmd_res_xfer_toh_2d(t2d.resource_id);
 
     res = virtio_gpu_find_resource(g, t2d.resource_id);
@@ -408,7 +504,7 @@ static void virtio_gpu_transfer_to_host_2d(VirtIOGPU *g,
     }
 
     format = pixman_image_get_format(res->image);
-    bpp = (PIXMAN_FORMAT_BPP(format) + 7) / 8;
+    bpp = DIV_ROUND_UP(PIXMAN_FORMAT_BPP(format), 8);
     stride = pixman_image_get_stride(res->image);
 
     if (t2d.offset || t2d.r.x || t2d.r.y ||
@@ -439,6 +535,7 @@ static void virtio_gpu_resource_flush(VirtIOGPU *g,
     int i;
 
     VIRTIO_GPU_FILL_CMD(rf);
+    virtio_gpu_bswap_32(&rf, sizeof(rf));
     trace_virtio_gpu_cmd_res_flush(rf.resource_id,
                                    rf.r.width, rf.r.height, rf.r.x, rf.r.y);
 
@@ -503,7 +600,7 @@ static void virtio_unref_resource(pixman_image_t *image, void *data)
 static void virtio_gpu_set_scanout(VirtIOGPU *g,
                                    struct virtio_gpu_ctrl_command *cmd)
 {
-    struct virtio_gpu_simple_resource *res;
+    struct virtio_gpu_simple_resource *res, *ores;
     struct virtio_gpu_scanout *scanout;
     pixman_format_code_t format;
     uint32_t offset;
@@ -511,6 +608,7 @@ static void virtio_gpu_set_scanout(VirtIOGPU *g,
     struct virtio_gpu_set_scanout ss;
 
     VIRTIO_GPU_FILL_CMD(ss);
+    virtio_gpu_bswap_32(&ss, sizeof(ss));
     trace_virtio_gpu_cmd_set_scanout(ss.scanout_id, ss.resource_id,
                                      ss.r.width, ss.r.height, ss.r.x, ss.r.y);
 
@@ -523,24 +621,7 @@ static void virtio_gpu_set_scanout(VirtIOGPU *g,
 
     g->enable = 1;
     if (ss.resource_id == 0) {
-        scanout = &g->scanout[ss.scanout_id];
-        if (scanout->resource_id) {
-            res = virtio_gpu_find_resource(g, scanout->resource_id);
-            if (res) {
-                res->scanout_bitmask &= ~(1 << ss.scanout_id);
-            }
-        }
-        if (ss.scanout_id == 0) {
-            qemu_log_mask(LOG_GUEST_ERROR,
-                          "%s: illegal scanout id specified %d",
-                          __func__, ss.scanout_id);
-            cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_SCANOUT_ID;
-            return;
-        }
-        dpy_gfx_replace_surface(g->scanout[ss.scanout_id].con, NULL);
-        scanout->ds = NULL;
-        scanout->width = 0;
-        scanout->height = 0;
+        virtio_gpu_disable_scanout(g, ss.scanout_id);
         return;
     }
 
@@ -570,7 +651,7 @@ static void virtio_gpu_set_scanout(VirtIOGPU *g,
     scanout = &g->scanout[ss.scanout_id];
 
     format = pixman_image_get_format(res->image);
-    bpp = (PIXMAN_FORMAT_BPP(format) + 7) / 8;
+    bpp = DIV_ROUND_UP(PIXMAN_FORMAT_BPP(format), 8);
     offset = (ss.r.x * bpp) + ss.r.y * pixman_image_get_stride(res->image);
     if (!scanout->ds || surface_data(scanout->ds)
         != ((uint8_t *)pixman_image_get_data(res->image) + offset) ||
@@ -591,6 +672,11 @@ static void virtio_gpu_set_scanout(VirtIOGPU *g,
         }
         pixman_image_unref(rect);
         dpy_gfx_replace_surface(g->scanout[ss.scanout_id].con, scanout->ds);
+    }
+
+    ores = virtio_gpu_find_resource(g, scanout->resource_id);
+    if (ores) {
+        ores->scanout_bitmask &= ~(1 << ss.scanout_id);
     }
 
     res->scanout_bitmask |= (1 << ss.scanout_id);
@@ -633,13 +719,15 @@ int virtio_gpu_create_mapping_iov(struct virtio_gpu_resource_attach_backing *ab,
         *addr = g_malloc0(sizeof(uint64_t) * ab->nr_entries);
     }
     for (i = 0; i < ab->nr_entries; i++) {
-        hwaddr len = ents[i].length;
-        (*iov)[i].iov_len = ents[i].length;
-        (*iov)[i].iov_base = cpu_physical_memory_map(ents[i].addr, &len, 1);
+        uint64_t a = le64_to_cpu(ents[i].addr);
+        uint32_t l = le32_to_cpu(ents[i].length);
+        hwaddr len = l;
+        (*iov)[i].iov_len = l;
+        (*iov)[i].iov_base = cpu_physical_memory_map(a, &len, 1);
         if (addr) {
-            (*addr)[i] = ents[i].addr;
+            (*addr)[i] = a;
         }
-        if (!(*iov)[i].iov_base || len != ents[i].length) {
+        if (!(*iov)[i].iov_base || len != l) {
             qemu_log_mask(LOG_GUEST_ERROR, "%s: failed to map MMIO memory for"
                           " resource %d element %d\n",
                           __func__, ab->resource_id, i);
@@ -686,6 +774,7 @@ virtio_gpu_resource_attach_backing(VirtIOGPU *g,
     int ret;
 
     VIRTIO_GPU_FILL_CMD(ab);
+    virtio_gpu_bswap_32(&ab, sizeof(ab));
     trace_virtio_gpu_cmd_res_back_attach(ab.resource_id);
 
     res = virtio_gpu_find_resource(g, ab.resource_id);
@@ -718,6 +807,7 @@ virtio_gpu_resource_detach_backing(VirtIOGPU *g,
     struct virtio_gpu_resource_detach_backing detach;
 
     VIRTIO_GPU_FILL_CMD(detach);
+    virtio_gpu_bswap_32(&detach, sizeof(detach));
     trace_virtio_gpu_cmd_res_back_detach(detach.resource_id);
 
     res = virtio_gpu_find_resource(g, detach.resource_id);
@@ -734,6 +824,7 @@ static void virtio_gpu_simple_process_cmd(VirtIOGPU *g,
                                           struct virtio_gpu_ctrl_command *cmd)
 {
     VIRTIO_GPU_FILL_CMD(cmd->cmd_hdr);
+    virtio_gpu_ctrl_hdr_bswap(&cmd->cmd_hdr);
 
     switch (cmd->cmd_hdr.type) {
     case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
@@ -879,6 +970,7 @@ static void virtio_gpu_handle_cursor(VirtIODevice *vdev, VirtQueue *vq)
                           "%s: cursor size incorrect %zu vs %zu\n",
                           __func__, s, sizeof(cursor_info));
         } else {
+            virtio_gpu_bswap_32(&cursor_info, sizeof(cursor_info));
             update_cursor(g, &cursor_info);
         }
         virtqueue_push(vq, elem, 0);
@@ -996,9 +1088,7 @@ static int virtio_gpu_save(QEMUFile *f, void *opaque, size_t size,
     }
     qemu_put_be32(f, 0); /* end of list */
 
-    vmstate_save_state(f, &vmstate_virtio_gpu_scanouts, g, NULL);
-
-    return 0;
+    return vmstate_save_state(f, &vmstate_virtio_gpu_scanouts, g, NULL);
 }
 
 static int virtio_gpu_load(QEMUFile *f, void *opaque, size_t size,
@@ -1035,7 +1125,7 @@ static int virtio_gpu_load(QEMUFile *f, void *opaque, size_t size,
             return -EINVAL;
         }
 
-        res->hostmem = PIXMAN_FORMAT_BPP(pformat) * res->width * res->height;
+        res->hostmem = calc_image_hostmem(pformat, res->width, res->height);
 
         res->addrs = g_new(uint64_t, res->iov_cnt);
         res->iov = g_new(struct iovec, res->iov_cnt);
@@ -1140,7 +1230,7 @@ static void virtio_gpu_device_realize(DeviceState *qdev, Error **errp)
     }
 
     g->config_size = sizeof(struct virtio_gpu_config);
-    g->virtio_config.num_scanouts = g->conf.max_outputs;
+    g->virtio_config.num_scanouts = cpu_to_le32(g->conf.max_outputs);
     virtio_init(VIRTIO_DEVICE(g), "virtio-gpu", VIRTIO_ID_GPU,
                 g->config_size);
 
@@ -1151,7 +1241,12 @@ static void virtio_gpu_device_realize(DeviceState *qdev, Error **errp)
         /* use larger control queue in 3d mode */
         g->ctrl_vq   = virtio_add_queue(vdev, 256, virtio_gpu_handle_ctrl_cb);
         g->cursor_vq = virtio_add_queue(vdev, 16, virtio_gpu_handle_cursor_cb);
-        g->virtio_config.num_capsets = 1;
+
+#if defined(CONFIG_VIRGL)
+        g->virtio_config.num_capsets = virtio_gpu_virgl_get_num_capsets(g);
+#else
+        g->virtio_config.num_capsets = 0;
+#endif
     } else {
         g->ctrl_vq   = virtio_add_queue(vdev, 64, virtio_gpu_handle_ctrl_cb);
         g->cursor_vq = virtio_add_queue(vdev, 16, virtio_gpu_handle_cursor_cb);
@@ -1272,6 +1367,7 @@ static void virtio_gpu_class_init(ObjectClass *klass, void *data)
 
     vdc->reset = virtio_gpu_reset;
 
+    set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
     dc->props = virtio_gpu_properties;
     dc->vmsd = &vmstate_virtio_gpu;
     dc->hotpluggable = false;

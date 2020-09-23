@@ -51,6 +51,13 @@
 /* SCU registers */
 #define SCU_BASE		0x1e6e2000
 #define SCU_HW_STRAPPING	(SCU_BASE + 0x70)
+#define SCU_REVISION_ID		(SCU_BASE + 0x7C)
+
+/* MCR registers */
+#define MCR_BASE		0x1e6e0000
+#define MCR_CONFIGURATION	(MCR_BASE + 0x04)
+#define MCR_SCU_MPLL		(MCR_BASE + 0x120)
+#define MCR_SCU_STRAP		(MCR_BASE + 0x170)
 
 /*
  * AHB Accessors
@@ -74,6 +81,7 @@ int ast_copy_from_ahb(void *dst, uint32_t reg, uint32_t len);
 
 void ast_io_init(void);
 bool ast_is_ahb_lpc_pnor(void);
+bool ast_is_mbox_pnor(void);
 
 /* UART configuration */
 
@@ -84,6 +92,9 @@ void ast_disable_sio_uart1(void);
 
 /* BT configuration */
 void ast_setup_ibt(uint16_t io_base, uint8_t irq);
+
+/* MBOX configuration */
+void ast_setup_sio_mbox(uint16_t io_base, uint8_t irq);
 
 #endif /* __SKIBOOT__ */
 

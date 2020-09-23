@@ -45,16 +45,23 @@
 /* Special ELF sections */
 #define __force_data		__section(".force.data")
 
-/* Readonly section start and end. */
-extern char __rodata_start[], __rodata_end[];
-
 struct mem_region;
 extern struct mem_region *mem_region_next(struct mem_region *region);
+
+#ifndef __TESTING__
+/* Readonly section start and end. */
+extern char __rodata_start[], __rodata_end[];
 
 static inline bool is_rodata(const void *p)
 {
 	return ((const char *)p >= __rodata_start && (const char *)p < __rodata_end);
 }
+#else
+static inline bool is_rodata(const void *p)
+{
+	return false;
+}
+#endif
 
 #define OPAL_BOOT_COMPLETE 0x1
 /* Debug descriptor. This structure is pointed to by the word at offset
@@ -86,7 +93,14 @@ struct debug_descriptor {
 };
 extern struct debug_descriptor debug_descriptor;
 
-/* Console logging */
+static inline bool opal_booting(void)
+{
+	return !(debug_descriptor.state_flags & OPAL_BOOT_COMPLETE);
+}
+
+/* Console logging
+ * Update console_get_level() if you add here
+ */
 #define PR_EMERG	0
 #define PR_ALERT	1
 #define PR_CRIT		2
@@ -126,6 +140,8 @@ enum proc_gen {
 	proc_gen_p9,
 };
 extern enum proc_gen proc_gen;
+
+extern unsigned int pcie_max_link_speed;
 
 /* Convert a 4-bit number to a hex char */
 extern char __attrconst tohex(uint8_t nibble);
@@ -175,7 +191,7 @@ extern void start_kernel32(uint64_t entry, void* fdt,
 extern void start_kernel_secondary(uint64_t entry) __noreturn;
 
 /* Get description of machine from HDAT and create device-tree */
-extern int parse_hdat(bool is_opal, uint32_t master_cpu);
+extern int parse_hdat(bool is_opal);
 
 /* Root of device tree. */
 extern struct dt_node *dt_root;
@@ -189,24 +205,34 @@ extern char __sym_map_end[];
 extern unsigned long get_symbol(unsigned long addr,
 				char **sym, char **sym_end);
 
+/* Direct controls */
+extern void direct_controls_init(void);
+extern int64_t opal_signal_system_reset(int cpu_nr);
+
 /* Fast reboot support */
-extern void fast_reset(void);
+extern void disable_fast_reboot(const char *reason);
+extern void fast_reboot(void);
 extern void __noreturn __secondary_cpu_entry(void);
 extern void __noreturn load_and_boot_kernel(bool is_reboot);
-extern void cleanup_tlb(void);
+extern void cleanup_local_tlb(void);
+extern void cleanup_global_tlb(void);
 extern void init_shared_sprs(void);
 extern void init_replicated_sprs(void);
+extern bool start_preload_kernel(void);
+extern void copy_exception_vectors(void);
+extern void setup_reset_vector(void);
 
 /* Various probe routines, to replace with an initcall system */
 extern void probe_p7ioc(void);
 extern void probe_phb3(void);
 extern void probe_phb4(void);
-extern int phb3_preload_capp_ucode(void);
-extern void phb3_preload_vpd(void);
-extern int phb4_preload_capp_ucode(void);
-extern void phb4_preload_vpd(void);
+extern int preload_capp_ucode(void);
+extern void preload_io_vpd(void);
 extern void probe_npu(void);
+extern void probe_npu2(void);
 extern void uart_init(void);
+extern void mbox_init(void);
+extern void early_uart_init(void);
 extern void homer_init(void);
 extern void occ_pstates_init(void);
 extern void slw_init(void);
@@ -216,26 +242,39 @@ extern void lpc_rtc_init(void);
 
 /* flash support */
 struct flash_chip;
-extern int flash_register(struct blocklevel_device *bl, bool is_system_flash);
+extern int flash_register(struct blocklevel_device *bl);
 extern int flash_start_preload_resource(enum resource_id id, uint32_t subid,
 					void *buf, size_t *len);
 extern int flash_resource_loaded(enum resource_id id, uint32_t idx);
 extern bool flash_reserve(void);
 extern void flash_release(void);
-
+#define FLASH_SUBPART_ALIGNMENT 0x1000
+#define FLASH_SUBPART_HEADER_SIZE FLASH_SUBPART_ALIGNMENT
+extern int flash_subpart_info(void *part_header, uint32_t header_len,
+			      uint32_t part_size, uint32_t *part_actual,
+			      uint32_t subid, uint32_t *offset,
+			      uint32_t *size);
+extern void flash_fw_version_preload(void);
+extern void flash_dt_add_fw_version(void);
 
 /* NVRAM support */
 extern void nvram_init(void);
 extern void nvram_read_complete(bool success);
 
 /* UART stuff */
-extern void uart_setup_linux_passthrough(void);
-extern void uart_setup_opal_console(void);
+enum {
+	UART_CONSOLE_OPAL,
+	UART_CONSOLE_OS
+};
+extern void uart_set_console_policy(int policy);
 extern bool uart_enabled(void);
 
-/* OCC interrupt */
-extern void occ_interrupt(uint32_t chip_id);
+/* OCC interrupt for P8 */
+extern void occ_p8_interrupt(uint32_t chip_id);
 extern void occ_send_dummy_interrupt(void);
+
+/* OCC interrupt for P9 */
+extern void occ_p9_interrupt(uint32_t chip_id);
 
 /* OCC load support */
 extern void occ_poke_load_queue(void);
@@ -251,6 +290,7 @@ extern void occ_pnor_set_owner(enum pnor_owner owner);
 extern void prd_psi_interrupt(uint32_t proc);
 extern void prd_tmgt_interrupt(uint32_t proc);
 extern void prd_occ_reset(uint32_t proc);
+extern void prd_sbe_passthrough(uint32_t proc);
 extern void prd_init(void);
 extern void prd_register_reserved_memory(void);
 
@@ -266,7 +306,31 @@ extern void slw_update_timer_expiry(uint64_t new_target);
 /* Is SLW timer available ? */
 extern bool slw_timer_ok(void);
 
+/* Patch SPR in SLW image */
+extern int64_t opal_slw_set_reg(uint64_t cpu_pir, uint64_t sprn, uint64_t val);
+
+extern void fast_sleep_exit(void);
+
 /* Fallback fake RTC */
 extern void fake_rtc_init(void);
+
+/* Assembly in head.S */
+extern void enter_p8_pm_state(bool winkle);
+extern void enter_p9_pm_state(uint64_t psscr);
+extern void enter_p9_pm_lite_state(uint64_t psscr);
+extern uint32_t reset_patch_start;
+extern uint32_t reset_patch_end;
+
+/* Fallback fake NVRAM */
+extern int fake_nvram_info(uint32_t *total_size);
+extern int fake_nvram_start_read(void *dst, uint32_t src, uint32_t len);
+extern int fake_nvram_write(uint32_t offset, void *src, uint32_t size);
+
+/* OCC Inband Sensors */
+extern void occ_sensors_init(void);
+extern int occ_sensor_read(u32 handle, u32 *data);
+extern int occ_sensor_group_clear(u32 group_hndl, int token);
+extern void occ_add_sensor_groups(struct dt_node *sg, u32  *phandles,
+				  int nr_phandles, int chipid);
 
 #endif /* __SKIBOOT_H */

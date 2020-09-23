@@ -37,10 +37,11 @@ T=`mktemp  --tmpdir skiboot_qemu_boot_test.XXXXXXXXXX`
 
 ( cat <<EOF | expect
 set timeout 600
-spawn $QEMU_PATH/$QEMU_BINARY -m 1G -M powernv -kernel $SKIBOOT_ZIMAGE -nographic
+spawn $QEMU_PATH/$QEMU_BINARY -m 3G -M powernv -kernel $SKIBOOT_ZIMAGE -nographic -device ipmi-bmc-sim,id=ipmi0 -device isa-ipmi-bt,bmc=ipmi0
 expect {
 timeout { send_user "\nTimeout waiting for petitboot\n"; exit 1 }
 eof { send_user "\nUnexpected EOF\n;" exit 1 }
+"Machine Check Stop" { exit 1; }
 "Welcome to Petitboot"
 }
 close

@@ -64,6 +64,7 @@
 #define  CQ_PBI_PC_64K		PPC_BIT(5)
 #define  CQ_PBI_VC_64K		PPC_BIT(6)
 #define  CQ_PBI_LNX_TRIG	PPC_BIT(7)
+#define  CQ_PBI_FORCE_TM_LOCAL	PPC_BIT(22)
 #define CQ_PBO_CTL		0x108
 #define CQ_AIB_CTL		0x110
 #define X_CQ_RST_CTL		0x23
@@ -73,7 +74,21 @@
 #define X_PC_TCTXT_CFG		0x100
 #define PC_TCTXT_CFG		0x400
 #define  PC_TCTXT_CFG_BLKGRP_EN		PPC_BIT(0)
+#define  PC_TCTXT_CFG_TARGET_EN		PPC_BIT(1)
+#define  PC_TCTXT_CFG_STORE_ACK		PPC_BIT(3)
 #define  PC_TCTXT_CFG_HARD_CHIPID_BLK	PPC_BIT(8)
+#define  PC_TCTXT_CHIPID_OVERRIDE	PPC_BIT(9)
+#define  PC_TCTXT_CHIPID		PPC_BITMASK(12,15)
+#define X_PC_TCTXT_INDIR0	0x104
+#define PC_TCTXT_INDIR0		0x420
+#define  PC_TCTXT_INDIR_VALID		PPC_BIT(0)
+#define  PC_TCTXT_INDIR_THRDID		PPC_BITMASK(9,15)
+#define X_PC_TCTXT_INDIR1	0x105
+#define PC_TCTXT_INDIR1		0x428
+#define X_PC_TCTXT_INDIR2	0x106
+#define PC_TCTXT_INDIR2		0x430
+#define X_PC_TCTXT_INDIR3	0x107
+#define PC_TCTXT_INDIR3		0x438
 #define X_PC_THREAD_EN_REG0	0x108
 #define PC_THREAD_EN_REG0	0x440
 #define X_PC_THREAD_EN_REG0_SET	0x109
@@ -89,10 +104,19 @@
 #define X_PC_GLOBAL_CONFIG	0x110
 #define PC_GLOBAL_CONFIG	0x480
 #define  PC_GCONF_INDIRECT	PPC_BIT(32)
+#define  PC_GCONF_CHIPID_OVR	PPC_BIT(40)
+#define  PC_GCONF_CHIPID	PPC_BITMASK(44,47)
 #define X_PC_VSD_TABLE_ADDR	0x111
 #define PC_VSD_TABLE_ADDR	0x488
 #define X_PC_VSD_TABLE_DATA	0x112
 #define PC_VSD_TABLE_DATA	0x490
+#define X_PC_AT_KILL		0x116
+#define PC_AT_KILL		0x4b0
+#define  PC_AT_KILL_VALID	PPC_BIT(0)
+#define  PC_AT_KILL_BLOCK_ID	PPC_BITMASK(27,31)
+#define  PC_AT_KILL_OFFSET	PPC_BITMASK(48,60)
+#define X_PC_AT_KILL_MASK	0x117
+#define PC_AT_KILL_MASK		0x4b8
 
 /* PC LBS2 register offsets */
 #define X_PC_VPC_CACHE_ENABLE	0x161
@@ -107,6 +131,28 @@
 #define  PC_SCRUB_WANT_INVAL	PPC_BIT(2)
 #define  PC_SCRUB_BLOCK_ID	PPC_BITMASK(27,31)
 #define  PC_SCRUB_OFFSET	PPC_BITMASK(45,63)
+#define X_PC_VPC_CWATCH_SPEC	0x167
+#define PC_VPC_CWATCH_SPEC	0x738
+#define  PC_VPC_CWATCH_CONFLICT	PPC_BIT(0)
+#define  PC_VPC_CWATCH_FULL	PPC_BIT(8)
+#define  PC_VPC_CWATCH_BLOCKID	PPC_BITMASK(27,31)
+#define  PC_VPC_CWATCH_OFFSET	PPC_BITMASK(45,63)
+#define X_PC_VPC_CWATCH_DAT0	0x168
+#define PC_VPC_CWATCH_DAT0	0x740
+#define X_PC_VPC_CWATCH_DAT1	0x169
+#define PC_VPC_CWATCH_DAT1	0x748
+#define X_PC_VPC_CWATCH_DAT2	0x16a
+#define PC_VPC_CWATCH_DAT2	0x750
+#define X_PC_VPC_CWATCH_DAT3	0x16b
+#define PC_VPC_CWATCH_DAT3	0x758
+#define X_PC_VPC_CWATCH_DAT4	0x16c
+#define PC_VPC_CWATCH_DAT4	0x760
+#define X_PC_VPC_CWATCH_DAT5	0x16d
+#define PC_VPC_CWATCH_DAT5	0x768
+#define X_PC_VPC_CWATCH_DAT6	0x16e
+#define PC_VPC_CWATCH_DAT6	0x770
+#define X_PC_VPC_CWATCH_DAT7	0x16f
+#define PC_VPC_CWATCH_DAT7	0x778
 
 /* VC0 register offsets */
 #define X_VC_GLOBAL_CONFIG	0x200
@@ -119,7 +165,10 @@
 #define VC_IVE_ISB_BLOCK_MODE	0x818
 #define VC_EQD_BLOCK_MODE	0x820
 #define VC_VPS_BLOCK_MODE	0x828
+#define X_VC_IRQ_CONFIG_IPI	0x208
 #define VC_IRQ_CONFIG_IPI	0x840
+#define  VC_IRQ_CONFIG_MEMB_EN	PPC_BIT(45)
+#define  VC_IRQ_CONFIG_MEMB_SZ	PPC_BITMASK(46,51)
 #define VC_IRQ_CONFIG_HW	0x848
 #define VC_IRQ_CONFIG_CASCADE1	0x850
 #define VC_IRQ_CONFIG_CASCADE2	0x858
@@ -144,6 +193,27 @@
 #define VC_EQC_SCRUB_TRIG	0x910
 #define X_VC_EQC_SCRUB_MASK	0x213
 #define VC_EQC_SCRUB_MASK	0x918
+#define X_VC_EQC_CWATCH_SPEC	0x215
+#define VC_EQC_CONFIG		0x920
+#define X_VC_EQC_CONFIG		0x214
+#define  VC_EQC_CONF_SYNC_IPI	PPC_BIT(32)
+#define  VC_EQC_CONF_SYNC_HW	PPC_BIT(33)
+#define  VC_EQC_CONF_SYNC_ESC1	PPC_BIT(34)
+#define  VC_EQC_CONF_SYNC_ESC2	PPC_BIT(35)
+#define  VC_EQC_CONF_SYNC_REDI	PPC_BIT(36)
+#define VC_EQC_CWATCH_SPEC	0x928
+#define  VC_EQC_CWATCH_CONFLICT	PPC_BIT(0)
+#define  VC_EQC_CWATCH_FULL	PPC_BIT(8)
+#define  VC_EQC_CWATCH_BLOCKID	PPC_BITMASK(28,31)
+#define  VC_EQC_CWATCH_OFFSET	PPC_BITMASK(40,63)
+#define X_VC_EQC_CWATCH_DAT0	0x216
+#define VC_EQC_CWATCH_DAT0	0x930
+#define X_VC_EQC_CWATCH_DAT1	0x217
+#define VC_EQC_CWATCH_DAT1	0x938
+#define X_VC_EQC_CWATCH_DAT2	0x218
+#define VC_EQC_CWATCH_DAT2	0x940
+#define X_VC_EQC_CWATCH_DAT3	0x219
+#define VC_EQC_CWATCH_DAT3	0x948
 #define X_VC_IVC_SCRUB_TRIG	0x222
 #define VC_IVC_SCRUB_TRIG	0x990
 #define X_VC_IVC_SCRUB_MASK	0x223
@@ -156,7 +226,7 @@
 #define  VC_SCRUB_WANT_DISABLE	PPC_BIT(1)
 #define  VC_SCRUB_WANT_INVAL	PPC_BIT(2) /* EQC and SBC only */
 #define  VC_SCRUB_BLOCK_ID	PPC_BITMASK(28,31)
-#define  VC_SCRUB_OFFSET	PPC_BITMASK(41,63)
+#define  VC_SCRUB_OFFSET	PPC_BITMASK(40,63)
 #define X_VC_IVC_CACHE_ENABLE	0x221
 #define VC_IVC_CACHE_ENABLE	0x988
 #define  VC_IVC_CACHE_EN_MASK	PPC_BITMASK(0,15)
@@ -169,6 +239,10 @@
 #define VC_SBC_CACHE_SCRUB_TRIG	0xa10
 #define VC_SBC_CACHE_SCRUB_MASK	0xa18
 #define VC_SBC_CONFIG		0xa20
+#define X_VC_SBC_CONFIG		0x234
+#define  VC_SBC_CONF_CPLX_CIST	PPC_BIT(44)
+#define  VC_SBC_CONF_CIST_BOTH	PPC_BIT(45)
+#define  VC_SBC_CONF_NO_UPD_PRF	PPC_BIT(59)
 
 /* VC1 register offsets */
 
@@ -182,10 +256,16 @@
 #define  VST_TSEL_IRQ	4	/* VC only */
 #define VST_TABLE_OFFSET	PPC_BITMASK(27,31)
 
+/* Number of queue overflow pages */
+#define VC_QUEUE_OVF_COUNT	6
+
 /* Bits in a VSD entry.
  *
  * Note: the address is naturally aligned, we don't use a PPC_BITMASK,
  *       but just a mask to apply to the address before OR'ing it in.
+ *
+ * Note: VSD_FIRMWARE is a SW bit ! It hijacks an unused bit in the
+ *       VSD and is only meant to be used in indirect mode !
  */
 #define VSD_MODE		PPC_BITMASK(0,1)
 #define  VSD_MODE_SHARED	1
@@ -195,6 +275,7 @@
 #define VSD_MIGRATION_REG	PPC_BITMASK(52,55)
 #define VSD_INDIRECT		PPC_BIT(56)
 #define VSD_TSIZE		PPC_BITMASK(59,63)
+#define VSD_FIRMWARE		PPC_BIT(2) /* Read warning above */
 
 /*
  * TM registers are special, see below
@@ -244,15 +325,21 @@
  *
  * Then we have all these "special" CI ops at these offset that trigger
  * all sorts of side effects:
+ *
+ * We can OR'in these a cache line index from 0...3 (ie, 0, 0x80, 0x100, 0x180)
+ * to select a specific snooper. 0 is pretty busy so 0x80 or 0x100 is recommended
+ * XXX TODO. add that and find way to tell KVM about it.
  */
 #define TM_SPC_ACK_EBB		0x800	/* Load8 ack EBB to reg*/
 #define TM_SPC_ACK_OS_REG	0x810	/* Load16 ack OS irq to reg */
-#define TM_SPC_ACK_OS_EL	0xc10	/* Store8 ack OS irq to even line */
 #define TM_SPC_PUSH_USR_CTX	0x808	/* Store32 Push/Validate user context */
 #define TM_SPC_PULL_USR_CTX	0x808	/* Load32 Pull/Invalidate user context */
-#define TM_SPC_PULL_USR_CTX_OL	0xc08	/* Store8 Pull/Inval usr ctx to odd line */
 #define TM_SPC_SET_OS_PENDING	0x812	/* Store8 Set OS irq pending bit */
+#define TM_SPC_PULL_OS_CTX	0x818	/* Load32/Load64 Pull/Invalidate OS context to reg */
+#define TM_SPC_PULL_POOL_CTX	0x828	/* Load32/Load64 Pull/Invalidate Pool context to reg*/
 #define TM_SPC_ACK_HV_REG	0x830	/* Load16 ack HV irq to reg */
+#define TM_SPC_PULL_USR_CTX_OL	0xc08	/* Store8 Pull/Inval usr ctx to odd line */
+#define TM_SPC_ACK_OS_EL	0xc10	/* Store8 ack OS irq to even line */
 #define TM_SPC_ACK_HV_POOL_EL	0xc20	/* Store8 ack HV evt pool to even line */
 #define TM_SPC_ACK_HV_EL	0xc30	/* Store8 ack HV irq to even line */
 /* XXX more... */
@@ -276,6 +363,9 @@
  *
  * One per interrupt source. Targets that interrupt to a given EQ
  * and provides the corresponding logical interrupt number (EQ data)
+ *
+ * We also map this structure to the escalation descriptor inside
+ * an EQ, though in that case the valid and masked bits are not used.
  */
 struct xive_ive {
 	/* Use a single 64-bit definition to make it easier to
@@ -300,12 +390,18 @@ struct xive_eq {
 #define EQ_W0_ESCALATE_CTL	PPC_BIT32(5)
 #define EQ_W0_END_OF_INTR	PPC_BIT32(6)
 #define EQ_W0_QSIZE		PPC_BITMASK32(12,15)
+#define EQ_W0_SW0		PPC_BIT32(16)
+#define EQ_W0_FIRMWARE		EQ_W0_SW0 /* Owned by FW */
 #define EQ_QSIZE_4K		0
 #define EQ_QSIZE_64K		4
 #define EQ_W0_HWDEP		PPC_BITMASK32(24,31)
 	uint32_t	w1;
 #define EQ_W1_ESn		PPC_BITMASK32(0,1)
+#define EQ_W1_ESn_P		PPC_BIT32(0)
+#define EQ_W1_ESn_Q		PPC_BIT32(1)
 #define EQ_W1_ESe		PPC_BITMASK32(2,3)
+#define EQ_W1_ESe_P		PPC_BIT32(2)
+#define EQ_W1_ESe_Q		PPC_BIT32(3)
 #define EQ_W1_GENERATION	PPC_BIT32(9)
 #define EQ_W1_PAGE_OFF		PPC_BITMASK32(10,31)
 	uint32_t	w2;
@@ -369,10 +465,35 @@ uint32_t xive_alloc_ipi_irqs(uint32_t chip_id, uint32_t count, uint32_t align);
 #define XIVE_HW_SRC_PSI		8
 
 uint64_t xive_get_notify_port(uint32_t chip_id, uint32_t ent);
+uint32_t xive_get_notify_base(uint32_t girq);
 
-bool xive_get_eq_info(uint32_t isn, uint32_t *out_target, uint8_t *out_prio);
-bool xive_set_eq_info(uint32_t isn, uint32_t target, uint8_t prio);
+/* Internal IRQ flags */
+#define XIVE_SRC_TRIGGER_PAGE	0x01 /* Trigger page exist (either separate
+				      * or not, so different from the OPAL
+				      * flag which is only set when the
+				      * trigger page is separate).
+				      */
+#define XIVE_SRC_EOI_PAGE1	0x02 /* EOI on the second page */
+#define XIVE_SRC_STORE_EOI	0x04 /* EOI using stores supported */
+#define XIVE_SRC_LSI		0x08 /* Interrupt is an LSI */
+#define XIVE_SRC_SHIFT_BUG	0x10 /* ESB update offset << 4 */
+
+struct irq_source_ops;
+void xive_register_hw_source(uint32_t base, uint32_t count, uint32_t shift,
+			     void *mmio, uint32_t flags, void *data,
+			     const struct irq_source_ops *ops);
+void xive_register_ipi_source(uint32_t base, uint32_t count, void *data,
+			      const struct irq_source_ops *ops);
 
 void xive_cpu_callin(struct cpu_thread *cpu);
+
+/* Get the trigger page address for an interrupt allocated with
+ * xive_alloc_ipi_irqs()
+ */
+void *xive_get_trigger_port(uint32_t girq);
+
+/* To be used by special EOI override in PSI */
+struct irq_source;
+void __xive_source_eoi(struct irq_source *is, uint32_t isn);
 
 #endif /* __XIVE_H__ */

@@ -69,12 +69,10 @@ read failed: Input/output error
 
 === Check disconnect 4 reply ===
 
-read failed
 read failed: Input/output error
 
 === Check disconnect 8 reply ===
 
-read failed
 read failed: Input/output error
 
 === Check disconnect before data ===
@@ -180,12 +178,10 @@ read failed: Input/output error
 
 === Check disconnect 4 reply ===
 
-read failed
 read failed: Input/output error
 
 === Check disconnect 8 reply ===
 
-read failed
 read failed: Input/output error
 
 === Check disconnect before data ===

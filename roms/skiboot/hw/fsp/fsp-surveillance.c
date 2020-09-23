@@ -53,7 +53,7 @@ static void fsp_surv_ack(struct fsp_msg *msg)
 	val = (msg->resp->word1 >> 8) & 0xff;
 	if (val == 0) {
 		/* reset the pending flag */
-		prlog(PR_DEBUG,
+		prlog(PR_TRACE,
 		      "SURV: Received heartbeat acknowledge from FSP\n");
 		lock(&surv_lock);
 		fsp_surv_ack_pending = false;
@@ -82,15 +82,12 @@ static void fsp_surv_check_timeout(void)
 	 * just go ahead and check timeouts.
 	 */
 	if (tb_compare(now, surv_ack_timer) == TB_AAFTERB) {
-		/* XXX: We should be logging a PEL to the host, assuming
-		 * the FSP is dead, pending a R/R.
-		 */
-		log_simple_error(&e_info(OPAL_RC_SURVE_ACK),
+		uint32_t plid = log_simple_error(&e_info(OPAL_RC_SURVE_ACK),
 			"SURV: Surv ACK timed out; initiating R/R\n");
 
 		/* Reset the pending trigger too */
 		fsp_surv_ack_pending = false;
-		fsp_trigger_reset();
+		fsp_trigger_reset(plid);
 	}
 
 	return;
@@ -118,7 +115,7 @@ static void fsp_surv_hbeat(void)
 	if (surv_timer == 0 ||
 	    (tb_compare(now, surv_timer) == TB_AAFTERB) ||
 	    (tb_compare(now, surv_timer) == TB_AEQUALB)) {
-		prlog(PR_DEBUG,
+		prlog(PR_TRACE,
 		      "SURV: Sending the heartbeat command to FSP\n");
 		msg = fsp_mkmsg(FSP_CMD_SURV_HBEAT, 1, 120);
 		if (!msg) {
@@ -149,10 +146,10 @@ static void fsp_surv_got_param(uint32_t param_id __unused, int err_len,
 			       void *data __unused)
 {
 	if (err_len != 4) {
-		log_simple_error(&e_info(OPAL_RC_SURVE_STATUS),
+		uint32_t plid = log_simple_error(&e_info(OPAL_RC_SURVE_STATUS),
 		"SURV: Error (%d) retrieving surv status; initiating R/R\n",
 			err_len);
-		fsp_trigger_reset();
+		fsp_trigger_reset(plid);
 		return;
 	}
 

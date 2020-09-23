@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -165,6 +165,9 @@ void ibm_fsp_init(void)
 	/* Setup console */
 	if (fsp_present())
 		fsp_console_add_nodes();
+
+	if (proc_gen >= proc_gen_p9)
+		prd_init();
 }
 
 void ibm_fsp_exit(void)
@@ -193,7 +196,7 @@ int64_t ibm_fsp_cec_reboot(void)
 
 	/* If that failed, talk to the FSP */
 	if (fsp_sync_msg(fsp_mkmsg(cmd, 0), true))
-		return OPAL_INTERNAL_ERROR;
+		return OPAL_BUSY_EVENT;
 
 	return OPAL_SUCCESS;
 }
@@ -220,7 +223,7 @@ int64_t ibm_fsp_cec_power_down(uint64_t request)
 	printf("FSP: Sending shutdown command to FSP...\n");
 
 	if (fsp_sync_msg(fsp_mkmsg(FSP_CMD_POWERDOWN_NORM, 1, request), true))
-		return OPAL_INTERNAL_ERROR;
+		return OPAL_BUSY_EVENT;
 
 	fsp_reset_links();
 	return OPAL_SUCCESS;

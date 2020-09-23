@@ -23,6 +23,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qapi/error.h"
 #include "qemu/log.h"
 #include "hw/display/xlnx_dp.h"
 
@@ -34,7 +35,7 @@
     if (DEBUG_DP) {                                                            \
         qemu_log("xlnx_dp: " fmt , ## __VA_ARGS__);                            \
     }                                                                          \
-} while (0);
+} while (0)
 
 /*
  * Register offset for DP.
@@ -1220,7 +1221,7 @@ static void xlnx_dp_init(Object *obj)
     object_property_add_link(obj, "dpdma", TYPE_XLNX_DPDMA,
                              (Object **) &s->dpdma,
                              xlnx_dp_set_dpdma,
-                             OBJ_PROP_LINK_UNREF_ON_RELEASE,
+                             OBJ_PROP_LINK_STRONG,
                              &error_abort);
 
     /*

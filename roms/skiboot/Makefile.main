@@ -35,23 +35,24 @@ HOSTCC=gcc
 HOSTEND=$(shell uname -m | sed -e 's/^i.*86$$/LITTLE/' -e 's/^x86.*/LITTLE/' -e 's/^ppc64le/LITTLE/' -e 's/^ppc.*/BIG/')
 HOSTCFLAGS=-O1 $(CWARNS) -DHAVE_$(HOSTEND)_ENDIAN -MMD
 HOSTCFLAGS += $(call try-cflag,$(HOSTCC),-std=gnu11)
+HOSTCFLAGS += $(call try-cflag,$(HOSTCC),-m64)
 HOSTCFLAGS += $(call try-cflag,$(HOSTCC),-Wjump-misses-init) \
 	  $(call try-cflag,$(HOSTCC),-Wsuggest-attribute=const) \
-	  $(call try-cflag,$(HOSTCC),-Wsuggest-attribute=noreturn) \
-	  $(call try-cflag,$(HOSTCC),-Wstack-usage=1024)
+	  $(call try-cflag,$(HOSTCC),-Wsuggest-attribute=noreturn)
+HOSTCFLAGS += -DDEBUG -DCCAN_LIST_DEBUG
+
+HOSTGCOVCFLAGS = -fprofile-arcs -ftest-coverage -lgcov -O0 -g -pg
 
 VALGRIND=valgrind -q --show-reachable=yes --error-exitcode=99
 
 # Target options
 
-OPTS=-Os -ffunction-sections
+OPTS=-Os
 DBG=-g
 
 CPPFLAGS := -I$(SRC)/include -Iinclude -MMD -include $(SRC)/include/config.h
-CPPFLAGS += -I$(SRC)/libfdt -I$(SRC)/libflash -I$(SRC)/libc/include -I$(SRC)
-ifeq ($(PORE),1)
-CPPFLAGS += -I$(SRC)/libpore -D__HAVE_LIBPORE__
-endif
+CPPFLAGS += -I$(SRC)/libfdt -I$(SRC)/libflash -I$(SRC)/libxz -I$(SRC)/libc/include -I$(SRC)
+CPPFLAGS += -I$(SRC)/libpore
 CPPFLAGS += -D__SKIBOOT__ -nostdinc
 CPPFLAGS += -isystem $(shell $(CC) -print-file-name=include)
 CPPFLAGS += -DBITS_PER_LONG=64 -DHAVE_BIG_ENDIAN
@@ -60,21 +61,41 @@ CPPFLAGS += -DBITS_PER_LONG=64 -DHAVE_BIG_ENDIAN
 # causing all our printf's to warn
 CPPFLAGS += -ffreestanding
 
-CFLAGS := -fno-strict-aliasing -fstack-protector-all -pie -mbig-endian -m64
+ifeq ($(DEBUG),1)
+CPPFLAGS += -DDEBUG -DCCAN_LIST_DEBUG
+endif
+
+CFLAGS := -fno-strict-aliasing -pie -fpie -fno-pic -mbig-endian -m64
+CFLAGS += -mcpu=power7
 CFLAGS += -Wl,--oformat,elf64-powerpc
-CFLAGS += $(call try-cflag,$(CC),-mabi=elfv1)
+CFLAGS += -ffixed-r13
 CFLAGS += $(call try-cflag,$(CC),-std=gnu11)
+ifeq ($(ELF_ABI_v2),1)
+CFLAGS += $(call try-cflag,$(CC),-mabi=elfv2)
+else
+CFLAGS += $(call try-cflag,$(CC),-mabi=elfv1)
+endif
+
+ifeq ($(DEAD_CODE_ELIMINATION),1)
+CFLAGS += -ffunction-sections -fdata-sections
+endif
 
 ifeq ($(SKIBOOT_GCOV),1)
 CFLAGS += -fprofile-arcs -ftest-coverage -DSKIBOOT_GCOV=1
 endif
 
+# Stack protector disabled for now. gcc tends to use the TLS to
+# access the canary (depending on how gcc was built), and this won't
+# work for us.
+#
 ifeq ($(STACK_CHECK),1)
-CFLAGS += -fstack-protector-all -pg
+#CFLAGS += -fstack-protector-all -pg
+CFLAGS += -fno-stack-protector -pg
 CPPFLAGS += -DSTACK_CHECK_ENABLED
 else
-CFLAGS += -fstack-protector
-CFLAGS += $(call try-cflag,$(CC),-fstack-protector-strong)
+CFLAGS += -fno-stack-protector
+#CFLAGS += -fstack-protector
+#CFLAGS += $(call try-cflag,$(CC),-fstack-protector-strong)
 endif
 
 CFLAGS += $(call try-cflag,$(CC),-Wjump-misses-init) \
@@ -85,15 +106,25 @@ CFLAGS += $(call try-cflag,$(CC),-Wjump-misses-init) \
 CFLAGS += $(CWARNS) $(OPTS) $(DBG)
 
 LDFLAGS := -m64 -static -nostdlib -pie 
+LDFLAGS += -Wl,-pie
 LDFLAGS += -Wl,-Ttext-segment,$(LD_TEXT) -Wl,-N -Wl,--build-id=none
 LDFLAGS += -Wl,--no-multi-toc
-LDFLAGS += -mbig-endian -Wl,--oformat,elf64-powerpc
+LDFLAGS += -mcpu=power7 -mbig-endian -Wl,--oformat,elf64-powerpc
 
 LDRFLAGS=-melf64ppc
 # Debug stuff
 #LDFLAGS += -Wl,-v -Wl,-Map,foomap 
 
+ifeq ($(DEAD_CODE_ELIMINATION),1)
+LDFLAGS += -Wl,--gc-sections
+endif
+
 AFLAGS := -D__ASSEMBLY__ -mbig-endian -m64
+ifeq ($(ELF_ABI_v2),1)
+AFLAGS += $(call try-cflag,$(CC),-mabi=elfv2)
+else
+AFLAGS += $(call try-cflag,$(CC),-mabi=elfv1)
+endif
 
 # Special tool flags:
 # Do not use the floating point unit
@@ -141,28 +172,28 @@ include $(SRC)/hw/Makefile.inc
 include $(SRC)/platforms/Makefile.inc
 include $(SRC)/libfdt/Makefile.inc
 include $(SRC)/libflash/Makefile.inc
+include $(SRC)/libxz/Makefile.inc
 include $(SRC)/libpore/Makefile.inc
 include $(SRC)/libc/Makefile.inc
 include $(SRC)/ccan/Makefile.inc
 include $(SRC)/$(DEVSRC)/Makefile.inc
+include $(SRC)/libstb/Makefile.inc
 
 # hack for travis-ci and coverity
 gard:
-	(cd external/gard; make)
+	(cd external/gard; CROSS_COMPILE="" CFLAGS="$(HOSTCFLAGS) $(HOSTGCOVCFLAGS)" make)
 
 pflash:
-	(cd external/pflash; make)
+	(cd external/pflash; CROSS_COMPILE="" CFLAGS="$(HOSTCFLAGS) $(HOSTGCOVCFLAGS)" make)
 
 pflash-coverity:
 	(cd external/pflash; ./build-all-arch.sh)
 
 all: $(SUBDIRS) $(TARGET).lid $(TARGET).lid.xz $(TARGET).map extract-gcov
+all: $(TARGET).lid.stb $(TARGET).lid.xz.stb
 
-OBJS := $(ASM) $(CORE) $(HW) $(PLATFORMS) $(LIBFDT) $(LIBFLASH)
-ifeq ($(PORE),1)
-OBJS += $(LIBPORE)
-endif
-OBJS += $(LIBC) $(CCAN) $(DEVSRC_OBJ)
+OBJS := $(ASM) $(CORE) $(HW) $(PLATFORMS) $(LIBFDT) $(LIBXZ) $(LIBFLASH) $(LIBSTB)
+OBJS += $(LIBC) $(CCAN) $(DEVSRC_OBJ) $(LIBPORE)
 OBJS_NO_VER = $(OBJS)
 ALL_OBJS = $(OBJS) version.o
 
@@ -175,6 +206,12 @@ $(TARGET).lid.xz: $(TARGET).lid
 $(TARGET).lid: $(TARGET).elf
 	$(call Q,OBJCOPY, $(OBJCOPY) -O binary -S $^ $@, $@)
 
+$(TARGET).lid.stb: $(TARGET).lid libstb/create-container
+	$(call Q,STB-UNSIGNED-CONTAINER,./libstb/create-container --payload $< --imagefile $@,$@)
+
+$(TARGET).lid.xz.stb: $(TARGET).lid.xz libstb/create-container
+	$(call Q,STB-UNSIGNED-CONTAINER,./libstb/create-container --payload $< --imagefile $@,$@)
+
 $(TARGET).tmp.elf: $(ALL_OBJS_1) $(TARGET).lds $(KERNEL)
 	$(call Q,LD, $(CC) $(LDFLAGS) -T $(TARGET).lds $(ALL_OBJS_1) -o $@, $@)
 
@@ -184,7 +221,7 @@ $(TARGET).elf: $(ALL_OBJS_2) $(TARGET).lds $(KERNEL)
 	$(call Q,LD, $(CC) $(LDFLAGS) -T $(TARGET).lds $(ALL_OBJS_2) -o $@, $@)
 
 $(SUBDIRS):
-	$(call Q,MKDIR,mkdir $@, $@)
+	$(call Q,MKDIR,mkdir -p $@, $@)
 
 -include $(wildcard *.d)
 -include $(wildcard $(SUBDIRS:%=%/*.d))
@@ -219,8 +256,18 @@ extract-gcov: extract-gcov.c
 coverage-report: skiboot.info
 	genhtml --branch-coverage -q -o $@ $<
 
-skiboot.info: coverage
+# A rather nasty hack here that relies on the lcov file format
+external/pflash/pflash.info: coverage
+	(cd external/pflash; lcov -q -c -d . -o pflash.info --rc lcov_branch_coverage=1; sed -i -e 's%external/pflash/libflash%libflash%; s%external/pflash/ccan%ccan%' pflash.info)
+external/gard/gard.info: coverage
+	(cd external/gard; lcov -q -c -d . -o gard.info --rc lcov_branch_coverage=1; sed -i -e 's%external/gard/libflash%libflash%; s%external/gard/ccan%ccan%' gard.info)
+
+skiboot.info: coverage external/pflash/pflash.info external/gard/gard.info
 	lcov -q -c -d . $(LCOV_DIRS) -o $@ --rc lcov_branch_coverage=1
+	lcov -q -r $@ 'external/pflash/*' -o $@
+	lcov -q -r $@ 'external/gard/*' -o $@
+	lcov -q -a $@ -a external/pflash/pflash.info -o $@
+	lcov -q -a $@ -a external/gard/gard.info -o $@
 	lcov -q -r $@ $(LCOV_EXCLUDE) -o $@ --rc lcov_branch_coverage=1
 
 tags:
@@ -238,7 +285,8 @@ clean:
 	$(RM) *.[odsa] $(SUBDIRS:%=%/*.[odsa])
 	$(RM) *.elf $(TARGET).lid *.map $(TARGET).lds $(TARGET).lid.xz
 	$(RM) include/asm-offsets.h version.c .version
-	$(RM) extract-gcov
+	$(RM) skiboot.info external/gard/gard.info external/pflash/pflash.info
+	$(RM) extract-gcov $(TARGET).lid.stb $(TARGET).lid.xz.stb
 
 distclean: clean
 	$(RM) *~ $(SUBDIRS:%=%/*~) include/*~

@@ -27,6 +27,7 @@
 #include <cpu.h>
 #include <chip.h>
 #include <io.h>
+#include <nvram.h>
 
 DEFINE_LOG_ENTRY(OPAL_RC_UART_INIT, OPAL_PLATFORM_ERR_EVT, OPAL_UART,
 		 OPAL_CEC_HARDWARE, OPAL_PREDICTIVE_ERR_GENERAL,
@@ -68,6 +69,13 @@ static bool has_irq = false, irq_ok, rx_full, tx_full;
 static uint8_t tx_room;
 static uint8_t cached_ier;
 static void *mmio_uart_base;
+static int uart_console_policy = UART_CONSOLE_OPAL;
+static int lpc_irq = -1;
+
+void uart_set_console_policy(int policy)
+{
+	uart_console_policy = policy;
+}
 
 static void uart_trace(u8 ctx, u8 cnt, u8 irq_state, u8 in_count)
 {
@@ -107,10 +115,16 @@ static void uart_check_tx_room(void)
 
 static void uart_wait_tx_room(void)
 {
-	while(!tx_room) {
+	while (!tx_room) {
 		uart_check_tx_room();
-		if (!tx_room)
-			cpu_relax();
+		if (!tx_room) {
+			smt_lowest();
+			do {
+				barrier();
+				uart_check_tx_room();
+			} while (!tx_room);
+			smt_medium();
+		}
 	}
 }
 
@@ -170,11 +184,8 @@ static size_t uart_con_write(const char *buf, size_t len)
 	return written;
 }
 
-static int64_t uart_con_flush(void);
-
 static struct con_ops uart_con_driver = {
 	.write = uart_con_write,
-	.flush = uart_con_flush
 };
 
 /*
@@ -375,6 +386,14 @@ static int64_t uart_opal_read(int64_t term_number, int64_t *length,
 	return OPAL_SUCCESS;
 }
 
+static int64_t uart_opal_flush(int64_t term_number)
+{
+	if (term_number != 0)
+		return OPAL_PARAMETER;
+
+	return uart_con_flush();
+}
+
 static void __uart_do_poll(u8 trace_ctx)
 {
 	if (!in_buf)
@@ -407,33 +426,39 @@ static void uart_irq(uint32_t chip_id __unused, uint32_t irq_mask __unused)
  * Common setup/inits
  */
 
-void uart_setup_linux_passthrough(void)
+static void uart_setup_os_passthrough(void)
 {
 	char *path;
+
+	static struct lpc_client uart_lpc_os_client = {
+		.reset = NULL,
+		.interrupt = NULL,
+		.interrupts = 0
+	};
 
 	dt_add_property_strings(uart_node, "status", "ok");
 	path = dt_get_path(uart_node);
 	dt_add_property_string(dt_chosen, "linux,stdout-path", path);
 	free(path);
+
+	/* Setup LPC client for OS interrupts */
+	if (lpc_irq >= 0) {
+		uint32_t chip_id = dt_get_chip_id(uart_node);
+		uart_lpc_os_client.interrupts = LPC_IRQ(lpc_irq);
+		lpc_register_client(chip_id, &uart_lpc_os_client,
+				    IRQ_ATTR_TARGET_LINUX);
+	}
 	prlog(PR_DEBUG, "UART: Enabled as OS pass-through\n");
 }
 
-void uart_setup_opal_console(void)
+static void uart_setup_opal_console(void)
 {
-	struct dt_node *con, *consoles;
+	static struct lpc_client uart_lpc_opal_client = {
+		.interrupt = uart_irq,
+	};
 
-	/* Create OPAL console node */
-	consoles = dt_new(opal_node, "consoles");
-	assert(consoles);
-	dt_add_property_cells(consoles, "#address-cells", 1);
-	dt_add_property_cells(consoles, "#size-cells", 0);
-
-	con = dt_new_addr(consoles, "serial", 0);
-	assert(con);
-	dt_add_property_string(con, "compatible", "ibm,opal-console-raw");
-	dt_add_property_cells(con, "#write-buffer-size", INMEM_CON_OUT_LEN);
-	dt_add_property_cells(con, "reg", 0);
-	dt_add_property_string(con, "device_type", "serial");
+	/* Add the opal console node */
+	add_opal_console_node(0, "raw", OUT_BUF_SIZE);
 
 	dt_add_property_string(dt_chosen, "linux,stdout-path",
 			       "/ibm,opal/consoles/serial@0");
@@ -444,6 +469,19 @@ void uart_setup_opal_console(void)
 	 */
 	dt_add_property_strings(uart_node, "status", "reserved");
 
+	/* Allocate an input buffer */
+	in_buf = zalloc(IN_BUF_SIZE);
+	out_buf = zalloc(OUT_BUF_SIZE);
+
+	/* Setup LPC client for OPAL interrupts */
+	if (lpc_irq >= 0) {
+		uint32_t chip_id = dt_get_chip_id(uart_node);
+		uart_lpc_opal_client.interrupts = LPC_IRQ(lpc_irq);
+		lpc_register_client(chip_id, &uart_lpc_opal_client,
+				    IRQ_ATTR_TARGET_OPAL);
+		has_irq = true;
+	}
+
 	/*
 	 * If the interrupt is enabled, turn on RX interrupts (and
 	 * only these for now
@@ -451,19 +489,42 @@ void uart_setup_opal_console(void)
 	tx_full = rx_full = false;
 	uart_update_ier();
 
-	/* Allocate an input buffer */
-	in_buf = zalloc(IN_BUF_SIZE);
-	out_buf = zalloc(OUT_BUF_SIZE);
-	prlog(PR_DEBUG, "UART: Enabled as OS console\n");
-
-	/* Register OPAL APIs */
-	opal_register(OPAL_CONSOLE_READ, uart_opal_read, 3);
-	opal_register(OPAL_CONSOLE_WRITE_BUFFER_SPACE,
-		      uart_opal_write_buffer_space, 2);
-	opal_register(OPAL_CONSOLE_WRITE, uart_opal_write, 3);
-
+	/* Start console poller */
 	opal_add_poller(uart_console_poll, NULL);
 }
+
+static void uart_init_opal_console(void)
+{
+	const char *nv_policy;
+
+	/* Update the policy if the corresponding nvram variable
+	 * is present
+	 */
+	nv_policy = nvram_query("uart-con-policy");
+	if (nv_policy) {
+		if (!strcmp(nv_policy, "opal"))
+			uart_console_policy = UART_CONSOLE_OPAL;
+		else if (!strcmp(nv_policy, "os"))
+			uart_console_policy = UART_CONSOLE_OS;
+		else
+			prlog(PR_WARNING,
+			      "UART: Unknown console policy in NVRAM: %s\n",
+			      nv_policy);
+	}
+	if (uart_console_policy == UART_CONSOLE_OPAL)
+		uart_setup_opal_console();
+	else
+		uart_setup_os_passthrough();
+}
+
+struct opal_con_ops uart_opal_con = {
+	.name = "OPAL UART console",
+	.init = uart_init_opal_console,
+	.read = uart_opal_read,
+	.write = uart_opal_write,
+	.space = uart_opal_write_buffer_space,
+	.flush = uart_opal_flush,
+};
 
 static bool uart_init_hw(unsigned int speed, unsigned int clock)
 {
@@ -486,6 +547,27 @@ static bool uart_init_hw(unsigned int speed, unsigned int clock)
 	uart_write(REG_LCR, 0x03); /* 8N1 */
 	uart_write(REG_MCR, 0x03); /* RTS/DTR */
 	uart_write(REG_FCR, 0x07); /* clear & en. fifos */
+
+	/*
+	 * On some UART implementations[1], we have observed that characters
+	 * written to the UART during early boot (where no RX path is used,
+	 * so we don't read from RBR) can cause a character timeout interrupt
+	 * once we eventually enable interrupts through the IER. This
+	 * interrupt can only be cleared by reading from RBR (even though we've
+	 * cleared the RX FIFO!).
+	 *
+	 * Unfortunately though, the LCR[DR] bit does *not* indicate that there
+	 * are characters to be read from RBR, so we may never read it, so the
+	 * interrupt continuously fires.
+	 *
+	 * So, manually clear the timeout interrupt by reading the RBR here.
+	 * We discard the read data, but that shouldn't matter as we've just
+	 * reset the FIFO anyway.
+	 *
+	 * 1: seen on the AST2500 SUART. I assume this applies to 2400 too.
+	 */
+	uart_read(REG_RBR);
+
 	return true;
 
  detect_fail:
@@ -493,17 +575,46 @@ static bool uart_init_hw(unsigned int speed, unsigned int clock)
 	return false;
 }
 
-static struct lpc_client uart_lpc_client = {
-	.interrupt = uart_irq,
-};
+/*
+ * early_uart_init() is similar to uart_init() in that it configures skiboot
+ * console log to output via a UART. The main differences are that the early
+ * version only works with MMIO UARTs and will not setup interrupts or locks.
+ */
+void early_uart_init(void)
+{
+	struct dt_node *uart_node;
+	u32 clk, baud;
+
+	uart_node = dt_find_compatible_node(dt_root, NULL, "ns16550");
+	if (!uart_node)
+		return;
+
+	/* Try translate the address, if this fails then it's not a MMIO UART */
+	mmio_uart_base = (void *) dt_translate_address(uart_node, 0, NULL);
+	if (!mmio_uart_base)
+		return;
+
+	clk = dt_prop_get_u32(uart_node, "clock-frequency");
+	baud = dt_prop_get_u32(uart_node, "current-speed");
+
+	if (uart_init_hw(baud, clk)) {
+		set_console(&uart_con_driver);
+		prlog(PR_NOTICE, "UART: Using UART at %p\n", mmio_uart_base);
+	} else {
+		prerror("UART: Early init failed!");
+		mmio_uart_base = NULL;
+	}
+}
 
 void uart_init(void)
 {
 	const struct dt_property *prop;
 	struct dt_node *n;
 	char *path __unused;
-	uint32_t chip_id;
 	const uint32_t *irqp;
+
+	/* Clean up after early_uart_init() */
+	mmio_uart_base = NULL;
 
 	/* UART lock is in the console path and thus must block
 	 * printf re-entrancy
@@ -554,13 +665,8 @@ void uart_init(void)
 		uart_base = dt_property_get_cell(prop, 1);
 
 		if (irqp) {
-			uint32_t irq = be32_to_cpu(*irqp);
-
-			chip_id = dt_get_chip_id(uart_node);
-			uart_lpc_client.interrupts = LPC_IRQ(irq);
-			lpc_register_client(chip_id, &uart_lpc_client);
-			prlog(PR_DEBUG, "UART: Using LPC IRQ %d\n", irq);
-			has_irq = true;
+			lpc_irq = be32_to_cpu(*irqp);
+			prlog(PR_DEBUG, "UART: Using LPC IRQ %d\n", lpc_irq);
 		}
 	}
 

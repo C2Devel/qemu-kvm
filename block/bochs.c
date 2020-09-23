@@ -28,6 +28,7 @@
 #include "block/block_int.h"
 #include "qemu/module.h"
 #include "qemu/bswap.h"
+#include "qemu/error-report.h"
 
 /**************************************************************/
 
@@ -104,15 +105,16 @@ static int bochs_open(BlockDriverState *bs, QDict *options, int flags,
     struct bochs_header bochs;
     int ret;
 
+    /* No write support yet */
+    ret = bdrv_apply_auto_read_only(bs, NULL, errp);
+    if (ret < 0) {
+        return ret;
+    }
+
     bs->file = bdrv_open_child(NULL, options, "file", bs, &child_file,
                                false, errp);
     if (!bs->file) {
         return -EINVAL;
-    }
-
-    ret = bdrv_set_read_only(bs, true, errp); /* no write support yet */
-    if (ret < 0) {
-        return ret;
     }
 
     ret = bdrv_pread(bs->file, 0, &bochs, sizeof(bochs));

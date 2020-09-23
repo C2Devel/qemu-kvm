@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,8 +28,10 @@
 #include <affinity.h>
 #include <chip.h>
 #include <timebase.h>
+#include <interrupts.h>
 #include <ccan/str/str.h>
 #include <ccan/container_of/container_of.h>
+#include <xscom.h>
 
 /* The cpu_threads array is static and indexed by PIR in
  * order to speed up lookup from asm entry points
@@ -47,8 +49,14 @@ unsigned int cpu_max_pir;
 struct cpu_thread *boot_cpu;
 static struct lock reinit_lock = LOCK_UNLOCKED;
 static bool hile_supported;
+static bool radix_supported;
 static unsigned long hid0_hile;
 static unsigned long hid0_attn;
+static bool sreset_enabled;
+static bool ipi_enabled;
+static bool pm_enabled;
+static bool current_hile_mode;
+static bool current_radix_mode;
 
 unsigned long cpu_secondary_start __force_data = 0;
 
@@ -60,9 +68,6 @@ struct cpu_job {
 	bool			complete;
 	bool		        no_return;
 };
-
-static struct lock global_job_queue_lock = LOCK_UNLOCKED;
-static struct list_head	global_job_queue;
 
 /* attribute const as cpu_stacks is constant. */
 unsigned long __attrconst cpu_stack_bottom(unsigned int pir)
@@ -80,6 +85,82 @@ unsigned long __attrconst cpu_stack_top(unsigned int pir)
 	 */
 	return ((unsigned long)&cpu_stacks[pir]) +
 		NORMAL_STACK_SIZE - STACK_TOP_GAP;
+}
+
+static void cpu_wake(struct cpu_thread *cpu)
+{
+	/* Is it idle ? If not, no need to wake */
+	sync();
+	if (!cpu->in_idle)
+		return;
+
+	if (proc_gen == proc_gen_p8 || proc_gen == proc_gen_p7) {
+		/* Poke IPI */
+		icp_kick_cpu(cpu);
+	} else if (proc_gen == proc_gen_p9) {
+		p9_dbell_send(cpu->pir);
+	}
+}
+
+static struct cpu_thread *cpu_find_job_target(void)
+{
+	struct cpu_thread *cpu, *best, *me = this_cpu();
+	uint32_t best_count;
+
+	/* We try to find a target to run a job. We need to avoid
+	 * a CPU that has a "no return" job on its queue as it might
+	 * never be able to process anything.
+	 *
+	 * Additionally we don't check the list but the job count
+	 * on the target CPUs, since that is decremented *after*
+	 * a job has been completed.
+	 */
+
+
+	/* First we scan all available primary threads
+	 */
+	for_each_available_cpu(cpu) {
+		if (cpu == me || !cpu_is_thread0(cpu) || cpu->job_has_no_return)
+			continue;
+		if (cpu->job_count)
+			continue;
+		lock(&cpu->job_lock);
+		if (!cpu->job_count)
+			return cpu;
+		unlock(&cpu->job_lock);
+	}
+
+	/* Now try again with secondary threads included and keep
+	 * track of the one with the less jobs queued up. This is
+	 * done in a racy way, but it's just an optimization in case
+	 * we are overcommitted on jobs. Could could also just pick
+	 * a random one...
+	 */
+	best = NULL;
+	best_count = -1u;
+	for_each_available_cpu(cpu) {
+		if (cpu == me || cpu->job_has_no_return)
+			continue;
+		if (!best || cpu->job_count < best_count) {
+			best = cpu;
+			best_count = cpu->job_count;
+		}
+		if (cpu->job_count)
+			continue;
+		lock(&cpu->job_lock);
+		if (!cpu->job_count)
+			return cpu;
+		unlock(&cpu->job_lock);
+	}
+
+	/* We haven't found anybody, do we have a bestie ? */
+	if (best) {
+		lock(&best->job_lock);
+		return best;
+	}
+
+	/* Go away */
+	return NULL;
 }
 
 struct cpu_job *__cpu_queue_job(struct cpu_thread *cpu,
@@ -109,20 +190,36 @@ struct cpu_job *__cpu_queue_job(struct cpu_thread *cpu,
 	job->complete = false;
 	job->no_return = no_return;
 
-	if (cpu == NULL) {
-		lock(&global_job_queue_lock);
-		list_add_tail(&global_job_queue, &job->link);
-		unlock(&global_job_queue_lock);
-	} else if (cpu != this_cpu()) {
+	/* Pick a candidate. Returns with target queue locked */
+	if (cpu == NULL)
+		cpu = cpu_find_job_target();
+	else if (cpu != this_cpu())
 		lock(&cpu->job_lock);
-		list_add_tail(&cpu->job_queue, &job->link);
-		unlock(&cpu->job_lock);
-	} else {
+	else
+		cpu = NULL;
+
+	/* Can't be scheduled, run it now */
+	if (cpu == NULL) {
 		func(data);
 		job->complete = true;
+		return job;
 	}
 
-	/* XXX Add poking of CPU with interrupt */
+	/* That's bad, the job will never run */
+	if (cpu->job_has_no_return) {
+		prlog(PR_WARNING, "WARNING ! Job %s scheduled on CPU 0x%x"
+		      " which has a no-return job on its queue !\n",
+		      job->name, cpu->pir);
+		backtrace();
+	}
+	list_add_tail(&cpu->job_queue, &job->link);
+	if (no_return)
+		cpu->job_has_no_return = true;
+	else
+		cpu->job_count++;
+	if (pm_enabled)
+		cpu_wake(cpu);
+	unlock(&cpu->job_lock);
 
 	return job;
 }
@@ -135,22 +232,18 @@ bool cpu_poll_job(struct cpu_job *job)
 
 void cpu_wait_job(struct cpu_job *job, bool free_it)
 {
-	unsigned long ticks = usecs_to_tb(5);
-	unsigned long period = msecs_to_tb(5);
 	unsigned long time_waited = 0;
 
 	if (!job)
 		return;
 
-	while(!job->complete) {
-		time_wait(ticks);
-		time_waited+=ticks;
-		if (time_waited % period == 0)
-			opal_run_pollers();
+	while (!job->complete) {
+		/* This will call OPAL pollers for us */
+		time_wait_ms(10);
+		time_waited += 10;
 		lwsync();
 	}
 	lwsync();
-	smt_medium();
 
 	if (time_waited > msecs_to_tb(1000))
 		prlog(PR_DEBUG, "cpu_wait_job(%s) for %lu\n",
@@ -160,13 +253,9 @@ void cpu_wait_job(struct cpu_job *job, bool free_it)
 		free(job);
 }
 
-void cpu_free_job(struct cpu_job *job)
+bool cpu_check_jobs(struct cpu_thread *cpu)
 {
-	if (!job)
-		return;
-
-	assert(job->complete);
-	free(job);
+	return !list_empty_nocheck(&cpu->job_queue);
 }
 
 void cpu_process_jobs(void)
@@ -177,25 +266,14 @@ void cpu_process_jobs(void)
 	void *data;
 
 	sync();
-	if (list_empty(&cpu->job_queue) && list_empty(&global_job_queue))
+	if (!cpu_check_jobs(cpu))
 		return;
 
 	lock(&cpu->job_lock);
 	while (true) {
 		bool no_return;
 
-		if (list_empty(&cpu->job_queue)) {
-			smt_medium();
-			if (list_empty(&global_job_queue))
-				break;
-			lock(&global_job_queue_lock);
-			job = list_pop(&global_job_queue, struct cpu_job, link);
-			unlock(&global_job_queue_lock);
-		} else {
-			smt_medium();
-			job = list_pop(&cpu->job_queue, struct cpu_job, link);
-		}
-
+		job = list_pop(&cpu->job_queue, struct cpu_job, link);
 		if (!job)
 			break;
 
@@ -209,11 +287,303 @@ void cpu_process_jobs(void)
 		func(data);
 		lock(&cpu->job_lock);
 		if (!no_return) {
+			cpu->job_count--;
 			lwsync();
 			job->complete = true;
 		}
 	}
 	unlock(&cpu->job_lock);
+}
+
+enum cpu_wake_cause {
+	cpu_wake_on_job,
+	cpu_wake_on_dec,
+};
+
+static void cpu_idle_p8(enum cpu_wake_cause wake_on)
+{
+	uint64_t lpcr = mfspr(SPR_LPCR) & ~SPR_LPCR_P8_PECE;
+	struct cpu_thread *cpu = this_cpu();
+
+	if (!pm_enabled) {
+		prlog_once(PR_DEBUG, "cpu_idle_p8 called pm disabled\n");
+		return;
+	}
+
+	/* Clean up ICP, be ready for IPIs */
+	icp_prep_for_pm();
+
+	/* Synchronize with wakers */
+	if (wake_on == cpu_wake_on_job) {
+		/* Mark ourselves in idle so other CPUs know to send an IPI */
+		cpu->in_idle = true;
+		sync();
+
+		/* Check for jobs again */
+		if (cpu_check_jobs(cpu) || !pm_enabled)
+			goto skip_sleep;
+
+		/* Setup wakup cause in LPCR: EE (for IPI) */
+		lpcr |= SPR_LPCR_P8_PECE2;
+		mtspr(SPR_LPCR, lpcr);
+
+	} else {
+		/* Mark outselves sleeping so cpu_set_pm_enable knows to
+		 * send an IPI
+		 */
+		cpu->in_sleep = true;
+		sync();
+
+		/* Check if PM got disabled */
+		if (!pm_enabled)
+			goto skip_sleep;
+
+		/* EE and DEC */
+		lpcr |= SPR_LPCR_P8_PECE2 | SPR_LPCR_P8_PECE3;
+		mtspr(SPR_LPCR, lpcr);
+	}
+
+	/* Enter nap */
+	enter_p8_pm_state(false);
+
+skip_sleep:
+	/* Restore */
+	sync();
+	cpu->in_idle = false;
+	cpu->in_sleep = false;
+	reset_cpu_icp();
+}
+
+static void cpu_idle_p9(enum cpu_wake_cause wake_on)
+{
+	uint64_t lpcr = mfspr(SPR_LPCR) & ~SPR_LPCR_P9_PECE;
+	uint64_t psscr;
+	struct cpu_thread *cpu = this_cpu();
+
+	if (!pm_enabled) {
+		prlog_once(PR_DEBUG, "cpu_idle_p9 called pm disabled\n");
+		return;
+	}
+
+	msgclr(); /* flush pending messages */
+
+	/* Synchronize with wakers */
+	if (wake_on == cpu_wake_on_job) {
+		/* Mark ourselves in idle so other CPUs know to send an IPI */
+		cpu->in_idle = true;
+		sync();
+
+		/* Check for jobs again */
+		if (cpu_check_jobs(cpu) || !pm_enabled)
+			goto skip_sleep;
+
+		/* HV DBELL for IPI */
+		lpcr |= SPR_LPCR_P9_PECEL1;
+	} else {
+		/* Mark outselves sleeping so cpu_set_pm_enable knows to
+		 * send an IPI
+		 */
+		cpu->in_sleep = true;
+		sync();
+
+		/* Check if PM got disabled */
+		if (!pm_enabled)
+			goto skip_sleep;
+
+		/* HV DBELL and DEC */
+		lpcr |= SPR_LPCR_P9_PECEL1 | SPR_LPCR_P9_PECEL3;
+		mtspr(SPR_LPCR, lpcr);
+	}
+
+	mtspr(SPR_LPCR, lpcr);
+
+	if (sreset_enabled) {
+		/* stop with EC=1 (sreset) and ESL=1 (enable thread switch). */
+		/* PSSCR SD=0 ESL=1 EC=1 PSSL=0 TR=3 MTL=0 RL=3 */
+		psscr = PPC_BIT(42) | PPC_BIT(43) |
+			PPC_BITMASK(54, 55) | PPC_BITMASK(62,63);
+		enter_p9_pm_state(psscr);
+	} else {
+		/* stop with EC=0 (resumes) which does not require sreset. */
+		/* PSSCR SD=0 ESL=0 EC=0 PSSL=0 TR=3 MTL=0 RL=3 */
+		psscr = PPC_BITMASK(54, 55) | PPC_BITMASK(62,63);
+		enter_p9_pm_lite_state(psscr);
+	}
+
+skip_sleep:
+	/* Restore */
+	cpu->in_idle = false;
+	cpu->in_sleep = false;
+	p9_dbell_receive();
+}
+
+static void cpu_idle_pm(enum cpu_wake_cause wake_on)
+{
+	switch(proc_gen) {
+	case proc_gen_p8:
+		cpu_idle_p8(wake_on);
+		break;
+	case proc_gen_p9:
+		cpu_idle_p9(wake_on);
+		break;
+	default:
+		prlog_once(PR_DEBUG, "cpu_idle_pm called with bad processor type\n");
+		break;
+	}
+}
+
+void cpu_idle_job(void)
+{
+	if (pm_enabled) {
+		cpu_idle_pm(cpu_wake_on_job);
+	} else {
+		struct cpu_thread *cpu = this_cpu();
+
+		smt_lowest();
+		/* Check for jobs again */
+		while (!cpu_check_jobs(cpu)) {
+			if (pm_enabled)
+				break;
+			barrier();
+		}
+		smt_medium();
+	}
+}
+
+void cpu_idle_delay(unsigned long delay)
+{
+	unsigned long now = mftb();
+	unsigned long end = now + delay;
+	unsigned long min_pm = usecs_to_tb(10);
+
+	if (pm_enabled && delay > min_pm) {
+pm:
+		for (;;) {
+			if (delay >= 0x7fffffff)
+				delay = 0x7fffffff;
+			mtspr(SPR_DEC, delay);
+
+			cpu_idle_pm(cpu_wake_on_dec);
+
+			now = mftb();
+			if (tb_compare(now, end) == TB_AAFTERB)
+				break;
+			delay = end - now;
+			if (!(pm_enabled && delay > min_pm))
+				goto no_pm;
+		}
+	} else {
+no_pm:
+		smt_lowest();
+		for (;;) {
+			now = mftb();
+			if (tb_compare(now, end) == TB_AAFTERB)
+				break;
+			delay = end - now;
+			if (pm_enabled && delay > min_pm) {
+				smt_medium();
+				goto pm;
+			}
+		}
+		smt_medium();
+	}
+}
+
+static void cpu_pm_disable(void)
+{
+	struct cpu_thread *cpu;
+
+	pm_enabled = false;
+	sync();
+
+	if (proc_gen == proc_gen_p8) {
+		for_each_available_cpu(cpu) {
+			while (cpu->in_sleep || cpu->in_idle) {
+				icp_kick_cpu(cpu);
+				cpu_relax();
+			}
+		}
+	} else if (proc_gen == proc_gen_p9) {
+		for_each_available_cpu(cpu) {
+			if (cpu->in_sleep || cpu->in_idle)
+				p9_dbell_send(cpu->pir);
+		}
+
+		smt_lowest();
+		for_each_available_cpu(cpu) {
+			while (cpu->in_sleep || cpu->in_idle)
+				barrier();
+		}
+		smt_medium();
+	}
+}
+
+void cpu_set_sreset_enable(bool enabled)
+{
+	if (sreset_enabled == enabled)
+		return;
+
+	if (proc_gen == proc_gen_p8) {
+		/* Public P8 Mambo has broken NAP */
+		if (chip_quirk(QUIRK_MAMBO_CALLOUTS))
+			return;
+
+		sreset_enabled = enabled;
+		sync();
+
+		if (!enabled) {
+			cpu_pm_disable();
+		} else {
+			if (ipi_enabled)
+				pm_enabled = true;
+		}
+
+	} else if (proc_gen == proc_gen_p9) {
+		/* Don't use sreset idle on DD1 (has a number of bugs) */
+		uint32_t version = mfspr(SPR_PVR);
+		if (is_power9n(version) && (PVR_VERS_MAJ(version) == 1))
+			return;
+
+		sreset_enabled = enabled;
+		sync();
+		/*
+		 * Kick everybody out of PM so they can adjust the PM
+		 * mode they are using (EC=0/1).
+		 */
+		cpu_pm_disable();
+		if (ipi_enabled)
+			pm_enabled = true;
+	}
+}
+
+void cpu_set_ipi_enable(bool enabled)
+{
+	if (ipi_enabled == enabled)
+		return;
+
+	if (proc_gen == proc_gen_p8) {
+		ipi_enabled = enabled;
+		sync();
+		if (!enabled) {
+			cpu_pm_disable();
+		} else {
+			if (sreset_enabled)
+				pm_enabled = true;
+		}
+
+	} else if (proc_gen == proc_gen_p9) {
+		/* Don't use doorbell on DD1 (requires darn for msgsync) */
+		uint32_t version = mfspr(SPR_PVR);
+		if (is_power9n(version) && (PVR_VERS_MAJ(version) == 1))
+			return;
+
+		ipi_enabled = enabled;
+		sync();
+		if (!enabled)
+			cpu_pm_disable();
+		else
+			pm_enabled = true;
+	}
 }
 
 void cpu_process_local_jobs(void)
@@ -234,6 +604,7 @@ void cpu_process_local_jobs(void)
 	if (cpu == this_cpu()) {
 		prlog_once(PR_DEBUG, "Processing jobs synchronously\n");
 		cpu_process_jobs();
+		opal_run_pollers();
 	}
 }
 
@@ -324,6 +695,20 @@ struct cpu_thread *first_available_cpu(void)
 	return next_available_cpu(NULL);
 }
 
+struct cpu_thread *next_present_cpu(struct cpu_thread *cpu)
+{
+	do {
+		cpu = next_cpu(cpu);
+	} while(cpu && !cpu_is_present(cpu));
+
+	return cpu;
+}
+
+struct cpu_thread *first_present_cpu(void)
+{
+	return next_present_cpu(NULL);
+}
+
 u8 get_available_nr_cores_in_chip(u32 chip_id)
 {
 	struct cpu_thread *core;
@@ -381,13 +766,23 @@ void cpu_remove_node(const struct cpu_thread *t)
 void cpu_disable_all_threads(struct cpu_thread *cpu)
 {
 	unsigned int i;
+	struct dt_property *p;
 
 	for (i = 0; i <= cpu_max_pir; i++) {
 		struct cpu_thread *t = &cpu_stacks[i].cpu;
 
 		if (t->primary == cpu->primary)
 			t->state = cpu_state_disabled;
+
 	}
+
+	/* Mark this core as bad so that Linux kernel don't use this CPU. */
+	prlog(PR_DEBUG, "CPU: Mark CPU bad (PIR 0x%04x)...\n", cpu->pir);
+	p = __dt_find_property(cpu->node, "status");
+	if (p)
+		dt_del_property(cpu->node, p);
+
+	dt_add_property_string(cpu->node, "status", "bad");
 
 	/* XXX Do something to actually stop the core */
 }
@@ -396,6 +791,7 @@ static void init_cpu_thread(struct cpu_thread *t,
 			    enum cpu_thread_state state,
 			    unsigned int pir)
 {
+	init_lock(&t->dctl_lock);
 	init_lock(&t->job_lock);
 	list_head_init(&t->job_queue);
 	t->state = state;
@@ -431,13 +827,13 @@ void trigger_attn(void)
 	__trigger_attn();
 }
 
-void init_hid(void)
+static void init_hid(void)
 {
 	/* attn is enabled even when HV=0, so make sure it's off */
 	disable_attn();
 }
 
-void pre_init_boot_cpu(void)
+void __nomcount pre_init_boot_cpu(void)
 {
 	struct cpu_thread *cpu = this_cpu();
 
@@ -473,6 +869,7 @@ void init_boot_cpu(void)
 	case PVR_TYPE_P9:
 		proc_gen = proc_gen_p9;
 		hile_supported = true;
+		radix_supported = true;
 		hid0_hile = SPR_HID0_POWER9_HILE;
 		hid0_attn = SPR_HID0_POWER9_ENABLE_ATTN;
 		break;
@@ -486,19 +883,19 @@ void init_boot_cpu(void)
 		cpu_thread_count = 4;
 		cpu_max_pir = SPR_PIR_P7_MASK;
 		prlog(PR_INFO, "CPU: P7 generation processor"
-		      "(max %d threads/core)\n", cpu_thread_count);
+		      " (max %d threads/core)\n", cpu_thread_count);
 		break;
 	case proc_gen_p8:
 		cpu_thread_count = 8;
 		cpu_max_pir = SPR_PIR_P8_MASK;
 		prlog(PR_INFO, "CPU: P8 generation processor"
-		      "(max %d threads/core)\n", cpu_thread_count);
+		      " (max %d threads/core)\n", cpu_thread_count);
 		break;
 	case proc_gen_p9:
 		cpu_thread_count = 4;
 		cpu_max_pir = SPR_PIR_P9_MASK;
 		prlog(PR_INFO, "CPU: P9 generation processor"
-		      "(max %d threads/core)\n", cpu_thread_count);
+		      " (max %d threads/core)\n", cpu_thread_count);
 		break;
 	default:
 		prerror("CPU: Unknown PVR, assuming 1 thread\n");
@@ -510,6 +907,13 @@ void init_boot_cpu(void)
 	      pir, pvr);
 	prlog(PR_DEBUG, "CPU: Initial max PIR set to 0x%x\n", cpu_max_pir);
 
+	/*
+	 * Adjust top of RAM to include CPU stacks. While we *could* have
+	 * less RAM than this... during early boot, it's enough of a check
+	 * until we start parsing device tree / hdat and find out for sure
+	 */
+	top_of_ram += (cpu_max_pir + 1) * STACK_SIZE;
+
 	/* Clear the CPU structs */
 	for (i = 0; i <= cpu_max_pir; i++)
 		memset(&cpu_stacks[i].cpu, 0, sizeof(struct cpu_thread));
@@ -520,8 +924,6 @@ void init_boot_cpu(void)
 	init_boot_tracebuf(boot_cpu);
 	assert(this_cpu() == boot_cpu);
 	init_hid();
-
-	list_head_init(&global_job_queue);
 }
 
 static void enable_large_dec(bool on)
@@ -662,12 +1064,13 @@ void init_all_cpus(void)
 void cpu_bringup(void)
 {
 	struct cpu_thread *t;
+	uint32_t count = 0;
 
 	prlog(PR_INFO, "CPU: Setting up secondary CPU state\n");
 
 	op_display(OP_LOG, OP_MOD_CPU, 0x0000);
 
-	/* Tell everybody to chime in ! */	
+	/* Tell everybody to chime in ! */
 	prlog(PR_INFO, "CPU: Calling in all processors...\n");
 	cpu_secondary_start = 1;
 	sync();
@@ -681,13 +1084,14 @@ void cpu_bringup(void)
 
 		/* Add a callin timeout ?  If so, call cpu_remove_node(t). */
 		while (t->state != cpu_state_active) {
-			smt_very_low();
+			smt_lowest();
 			sync();
 		}
 		smt_medium();
+		count++;
 	}
 
-	prlog(PR_INFO, "CPU: All processors called in...\n");
+	prlog(PR_NOTICE, "CPU: All %d processors called in...\n", count);
 
 	op_display(OP_LOG, OP_MOD_CPU, 0x0003);
 }
@@ -695,6 +1099,9 @@ void cpu_bringup(void)
 void cpu_callin(struct cpu_thread *cpu)
 {
 	cpu->state = cpu_state_active;
+	cpu->job_has_no_return = false;
+
+	init_hid();
 }
 
 static void opal_start_thread_job(void *data)
@@ -711,6 +1118,9 @@ static int64_t opal_start_cpu_thread(uint64_t server_no, uint64_t start_address)
 {
 	struct cpu_thread *cpu;
 	struct cpu_job *job;
+
+	if (!opal_addr_valid((void *)start_address))
+		return OPAL_PARAMETER;
 
 	cpu = find_cpu_by_server(server_no);
 	if (!cpu) {
@@ -747,6 +1157,9 @@ static int64_t opal_query_cpu_status(uint64_t server_no, uint8_t *thread_status)
 {
 	struct cpu_thread *cpu;
 
+	if (!opal_addr_valid(thread_status))
+		return OPAL_PARAMETER;
+
 	cpu = find_cpu_by_server(server_no);
 	if (!cpu) {
 		prerror("OPAL: Query invalid CPU 0x%04llx !\n", server_no);
@@ -782,49 +1195,98 @@ static int64_t opal_return_cpu(void)
 }
 opal_call(OPAL_RETURN_CPU, opal_return_cpu, 0);
 
-static void cpu_change_hile(void *hilep)
+struct hid0_change_req {
+	uint64_t clr_bits;
+	uint64_t set_bits;
+};
+
+static void cpu_change_hid0(void *__req)
 {
-	bool hile = *(bool *)hilep;
-	unsigned long hid0;
+	struct hid0_change_req *req = __req;
+	unsigned long hid0, new_hid0;
 
-	hid0 = mfspr(SPR_HID0);
-	if (hile)
-		hid0 |= hid0_hile;
-	else
-		hid0 &= ~hid0_hile;
-	prlog(PR_DEBUG, "CPU: [%08x] HID0 set to 0x%016lx\n",
-	      this_cpu()->pir, hid0);
-	set_hid0(hid0);
-
-	this_cpu()->current_hile = hile;
+	hid0 = new_hid0 = mfspr(SPR_HID0);
+	new_hid0 &= ~req->clr_bits;
+	new_hid0 |= req->set_bits;
+	prlog(PR_DEBUG, "CPU: [%08x] HID0 change 0x%016lx -> 0x%016lx\n",
+		this_cpu()->pir, hid0, new_hid0);
+	set_hid0(new_hid0);
 }
 
-static int64_t cpu_change_all_hile(bool hile)
+static int64_t cpu_change_all_hid0(struct hid0_change_req *req)
 {
 	struct cpu_thread *cpu;
 
-	prlog(PR_INFO, "CPU: Switching HILE on all CPUs to %d\n", hile);
-
 	for_each_available_cpu(cpu) {
-		if (cpu->current_hile == hile)
+		if (!cpu_is_thread0(cpu))
 			continue;
 		if (cpu == this_cpu()) {
-			cpu_change_hile(&hile);
+			cpu_change_hid0(req);
 			continue;
 		}
-		cpu_wait_job(cpu_queue_job(cpu, "cpu_change_hile",
-					   cpu_change_hile, &hile), true);
+		cpu_wait_job(cpu_queue_job(cpu, "cpu_change_hid0",
+			cpu_change_hid0, req), true);
 	}
 	return OPAL_SUCCESS;
 }
 
+void cpu_set_radix_mode(void)
+{
+	struct hid0_change_req req;
+
+	if (!radix_supported)
+		return;
+
+	req.clr_bits = 0;
+	req.set_bits = SPR_HID0_POWER9_RADIX;
+	cleanup_global_tlb();
+	current_radix_mode = true;
+	cpu_change_all_hid0(&req);
+}
+
+static void cpu_cleanup_one(void *param __unused)
+{
+	mtspr(SPR_AMR, 0);
+	mtspr(SPR_IAMR, 0);
+}
+
+static int64_t cpu_cleanup_all(void)
+{
+	struct cpu_thread *cpu;
+
+	for_each_available_cpu(cpu) {
+		if (cpu == this_cpu()) {
+			cpu_cleanup_one(NULL);
+			continue;
+		}
+		cpu_wait_job(cpu_queue_job(cpu, "cpu_cleanup",
+					   cpu_cleanup_one, NULL), true);
+	}
+	return OPAL_SUCCESS;
+}
+
+void cpu_fast_reboot_complete(void)
+{
+	/* Fast reboot will have cleared HID0:HILE */
+	current_hile_mode = false;
+
+	/* On P9, restore radix mode */
+	cpu_set_radix_mode();
+}
+
 static int64_t opal_reinit_cpus(uint64_t flags)
 {
+	struct hid0_change_req req = { 0, 0 };
 	struct cpu_thread *cpu;
 	int64_t rc = OPAL_SUCCESS;
 	int i;
 
-	prlog(PR_INFO, "OPAL: Trying a CPU re-init with flags: 0x%llx\n", flags);
+	prlog(PR_DEBUG, "OPAL: CPU re-init with flags: 0x%llx\n", flags);
+
+	if (flags & OPAL_REINIT_CPUS_HILE_LE)
+		prlog(PR_NOTICE, "OPAL: Switch to little-endian OS\n");
+	else if (flags & OPAL_REINIT_CPUS_HILE_BE)
+		prlog(PR_NOTICE, "OPAL: Switch to big-endian OS\n");
 
  again:
 	lock(&reinit_lock);
@@ -859,17 +1321,60 @@ static int64_t opal_reinit_cpus(uint64_t flags)
 	unlock(&reinit_lock);
 
 	/*
-	 * If the flags affect endianness and we are on P8 DD2 or later, then
-	 * use the HID bit. We use the PVR (we could use the EC level in
-	 * the chip but the PVR is more readily available).
+	 * This cleans up a few things left over by Linux
+	 * that can cause problems in cases such as radix->hash
+	 * transitions. Ideally Linux should do it but doing it
+	 * here works around existing broken kernels.
 	 */
+	cpu_cleanup_all();
+
+	/* If HILE change via HID0 is supported ... */
 	if (hile_supported &&
-	    (flags & (OPAL_REINIT_CPUS_HILE_BE | OPAL_REINIT_CPUS_HILE_LE))) {
+	    (flags & (OPAL_REINIT_CPUS_HILE_BE |
+		      OPAL_REINIT_CPUS_HILE_LE))) {
 		bool hile = !!(flags & OPAL_REINIT_CPUS_HILE_LE);
 
 		flags &= ~(OPAL_REINIT_CPUS_HILE_BE | OPAL_REINIT_CPUS_HILE_LE);
-		rc = cpu_change_all_hile(hile);
+		if (hile != current_hile_mode) {
+			if (hile)
+				req.set_bits |= hid0_hile;
+			else
+				req.clr_bits |= hid0_hile;
+			current_hile_mode = hile;
+		}
 	}
+
+	/* If MMU mode change is supported */
+	if (radix_supported &&
+	    (flags & (OPAL_REINIT_CPUS_MMU_HASH |
+		      OPAL_REINIT_CPUS_MMU_RADIX))) {
+		bool radix = !!(flags & OPAL_REINIT_CPUS_MMU_RADIX);
+
+		flags &= ~(OPAL_REINIT_CPUS_MMU_HASH |
+			   OPAL_REINIT_CPUS_MMU_RADIX);
+		if (radix != current_radix_mode) {
+			if (radix)
+				req.set_bits |= SPR_HID0_POWER9_RADIX;
+			else
+				req.clr_bits |= SPR_HID0_POWER9_RADIX;
+
+			current_radix_mode = radix;
+		}
+	}
+
+	/* Cleanup the TLB. We do that unconditionally, this works
+	 * around issues where OSes fail to invalidate the PWC in Radix
+	 * mode for example. This only works on P9 and later, but we
+	 * also know we don't have a problem with Linux cleanups on
+	 * P8 so this isn't a problem. If we wanted to cleanup the
+	 * TLB on P8 as well, we'd have to use jobs to do it locally
+	 * on each CPU.
+	 */
+	 cleanup_global_tlb();
+
+	 /* Apply HID bits changes if any */
+	if (req.set_bits || req.clr_bits)
+		cpu_change_all_hid0(&req);
 
 	/* If we have a P7, error out for LE switch, do nothing for BE */
 	if (proc_gen < proc_gen_p8) {
@@ -878,8 +1383,18 @@ static int64_t opal_reinit_cpus(uint64_t flags)
 		flags &= ~(OPAL_REINIT_CPUS_HILE_BE | OPAL_REINIT_CPUS_HILE_LE);
 	}
 
-	/* Any flags left ? */
-	if (flags != 0 && proc_gen == proc_gen_p8)
+	if (flags & OPAL_REINIT_CPUS_TM_SUSPEND_DISABLED) {
+		flags &= ~OPAL_REINIT_CPUS_TM_SUSPEND_DISABLED;
+
+		/*
+		 * Pending a hostboot change we can't determine the status of
+		 * this, so it always fails.
+		 */
+		rc = OPAL_UNSUPPORTED;
+	}
+
+	/* Handle P8 DD1 SLW reinit */
+	if (flags != 0 && proc_gen == proc_gen_p8 && !hile_supported)
 		rc = slw_reinit(flags);
 	else if (flags != 0)
 		rc = OPAL_UNSUPPORTED;
@@ -894,3 +1409,42 @@ static int64_t opal_reinit_cpus(uint64_t flags)
 	return rc;
 }
 opal_call(OPAL_REINIT_CPUS, opal_reinit_cpus, 1);
+
+#define NMMU_XLAT_CTL_PTCR 0xb
+static int64_t nmmu_set_ptcr(uint64_t chip_id, struct dt_node *node, uint64_t ptcr)
+{
+	uint32_t nmmu_base_addr;
+
+	nmmu_base_addr = dt_get_address(node, 0, NULL);
+	return xscom_write(chip_id, nmmu_base_addr + NMMU_XLAT_CTL_PTCR, ptcr);
+}
+
+/*
+ * Setup the the Nest MMU PTCR register for all chips in the system or
+ * the specified chip id.
+ *
+ * The PTCR value may be overwritten so long as all users have been
+ * quiesced. If it is set to an invalid memory address the system will
+ * checkstop if anything attempts to use it.
+ *
+ * Returns OPAL_UNSUPPORTED if no nest mmu was found.
+ */
+static int64_t opal_nmmu_set_ptcr(uint64_t chip_id, uint64_t ptcr)
+{
+	struct dt_node *node;
+	int64_t rc = OPAL_UNSUPPORTED;
+
+	if (chip_id == -1ULL)
+		dt_for_each_compatible(dt_root, node, "ibm,power9-nest-mmu") {
+			chip_id = dt_get_chip_id(node);
+			if ((rc = nmmu_set_ptcr(chip_id, node, ptcr)))
+				return rc;
+		}
+	else
+		dt_for_each_compatible_on_chip(dt_root, node, "ibm,power9-nest-mmu", chip_id)
+			if ((rc = nmmu_set_ptcr(chip_id, node, ptcr)))
+				return rc;
+
+	return rc;
+}
+opal_call(OPAL_NMMU_SET_PTCR, opal_nmmu_set_ptcr, 2);

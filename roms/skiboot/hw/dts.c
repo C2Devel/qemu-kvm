@@ -21,23 +21,6 @@
 #include <skiboot.h>
 #include <opal-api.h>
 
-/* Per core Digital Thermal Sensors */
-#define EX_THERM_DTS_RESULT0	0x10050000
-#define EX_THERM_DTS_RESULT1	0x10050001
-
-/* Per core Digital Thermal Sensors control registers */
-#define EX_THERM_MODE_REG	0x1005000F
-#define EX_THERM_CONTROL_REG	0x10050012
-#define EX_THERM_ERR_STATUS_REG	0x10050013
-
-/* Per memory controller Digital Thermal Sensors */
-#define THERM_MEM_DTS_RESULT0	0x2050000
-
-/* Per memory controller Digital Thermal Sensors control registers */
-#define THERM_MEM_MODE_REG	0x205000F
-#define THERM_MEM_CONTROL_REG	0x2050012
-#define THERM_MEM_ERR_STATUS_REG	0x2050013
-
 struct dts {
 	uint8_t		valid;
 	uint8_t		trip;
@@ -132,6 +115,28 @@ static void dts_decode_one_dts(uint16_t raw, struct dts *dts)
 	}
 }
 
+static void dts_keep_max(struct dts *temps, int n, struct dts *dts)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		int16_t t = temps[i].temp;
+
+		if (!temps[i].valid)
+			continue;
+
+		if (t > dts->temp)
+			dts->temp = t;
+
+		dts->valid++;
+		dts->trip |= temps[i].trip;
+	}
+}
+
+/* Per core Digital Thermal Sensors */
+#define EX_THERM_DTS_RESULT0	0x10050000
+#define EX_THERM_DTS_RESULT1	0x10050001
+
 /* Different sensor locations */
 #define P8_CT_ZONE_LSU	0
 #define P8_CT_ZONE_ISU	1
@@ -149,7 +154,6 @@ static int dts_read_core_temp_p8(uint32_t pir, struct dts *dts)
 	int32_t core = pir_to_core_id(pir);
 	uint64_t dts0, dts1;
 	struct dts temps[P8_CT_ZONES];
-	int i;
 	int rc;
 
 	rc = xscom_read(chip_id, XSCOM_ADDR_P8_EX(core, EX_THERM_DTS_RESULT0),
@@ -167,19 +171,48 @@ static int dts_read_core_temp_p8(uint32_t pir, struct dts *dts)
 	dts_decode_one_dts(dts0 >> 16, &temps[P8_CT_ZONE_FXU]);
 	dts_decode_one_dts(dts1 >> 48, &temps[P8_CT_ZONE_L3C]);
 
-	for (i = 0; i < P8_CT_ZONES; i++) {
-		int16_t t = temps[i].temp;
+	dts_keep_max(temps, P8_CT_ZONES, dts);
 
-		if (!temps[i].valid)
-			continue;
+	prlog(PR_TRACE, "DTS: Chip %x Core %x temp:%dC trip:%x\n",
+	      chip_id, core, dts->temp, dts->trip);
 
-		/* keep the max temperature of all 4 sensors */
-		if (t > dts->temp)
-			dts->temp = t;
+	/*
+	 * FIXME: The trip bits are always set ?! Just discard
+	 * them for the moment until we understand why.
+	 */
+	dts->trip = 0;
+	return 0;
+}
 
-		dts->valid++;
-		dts->trip |= temps[i].trip;
-	}
+/* Per core Digital Thermal Sensors */
+#define EC_THERM_P9_DTS_RESULT0	0x050000
+
+/* Different sensor locations */
+#define P9_CORE_DTS0	0
+#define P9_CORE_DTS1	1
+#define P9_CORE_ZONES	2
+
+/*
+ * Returns the temperature as the max of all zones and a global trip
+ * attribute.
+ */
+static int dts_read_core_temp_p9(uint32_t pir, struct dts *dts)
+{
+	int32_t chip_id = pir_to_chip_id(pir);
+	int32_t core = pir_to_core_id(pir);
+	uint64_t dts0;
+	struct dts temps[P9_CORE_ZONES];
+	int rc;
+
+	rc = xscom_read(chip_id, XSCOM_ADDR_P9_EC(core, EC_THERM_P9_DTS_RESULT0),
+			&dts0);
+	if (rc)
+		return rc;
+
+	dts_decode_one_dts(dts0 >> 48, &temps[P9_CORE_DTS0]);
+	dts_decode_one_dts(dts0 >> 32, &temps[P9_CORE_DTS1]);
+
+	dts_keep_max(temps, P9_CORE_ZONES, dts);
 
 	prlog(PR_TRACE, "DTS: Chip %x Core %x temp:%dC trip:%x\n",
 	      chip_id, core, dts->temp, dts->trip);
@@ -203,12 +236,17 @@ static int dts_read_core_temp(uint32_t pir, struct dts *dts)
 	case proc_gen_p8:
 		rc = dts_read_core_temp_p8(pir, dts);
 		break;
+	case proc_gen_p9:
+		rc = dts_read_core_temp_p9(pir, dts);
+		break;
 	default:
-		assert(false);
+		rc = OPAL_UNSUPPORTED;
 	}
 	return rc;
 }
 
+/* Per memory controller Digital Thermal Sensors */
+#define THERM_MEM_DTS_RESULT0	0x2050000
 
 /* Different sensor locations */
 #define P8_MEM_DTS0	0
@@ -290,7 +328,7 @@ int64_t dts_sensor_read(uint32_t sensor_hndl, uint32_t *sensor_data)
 
 	memset(&dts, 0, sizeof(struct dts));
 
-	switch (sensor_get_frc(sensor_hndl) & ~SENSOR_DTS) {
+	switch (sensor_get_frc(sensor_hndl)) {
 	case SENSOR_DTS_CORE_TEMP:
 		rc = dts_read_core_temp(rid, &dts);
 		break;
@@ -326,11 +364,11 @@ int64_t dts_sensor_read(uint32_t sensor_hndl, uint32_t *sensor_data)
 	(((chip_id) & 0x3ff) | ((dimm_id) << 10))
 
 #define core_handler(core_id, attr_id)					\
-	sensor_make_handler(SENSOR_DTS_CORE_TEMP | SENSOR_DTS,		\
+	sensor_make_handler(SENSOR_DTS, SENSOR_DTS_CORE_TEMP,		\
 			    core_id, attr_id)
 
 #define cen_handler(cen_id, attr_id)					\
-	sensor_make_handler(SENSOR_DTS_MEM_TEMP|SENSOR_DTS,		\
+	sensor_make_handler(SENSOR_DTS, SENSOR_DTS_MEM_TEMP,		\
 			    centaur_make_id(chip_id, 0), attr_id)
 
 bool dts_sensor_create_nodes(struct dt_node *sensors)

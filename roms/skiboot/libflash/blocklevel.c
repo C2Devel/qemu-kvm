@@ -1,4 +1,4 @@
-/* Copyright 2013-2015 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include <libflash/errors.h>
 
@@ -33,7 +34,7 @@
  * 0  - The region is not ECC protected
  * -1 - Partially protected
  */
-static int ecc_protected(struct blocklevel_device *bl, uint32_t pos, uint32_t len)
+static int ecc_protected(struct blocklevel_device *bl, uint64_t pos, uint64_t len)
 {
 	int i;
 
@@ -77,12 +78,11 @@ static int release(struct blocklevel_device *bl)
 	return rc;
 }
 
-int blocklevel_read(struct blocklevel_device *bl, uint32_t pos, void *buf, uint32_t len)
+int blocklevel_raw_read(struct blocklevel_device *bl, uint64_t pos, void *buf, uint64_t len)
 {
 	int rc;
-	struct ecc64 *buffer;
-	uint32_t ecc_len = ecc_buffer_size(len);
 
+	FL_DBG("%s: 0x%" PRIx64 "\t%p\t0x%" PRIx64 "\n", __func__, pos, buf, len);
 	if (!bl || !bl->read || !buf) {
 		errno = EINVAL;
 		return FLASH_ERR_PARM_ERROR;
@@ -92,12 +92,29 @@ int blocklevel_read(struct blocklevel_device *bl, uint32_t pos, void *buf, uint3
 	if (rc)
 		return rc;
 
-	if (!ecc_protected(bl, pos, len)) {
-		rc = bl->read(bl, pos, buf, len);
-		release(bl);
-		return rc;
+	rc = bl->read(bl, pos, buf, len);
+
+	release(bl);
+
+	return rc;
+}
+
+int blocklevel_read(struct blocklevel_device *bl, uint64_t pos, void *buf, uint64_t len)
+{
+	int rc;
+	struct ecc64 *buffer;
+	uint64_t ecc_len = ecc_buffer_size(len);
+
+	FL_DBG("%s: 0x%" PRIx64 "\t%p\t0x%" PRIx64 "\n", __func__, pos, buf, len);
+	if (!bl || !buf) {
+		errno = EINVAL;
+		return FLASH_ERR_PARM_ERROR;
 	}
 
+	if (!ecc_protected(bl, pos, len))
+		return blocklevel_raw_read(bl, pos, buf, len);
+
+	FL_DBG("%s: region has ECC\n", __func__);
 	buffer = malloc(ecc_len);
 	if (!buffer) {
 		errno = ENOMEM;
@@ -105,7 +122,7 @@ int blocklevel_read(struct blocklevel_device *bl, uint32_t pos, void *buf, uint3
 		goto out;
 	}
 
-	rc = bl->read(bl, pos, buffer, ecc_len);
+	rc = blocklevel_raw_read(bl, pos, buffer, ecc_len);
 	if (rc)
 		goto out;
 
@@ -115,17 +132,16 @@ int blocklevel_read(struct blocklevel_device *bl, uint32_t pos, void *buf, uint3
 	}
 
 out:
-	release(bl);
 	free(buffer);
 	return rc;
 }
 
-int blocklevel_write(struct blocklevel_device *bl, uint32_t pos, const void *buf, uint32_t len)
+int blocklevel_raw_write(struct blocklevel_device *bl, uint64_t pos,
+		const void *buf, uint64_t len)
 {
 	int rc;
-	struct ecc64 *buffer;
-	uint32_t ecc_len = ecc_buffer_size(len);
 
+	FL_DBG("%s: 0x%" PRIx64 "\t%p\t0x%" PRIx64 "\n", __func__, pos, buf, len);
 	if (!bl || !bl->write || !buf) {
 		errno = EINVAL;
 		return FLASH_ERR_PARM_ERROR;
@@ -135,12 +151,30 @@ int blocklevel_write(struct blocklevel_device *bl, uint32_t pos, const void *buf
 	if (rc)
 		return rc;
 
-	if (!ecc_protected(bl, pos, len)) {
-		rc =  bl->write(bl, pos, buf, len);
-		release(bl);
-		return rc;
+	rc = bl->write(bl, pos, buf, len);
+
+	release(bl);
+
+	return rc;
+}
+
+int blocklevel_write(struct blocklevel_device *bl, uint64_t pos, const void *buf,
+		uint64_t len)
+{
+	int rc;
+	struct ecc64 *buffer;
+	uint64_t ecc_len = ecc_buffer_size(len);
+
+	FL_DBG("%s: 0x%" PRIx64 "\t%p\t0x%" PRIx64 "\n", __func__, pos, buf, len);
+	if (!bl || !buf) {
+		errno = EINVAL;
+		return FLASH_ERR_PARM_ERROR;
 	}
 
+	if (!ecc_protected(bl, pos, len))
+		return blocklevel_raw_write(bl, pos, buf, len);
+
+	FL_DBG("%s: region has ECC\n", __func__);
 	buffer = malloc(ecc_len);
 	if (!buffer) {
 		errno = ENOMEM;
@@ -154,15 +188,14 @@ int blocklevel_write(struct blocklevel_device *bl, uint32_t pos, const void *buf
 		goto out;
 	}
 
-	rc = bl->write(bl, pos, buffer, ecc_len);
+	rc = blocklevel_raw_write(bl, pos, buffer, ecc_len);
 
 out:
-	release(bl);
 	free(buffer);
 	return rc;
 }
 
-int blocklevel_erase(struct blocklevel_device *bl, uint32_t pos, uint32_t len)
+int blocklevel_erase(struct blocklevel_device *bl, uint64_t pos, uint64_t len)
 {
 	int rc;
 	if (!bl || !bl->erase) {
@@ -170,9 +203,17 @@ int blocklevel_erase(struct blocklevel_device *bl, uint32_t pos, uint32_t len)
 		return FLASH_ERR_PARM_ERROR;
 	}
 
+	FL_DBG("%s: 0x%" PRIx64 "\t0x%" PRIx64 "\n", __func__, pos, len);
+
 	/* Programmer may be making a horrible mistake without knowing it */
+	if (pos & bl->erase_mask) {
+		FL_ERR("blocklevel_erase: pos (0x%"PRIx64") is not erase block (0x%08x) aligned\n",
+				pos, bl->erase_mask + 1);
+		return FLASH_ERR_ERASE_BOUNDARY;
+	}
+
 	if (len & bl->erase_mask) {
-		fprintf(stderr, "blocklevel_erase: len (0x%08x) is not erase block (0x%08x) aligned\n",
+		FL_ERR("blocklevel_erase: len (0x%"PRIx64") is not erase block (0x%08x) aligned\n",
 				len, bl->erase_mask + 1);
 		return FLASH_ERR_ERASE_BOUNDARY;
 	}
@@ -188,7 +229,7 @@ int blocklevel_erase(struct blocklevel_device *bl, uint32_t pos, uint32_t len)
 	return rc;
 }
 
-int blocklevel_get_info(struct blocklevel_device *bl, const char **name, uint32_t *total_size,
+int blocklevel_get_info(struct blocklevel_device *bl, const char **name, uint64_t *total_size,
 		uint32_t *erase_granule)
 {
 	int rc;
@@ -206,7 +247,7 @@ int blocklevel_get_info(struct blocklevel_device *bl, const char **name, uint32_
 
 	/* Check the validity of what we are being told */
 	if (erase_granule && *erase_granule != bl->erase_mask + 1)
-		fprintf(stderr, "blocklevel_get_info: WARNING: erase_granule (0x%08x) and erase_mask"
+		FL_ERR("blocklevel_get_info: WARNING: erase_granule (0x%08x) and erase_mask"
 				" (0x%08x) don't match\n", *erase_granule, bl->erase_mask + 1);
 
 	release(bl);
@@ -224,9 +265,10 @@ int blocklevel_get_info(struct blocklevel_device *bl, const char **name, uint32_
  * returns  0 for b
  * returns  1 for c
  */
-static int blocklevel_flashcmp(const void *flash_buf, const void *mem_buf, uint32_t len)
+static int blocklevel_flashcmp(const void *flash_buf, const void *mem_buf, uint64_t len)
 {
-	int i, same = true;
+	uint64_t i;
+	int same = true;
 	const uint8_t *f_buf, *m_buf;
 
 	f_buf = flash_buf;
@@ -242,7 +284,138 @@ static int blocklevel_flashcmp(const void *flash_buf, const void *mem_buf, uint3
 	return same ? 0 : 1;
 }
 
-int blocklevel_smart_write(struct blocklevel_device *bl, uint32_t pos, const void *buf, uint32_t len)
+int blocklevel_smart_erase(struct blocklevel_device *bl, uint64_t pos, uint64_t len)
+{
+	uint64_t block_size;
+	void *erase_buf;
+	int rc;
+
+	if (!bl) {
+		errno = EINVAL;
+		return FLASH_ERR_PARM_ERROR;
+	}
+
+	FL_DBG("%s: 0x%" PRIx64 "\t0x%" PRIx64 "\n", __func__, pos, len);
+
+	/* Nothing smart needs to be done, pos and len are aligned */
+	if ((pos & bl->erase_mask) == 0 && (len & bl->erase_mask) == 0) {
+		FL_DBG("%s: Skipping smarts everything is aligned 0x%" PRIx64 " 0x%" PRIx64
+				"to 0x%08x\n", __func__, pos, len, bl->erase_mask);
+		return blocklevel_erase(bl, pos, len);
+	}
+	block_size = bl->erase_mask + 1;
+	erase_buf = malloc(block_size);
+	if (!erase_buf) {
+		errno = ENOMEM;
+		return FLASH_ERR_MALLOC_FAILED;
+	}
+
+	rc = reacquire(bl);
+	if (rc) {
+		free(erase_buf);
+		return rc;
+	}
+
+	if (pos & bl->erase_mask) {
+		/*
+		 * base_pos and base_len are the values in the first erase
+		 * block that we need to preserve: the region up to pos.
+		 */
+		uint64_t base_pos = pos & ~(bl->erase_mask);
+		uint64_t base_len = pos - base_pos;
+
+		FL_DBG("%s: preserving 0x%" PRIx64 "..0x%" PRIx64 "\n",
+				__func__, base_pos, base_pos + base_len);
+
+		/*
+		 * Read the entire block in case this is the ONLY block we're
+		 * modifying, we may need the end chunk of it later
+		 */
+		rc = bl->read(bl, base_pos, erase_buf, block_size);
+		if (rc)
+			goto out;
+
+		rc = bl->erase(bl, base_pos, block_size);
+		if (rc)
+			goto out;
+
+		rc = bl->write(bl, base_pos, erase_buf, base_len);
+		if (rc)
+			goto out;
+
+		/*
+		 * The requested erase fits entirely into this erase block and
+		 * so we need to write back the chunk at the end of the block
+		 */
+		if (base_pos + base_len + len < base_pos + block_size) {
+			rc = bl->write(bl, pos + len, erase_buf + pos + len,
+					block_size - base_len - len);
+			FL_DBG("%s: Early exit, everything was in one erase block\n",
+					__func__);
+			goto out;
+		}
+
+		pos += block_size - base_len;
+		len -= block_size - base_len;
+	}
+
+	/* Now we should be aligned, best to double check */
+	if (pos & bl->erase_mask) {
+		FL_DBG("%s:pos 0x%" PRIx64 " isn't erase_mask 0x%08x aligned\n",
+			   	__func__, pos, bl->erase_mask);
+		rc = FLASH_ERR_PARM_ERROR;
+		goto out;
+	}
+
+	if (len & ~(bl->erase_mask)) {
+		rc = bl->erase(bl, pos, len & ~(bl->erase_mask));
+		if (rc)
+			goto out;
+
+		pos += len & ~(bl->erase_mask);
+		len -= len & ~(bl->erase_mask);
+	}
+
+	/* Length should be less than a block now */
+	if (len > block_size) {
+		FL_DBG("%s: len 0x%" PRIx64 " is still exceeds block_size 0x%" PRIx64 "\n",
+				__func__, len, block_size);
+		rc = FLASH_ERR_PARM_ERROR;
+		goto out;
+	}
+
+	if (len & bl->erase_mask) {
+		/*
+		 * top_pos is the first byte that must be preserved and
+		 * top_len is the length from top_pos to the end of the erase
+		 * block: the region that must be preserved
+		 */
+		uint64_t top_pos = pos + len;
+		uint64_t top_len = block_size - len;
+
+		FL_DBG("%s: preserving 0x%" PRIx64 "..0x%" PRIx64 "\n",
+				__func__, top_pos, top_pos + top_len);
+
+		rc = bl->read(bl, top_pos, erase_buf, top_len);
+		if (rc)
+			goto out;
+
+		rc = bl->erase(bl, pos, block_size);
+		if (rc)
+			goto out;
+
+		rc = bl->write(bl, top_pos, erase_buf, top_len);
+		if (rc)
+			goto out;
+	}
+
+out:
+	free(erase_buf);
+	release(bl);
+	return rc;
+}
+
+int blocklevel_smart_write(struct blocklevel_device *bl, uint64_t pos, const void *buf, uint64_t len)
 {
 	uint32_t erase_size;
 	const void *write_buf = buf;
@@ -255,14 +428,20 @@ int blocklevel_smart_write(struct blocklevel_device *bl, uint32_t pos, const voi
 		return FLASH_ERR_PARM_ERROR;
 	}
 
-	if (!(bl->flags & WRITE_NEED_ERASE))
+	FL_DBG("%s: 0x%" PRIx64 "\t0x%" PRIx64 "\n", __func__, pos, len);
+
+	if (!(bl->flags & WRITE_NEED_ERASE)) {
+		FL_DBG("%s: backend doesn't need erase\n", __func__);
 		return blocklevel_write(bl, pos, buf, len);
+	}
 
 	rc = blocklevel_get_info(bl, NULL, NULL, &erase_size);
 	if (rc)
 		return rc;
 
 	if (ecc_protected(bl, pos, len)) {
+		FL_DBG("%s: region has ECC\n", __func__);
+
 		len = ecc_buffer_size(len);
 
 		write_buf_start = malloc(len);
@@ -306,9 +485,15 @@ int blocklevel_smart_write(struct blocklevel_device *bl, uint32_t pos, const voi
 			goto out;
 
 		cmp = blocklevel_flashcmp(erase_buf + block_offset, write_buf, size);
+		FL_DBG("%s: region 0x%08x..0x%08x ", __func__,
+				erase_block, erase_size);
 		if (cmp != 0) {
-			if (cmp == -1)
+			FL_DBG("needs ");
+			if (cmp == -1) {
+				FL_DBG("erase and ");
 				bl->erase(bl, erase_block, erase_size);
+			}
+			FL_DBG("write\n");
 			memcpy(erase_buf + block_offset, write_buf, size);
 			rc = bl->write(bl, erase_block, erase_buf, erase_size);
 			if (rc)
@@ -327,53 +512,108 @@ out_free:
 	return rc;
 }
 
-static int insert_bl_prot_range(struct blocklevel_range *ranges, struct bl_prot_range range)
+static bool insert_bl_prot_range(struct blocklevel_range *ranges, struct bl_prot_range range)
 {
-	struct bl_prot_range *new_ranges;
-	struct bl_prot_range *old_ranges = ranges->prot;
-	int i, count = ranges->n_prot;
+	int i;
+	uint32_t pos, len;
+	struct bl_prot_range *prot = ranges->prot;
 
-	/* Try to merge into an existing range */
-	for (i = 0; i < count; i++) {
-		if (!(range.start + range.len == old_ranges[i].start ||
-			  old_ranges[i].start + old_ranges[i].len == range.start))
-			continue;
+	pos = range.start;
+	len = range.len;
 
-		if (range.start + range.len == old_ranges[i].start)
-			old_ranges[i].start = range.start;
+	if (len == 0)
+		return true;
 
-		old_ranges[i].len += range.len;
+	/* Check for overflow */
+	if (pos + len < len)
+		return false;
 
-		/*
-		 * Check the inserted range isn't wedged between two ranges, if it
-		 * is, merge as well
-		 */
-		i++;
-		if (i < count && range.start + range.len == old_ranges[i].start) {
-			old_ranges[i - 1].len += old_ranges[i].len;
-
-			for (; i + 1 < count; i++)
-				old_ranges[i] = old_ranges[i + 1];
-			ranges->n_prot--;
+	for (i = 0; i < ranges->n_prot && len > 0; i++) {
+		if (prot[i].start <= pos && prot[i].start + prot[i].len >= pos + len) {
+			len = 0;
+			break; /* Might as well, the next two conditions can't be true */
 		}
 
-		return 0;
+		/* Can easily extend this down just by adjusting start */
+		if (pos <= prot[i].start && pos + len >= prot[i].start) {
+			FL_DBG("%s: extending start down\n", __func__);
+			prot[i].len += prot[i].start - pos;
+			prot[i].start = pos;
+			pos += prot[i].len;
+			if (prot[i].len >= len)
+				len = 0;
+			else
+				len -= prot[i].len;
+		}
+
+		/*
+		 * Jump over this range but the new range might be so big that
+		 * theres a chunk after
+		 */
+		if (pos >= prot[i].start && pos < prot[i].start + prot[i].len) {
+			FL_DBG("%s: fits within current range ", __func__);
+			if (prot[i].start + prot[i].len - pos > len) {
+				FL_DBG("but there is some extra at the end\n");
+				len -= prot[i].start + prot[i].len - pos;
+				pos = prot[i].start + prot[i].len;
+			} else {
+				FL_DBG("\n");
+				len = 0;
+			}
+		}
+		/*
+		 * This condition will be true if the range is smaller than
+		 * the current range, therefore it should go here!
+		 */
+		if (pos < prot[i].start && pos + len <= prot[i].start)
+			break;
 	}
 
-	if (ranges->n_prot == ranges->total_prot) {
-		new_ranges = realloc(ranges->prot, sizeof(range) * ((ranges->n_prot) + PROT_REALLOC_NUM));
-		if (new_ranges)
+	if (len) {
+		int insert_pos = i;
+		struct bl_prot_range *new_ranges = ranges->prot;
+
+		FL_DBG("%s: adding 0x%08x..0x%08x\n", __func__, pos, pos + len);
+
+		if (ranges->n_prot == ranges->total_prot) {
+			new_ranges = realloc(ranges->prot,
+					sizeof(range) * ((ranges->n_prot) + PROT_REALLOC_NUM));
+			if (!new_ranges)
+				return false;
 			ranges->total_prot += PROT_REALLOC_NUM;
-	} else {
-		new_ranges = old_ranges;
-	}
-	if (new_ranges) {
-		memcpy(new_ranges + ranges->n_prot, &range, sizeof(range));
+		}
+		if (insert_pos != ranges->n_prot)
+			for (i = ranges->n_prot; i > insert_pos; i--)
+				memcpy(&new_ranges[i], &new_ranges[i - 1], sizeof(range));
+		range.start = pos;
+		range.len = len;
+		memcpy(&new_ranges[insert_pos], &range, sizeof(range));
 		ranges->prot = new_ranges;
 		ranges->n_prot++;
+		prot = new_ranges;
 	}
 
-	return !new_ranges;
+	/* Probably only worth mergeing when we're low on space */
+	if (ranges->n_prot + 1 == ranges->total_prot) {
+		FL_DBG("%s: merging ranges\n", __func__);
+		/* Check to see if we can merge ranges */
+		for (i = 0; i < ranges->n_prot - 1; i++) {
+			if (prot[i].start + prot[i].len == prot[i + 1].start) {
+				int j;
+				FL_DBG("%s: merging 0x%" PRIx64 "..0x%" PRIx64 " with "
+						"0x%" PRIx64 "..0x%" PRIx64 "\n",
+						__func__, prot[i].start, prot[i].start + prot[i].len,
+						prot[i + 1].start, prot[i + 1].start + prot[i + 1].len);
+				prot[i].len += prot[i + 1].len;
+				for (j = i + 1; j < ranges->n_prot - 1; j++)
+					memcpy(&prot[j] , &prot[j + 1], sizeof(range));
+				ranges->n_prot--;
+				i--; /* Maybe the next one can merge too */
+			}
+		}
+	}
+
+	return true;
 }
 
 int blocklevel_ecc_protect(struct blocklevel_device *bl, uint32_t start, uint32_t len)
@@ -385,11 +625,7 @@ int blocklevel_ecc_protect(struct blocklevel_device *bl, uint32_t start, uint32_
 	 */
 	struct bl_prot_range range = { .start = start, .len = len };
 
-	/*
-	 * Refuse to add regions that are already protected or are partially
-	 * protected
-	 */
-	if (len < BYTES_PER_ECC || ecc_protected(bl, start, len))
+	if (len < BYTES_PER_ECC)
 		return -1;
-	return insert_bl_prot_range(&bl->ecc_prot, range);
+	return !insert_bl_prot_range(&bl->ecc_prot, range);
 }

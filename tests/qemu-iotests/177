@@ -2,7 +2,7 @@
 #
 # Test corner cases with unusual block geometries
 #
-# Copyright (C) 2016-2017 Red Hat, Inc.
+# Copyright (C) 2016-2018 Red Hat, Inc.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,7 +24,6 @@ owner=eblake@redhat.com
 seq=`basename $0`
 echo "QA output created by $seq"
 
-here=`pwd`
 status=1	# failure is the default!
 
 _cleanup()
@@ -37,13 +36,15 @@ trap "_cleanup; exit \$status" 0 1 2 3 15
 . ./common.rc
 . ./common.filter
 
+# This test is runnable under compat=0.10; see test 204 for additional
+# tests specific to compat=1.1.
+
 _supported_fmt qcow2
 _supported_proto file
 
 CLUSTER_SIZE=1M
 size=128M
 options=driver=blkdebug,image.driver=qcow2
-nested_opts=image.file.driver=file,image.file.filename=$TEST_IMG
 
 echo
 echo "== setting up files =="
@@ -84,7 +85,7 @@ $QEMU_IO -c "open -o $options,$limits blkdebug::$TEST_IMG" \
 echo
 echo "== verify image content =="
 
-function verify_io()
+verify_io()
 {
     if ($QEMU_IMG info -f "$IMGFMT" "$TEST_IMG" |
 	    grep "compat: 0.10" > /dev/null); then
@@ -107,8 +108,6 @@ function verify_io()
 }
 
 verify_io | $QEMU_IO -r "$TEST_IMG" | _filter_qemu_io
-$QEMU_IMG map --image-opts "$options,$nested_opts,align=4k" \
-    | _filter_qemu_img_map
 
 _check_test_img
 

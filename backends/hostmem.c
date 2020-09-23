@@ -9,13 +9,13 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  */
+
 #include "qemu/osdep.h"
 #include "sysemu/hostmem.h"
 #include "hw/boards.h"
 #include "qapi/error.h"
+#include "qapi/qapi-builtin-visit.h"
 #include "qapi/visitor.h"
-#include "qapi-types.h"
-#include "qapi-visit.h"
 #include "qemu/config-file.h"
 #include "qom/object_interfaces.h"
 
@@ -246,8 +246,7 @@ bool host_memory_backend_mr_inited(HostMemoryBackend *backend)
     return memory_region_size(&backend->mr) != 0;
 }
 
-MemoryRegion *
-host_memory_backend_get_memory(HostMemoryBackend *backend, Error **errp)
+MemoryRegion *host_memory_backend_get_memory(HostMemoryBackend *backend)
 {
     return host_memory_backend_mr_inited(backend) ? &backend->mr : NULL;
 }
@@ -304,7 +303,7 @@ host_memory_backend_memory_complete(UserCreatable *uc, Error **errp)
             return;
         } else if (maxnode == 0 && backend->policy != MPOL_DEFAULT) {
             error_setg(errp, "host-nodes must be set for policy %s",
-                       HostMemPolicy_lookup[backend->policy]);
+                       HostMemPolicy_str(backend->policy));
             return;
         }
 
@@ -342,7 +341,7 @@ out:
 }
 
 static bool
-host_memory_backend_can_be_deleted(UserCreatable *uc, Error **errp)
+host_memory_backend_can_be_deleted(UserCreatable *uc)
 {
     if (host_memory_backend_is_mapped(MEMORY_BACKEND(uc))) {
         return false;
@@ -367,6 +366,24 @@ static void set_id(Object *o, const char *str, Error **errp)
         return;
     }
     backend->id = g_strdup(str);
+}
+
+static bool host_memory_backend_get_share(Object *o, Error **errp)
+{
+    HostMemoryBackend *backend = MEMORY_BACKEND(o);
+
+    return backend->share;
+}
+
+static void host_memory_backend_set_share(Object *o, bool value, Error **errp)
+{
+    HostMemoryBackend *backend = MEMORY_BACKEND(o);
+
+    if (host_memory_backend_mr_inited(backend)) {
+        error_setg(errp, "cannot change property value");
+        return;
+    }
+    backend->share = value;
 }
 
 static void
@@ -395,10 +412,13 @@ host_memory_backend_class_init(ObjectClass *oc, void *data)
         host_memory_backend_set_host_nodes,
         NULL, NULL, &error_abort);
     object_class_property_add_enum(oc, "policy", "HostMemPolicy",
-        HostMemPolicy_lookup,
+        &HostMemPolicy_lookup,
         host_memory_backend_get_policy,
         host_memory_backend_set_policy, &error_abort);
     object_class_property_add_str(oc, "id", get_id, set_id, &error_abort);
+    object_class_property_add_bool(oc, "share",
+        host_memory_backend_get_share, host_memory_backend_set_share,
+        &error_abort);
 }
 
 static void host_memory_backend_finalize(Object *o)

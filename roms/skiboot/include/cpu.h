@@ -48,7 +48,6 @@ struct cpu_thread {
 	uint32_t			server_no;
 	uint32_t			chip_id;
 	bool				is_secondary;
-	bool				current_hile;
 	struct cpu_thread		*primary;
 	enum cpu_thread_state		state;
 	struct dt_node			*node;
@@ -61,6 +60,9 @@ struct cpu_thread {
 	bool				in_mcount;
 	bool				in_poller;
 	bool				in_reinit;
+	bool				in_fast_sleep;
+	bool				in_sleep;
+	bool				in_idle;
 	uint32_t			hbrt_spec_wakeup; /* primary only */
 	uint64_t			save_l2_fir_action1;
 	uint64_t			current_token;
@@ -74,6 +76,8 @@ struct cpu_thread {
 #endif
 	struct lock			job_lock;
 	struct list_head		job_queue;
+	uint32_t			job_count;
+	bool				job_has_no_return;
 	/*
 	 * Per-core mask tracking for threads in HMI handler and
 	 * a cleanup done bit.
@@ -91,6 +95,13 @@ struct cpu_thread {
 
 	/* For use by XICS emulation on XIVE */
 	struct xive_cpu_state		*xstate;
+
+	/*
+	 * For direct controls scoms, including special wakeup.
+	 */
+	struct lock			dctl_lock; /* primary only */
+	bool				dctl_stopped; /* per thread */
+	uint32_t			special_wakeup_count; /* primary */
 };
 
 /* This global is set to 1 to allow secondaries to callin,
@@ -111,8 +122,7 @@ extern struct cpu_thread *boot_cpu;
 static inline void __nomcount cpu_relax(void)
 {
 	/* Relax a bit to give sibling threads some breathing space */
-	smt_low();
-	smt_very_low();
+	smt_lowest();
 	asm volatile("nop; nop; nop; nop;\n"
 		     "nop; nop; nop; nop;\n"
 		     "nop; nop; nop; nop;\n"
@@ -125,7 +135,6 @@ static inline void __nomcount cpu_relax(void)
 void pre_init_boot_cpu(void);
 void init_boot_cpu(void);
 void init_all_cpus(void);
-void init_hid(void);
 
 /* This brings up our secondaries */
 extern void cpu_bringup(void);
@@ -155,6 +164,11 @@ extern struct cpu_thread *next_cpu(struct cpu_thread *cpu);
  *          this API standpoint.
  */
 
+static inline bool cpu_is_present(struct cpu_thread *cpu)
+{
+	return cpu->state >= cpu_state_present;
+}
+
 static inline bool cpu_is_available(struct cpu_thread *cpu)
 {
 	return cpu->state == cpu_state_active ||
@@ -163,12 +177,17 @@ static inline bool cpu_is_available(struct cpu_thread *cpu)
 
 extern struct cpu_thread *first_available_cpu(void);
 extern struct cpu_thread *next_available_cpu(struct cpu_thread *cpu);
+extern struct cpu_thread *first_present_cpu(void);
+extern struct cpu_thread *next_present_cpu(struct cpu_thread *cpu);
 
 #define for_each_cpu(cpu)	\
 	for (cpu = first_cpu(); cpu; cpu = next_cpu(cpu))
 
 #define for_each_available_cpu(cpu)	\
 	for (cpu = first_available_cpu(); cpu; cpu = next_available_cpu(cpu))
+
+#define for_each_present_cpu(cpu)	\
+	for (cpu = first_present_cpu(); cpu; cpu = next_present_cpu(cpu))
 
 extern struct cpu_thread *first_available_core_in_chip(u32 chip_id);
 extern struct cpu_thread *next_available_core_in_chip(struct cpu_thread *cpu, u32 chip_id);
@@ -238,13 +257,18 @@ extern bool cpu_poll_job(struct cpu_job *job);
  */
 extern void cpu_wait_job(struct cpu_job *job, bool free_it);
 
-/* Free a CPU job, only call on a completed job */
-extern void cpu_free_job(struct cpu_job *job);
-
 /* Called by init to process jobs */
 extern void cpu_process_jobs(void);
 /* Fallback to running jobs synchronously for global jobs */
 extern void cpu_process_local_jobs(void);
+/* Check if there's any job pending */
+bool cpu_check_jobs(struct cpu_thread *cpu);
+
+/* OPAL sreset vector in place at 0x100 */
+void cpu_set_sreset_enable(bool sreset_enabled);
+
+/* IPI for PM modes is enabled */
+void cpu_set_ipi_enable(bool sreset_enabled);
 
 static inline void cpu_give_self_os(void)
 {
@@ -253,5 +277,11 @@ static inline void cpu_give_self_os(void)
 
 extern unsigned long __attrconst cpu_stack_bottom(unsigned int pir);
 extern unsigned long __attrconst cpu_stack_top(unsigned int pir);
+
+extern void cpu_idle_job(void);
+extern void cpu_idle_delay(unsigned long delay);
+
+extern void cpu_set_radix_mode(void);
+extern void cpu_fast_reboot_complete(void);
 
 #endif /* __CPU_H */

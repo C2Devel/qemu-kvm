@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -233,7 +233,21 @@ static struct dt_node *add_xscom_node(uint64_t base, uint32_t hw_id,
 	uint64_t addr, size;
 	uint64_t freq;
 
-	addr = base | ((uint64_t)hw_id << PPC_BITLSHIFT(28));
+	switch (proc_gen) {
+	case proc_gen_p7:
+	case proc_gen_p8:
+		/* On P7 and P8 all the chip SCOMs share single region */
+		addr = base | ((uint64_t)hw_id << PPC_BITLSHIFT(28));
+		break;
+	case proc_gen_p9:
+	default:
+		/* On P9 we need to put the chip ID in the natural powerbus
+		 * position.
+		 */
+		addr = base | (((uint64_t)hw_id) << 42);
+		break;
+	};
+
 	size = (u64)1 << PPC_BITLSHIFT(28);
 
 	prlog(PR_INFO, "XSCOM: Found HW ID 0x%x (PCID 0x%x) @ 0x%llx\n",
@@ -258,6 +272,10 @@ static struct dt_node *add_xscom_node(uint64_t base, uint32_t hw_id,
 		dt_add_property_strings(node, "compatible",
 					"ibm,xscom", "ibm,power8-xscom");
 		break;
+	case proc_gen_p9:
+		dt_add_property_strings(node, "compatible",
+					"ibm,xscom", "ibm,power9-xscom");
+		break;
 	default:
 		dt_add_property_strings(node, "compatible", "ibm,xscom");
 	}
@@ -267,10 +285,44 @@ static struct dt_node *add_xscom_node(uint64_t base, uint32_t hw_id,
 	freq = dt_prop_get_u64_def(dt_root, "nest-frequency", 0);
 	freq /= 4;
 	if (freq)
-		dt_add_property_cells(node, "bus-frequency",
-				      hi32(freq), lo32(freq));
+		dt_add_property_u64(node, "bus-frequency", freq);
 
 	return node;
+}
+
+/*
+ * Given a xscom@ node this will return a pointer into the SPPCRD
+ * structure corresponding to that node
+ */
+#define GET_HDIF_HDR -1
+static const void *xscom_to_pcrd(struct dt_node *xscom, int idata_index)
+{
+	struct spira_ntuple *t = &spira.ntuples.proc_chip;
+	const struct HDIF_common_hdr *hdif;
+	const void *idata;
+	unsigned int size;
+	uint32_t i;
+	void *base;
+
+	i = dt_prop_get_u32_def(xscom, DT_PRIVATE "sppcrd-index", 0xffffffff);
+	if (i == 0xffffffff)
+		return NULL;
+
+	base = get_hdif(t, "SPPCRD");
+	assert(base);
+	assert(i < be16_to_cpu(t->act_cnt));
+
+	hdif = base + i * be32_to_cpu(t->alloc_len);
+	assert(hdif);
+
+	if (idata_index == GET_HDIF_HDR)
+		return hdif;
+
+	idata = HDIF_get_idata(hdif, idata_index, &size);
+	if (!idata || !size)
+		return NULL;
+
+	return idata;
 }
 
 struct dt_node *find_xscom_for_chip(uint32_t chip_id)
@@ -309,6 +361,11 @@ static void add_psihb_node(struct dt_node *np)
 		psi_slen = 0x20;
 		psi_comp = "ibm,power8-psihb-x";
 		break;
+	case proc_gen_p9:
+		psi_scom = 0x5012900;
+		psi_slen = 0x100;
+		psi_comp = "ibm,power9-psihb-x";
+		break;
 	default:
 		psi_comp = NULL;
 	}
@@ -323,6 +380,76 @@ static void add_psihb_node(struct dt_node *np)
 		dt_add_property_strings(psi_np, "compatible", psi_comp,
 					"ibm,psihb-x");
 	}
+}
+
+static void add_xive_node(struct dt_node *np)
+{
+	struct dt_node *xive = dt_new_addr(np, "xive", 0x5013000);
+
+	dt_add_property_cells(xive, "reg", 0x5013000, 0x300);
+	dt_add_property_string(xive, "compatible", "ibm,power9-xive-x");
+
+	/* HACK: required for simics */
+	dt_add_property(xive, "force-assign-bars", NULL, 0);
+}
+
+/*
+ * SCOM Base Address from P9 SCOM Assignment spreadsheet
+ */
+#define VAS_SCOM_BASE_ADDR		0x03011800
+
+static void add_vas_node(struct dt_node *np, int idx)
+{
+	struct  dt_node *vas = dt_new_addr(np, "vas", VAS_SCOM_BASE_ADDR);
+
+	dt_add_property_cells(vas, "reg", VAS_SCOM_BASE_ADDR, 0x300);
+	dt_add_property_string(vas, "compatible", "ibm,power9-vas-x");
+	dt_add_property_cells(vas, "ibm,vas-id", idx);
+}
+
+static void add_ecid_data(const struct HDIF_common_hdr *hdr,
+			  struct dt_node *xscom)
+{
+	char wafer_id[11];
+	uint8_t tmp;
+	int i;
+	uint32_t size = 0;
+	struct sppcrd_ecid *ecid;
+	const struct HDIF_array_hdr *ec_hdr;
+
+	ec_hdr = HDIF_get_idata(hdr, SPPCRD_IDATA_EC_LEVEL, &size);
+	if (!ec_hdr || !size)
+		return;
+
+	ecid = (void *)ec_hdr + be32_to_cpu(ec_hdr->offset);
+	dt_add_property_u64s(xscom, "ecid", be64_to_cpu(ecid->low),
+			     be64_to_cpu(ecid->high));
+
+	/*
+	 * bits 4:63 of ECID data contains wafter ID data (ten 6 bit fields
+	 * each containing a code).
+	 */
+	for (i = 0; i < 10; i++) {
+		tmp = (u8)((be64_to_cpu(ecid->low) >> (i * 6)) & 0x3f);
+		if (tmp <= 9)
+			wafer_id[9 - i] = tmp + '0';
+		else if (tmp >= 0xA && tmp <= 0x23)
+			wafer_id[9 - i] = tmp + '0' + 7;
+		else if (tmp == 0x3D)
+			wafer_id[9 - i] = '-';
+		else if (tmp == 0x3E)
+			wafer_id[9 - i] = '.';
+		else if (tmp == 0x3F)
+			wafer_id[9 - i] = ' ';
+		else /* Unknown code */
+			wafer_id[9 - i] = tmp + '0';
+	}
+	wafer_id[10] = '\0';
+	dt_add_property_nstr(xscom, "wafer-id", wafer_id, 10);
+
+	dt_add_property_cells(xscom, "wafer-location",
+			      (u32)((be64_to_cpu(ecid->high) >> 56) & 0xff),
+			      (u32)((be64_to_cpu(ecid->high) >> 48) & 0xff));
 }
 
 static void add_xscom_add_pcia_assoc(struct dt_node *np, uint32_t pcid)
@@ -360,8 +487,10 @@ static void add_xscom_add_pcia_assoc(struct dt_node *np, uint32_t pcid)
 		if (!dt_find_property(np, "ibm,dbob-id"))
 			dt_add_property_cells(np, "ibm,dbob-id",
 				  be32_to_cpu(id->drawer_book_octant_blade_id));
-		dt_add_property_cells(np, "ibm,mem-interleave-scope",
+		if (proc_gen < proc_gen_p9) {
+			dt_add_property_cells(np, "ibm,mem-interleave-scope",
 			          be32_to_cpu(id->memory_interleaving_scope));
+		}
 		return;
 	}
 }
@@ -376,9 +505,10 @@ static bool add_xscom_sppcrd(uint64_t xscom_base)
 	for_each_ntuple_idx(&spira.ntuples.proc_chip, hdif, i,
 			    SPPCRD_HDIF_SIG) {
 		const struct sppcrd_chip_info *cinfo;
+		unsigned int csize;
 		u32 ve, version;
 
-		cinfo = HDIF_get_idata(hdif, SPPCRD_IDATA_CHIP_INFO, NULL);
+		cinfo = HDIF_get_idata(hdif, SPPCRD_IDATA_CHIP_INFO, &csize);
 		if (!CHECK_SPPTR(cinfo)) {
 			prerror("XSCOM: Bad ChipID data %d\n", i);
 			continue;
@@ -396,6 +526,9 @@ static bool add_xscom_sppcrd(uint64_t xscom_base)
 				    be32_to_cpu(cinfo->proc_chip_id));
 		if (!np)
 			continue;
+
+
+		dt_add_property_cells(np, DT_PRIVATE "sppcrd-index", i);
 
 		version = be16_to_cpu(hdif->version);
 
@@ -432,6 +565,35 @@ static bool add_xscom_sppcrd(uint64_t xscom_base)
 
 		/* Add PSI Host bridge */
 		add_psihb_node(np);
+
+		if (proc_gen >= proc_gen_p9) {
+			add_xive_node(np);
+			parse_i2c_devs(hdif, SPPCRD_IDATA_HOST_I2C, np);
+			add_vas_node(np, i);
+			add_ecid_data(hdif, np);
+		}
+
+		/*
+		 * Add sw checkstop scom address (ibm,sw-checkstop-fir)
+		 *
+		 * The latest HDAT versions have sw checkstop scom address
+		 * info.  But not sure from which version onwards (at least
+		 * HDAT spec do not mention that explicitly). Hence use the
+		 * sppcrd struct size returned by HDIF_get_idata to figure out
+		 * whether it contains sw checkstop scom address info. Also
+		 * check if sw_xstop_fir_scom address is non-zero.
+		 */
+		if ((csize >= (offsetof(struct sppcrd_chip_info,
+					sw_xstop_fir_bitpos) + 1)) &&
+						cinfo->sw_xstop_fir_scom) {
+			__be32 fir_bit = cinfo->sw_xstop_fir_bitpos;
+
+			if (!dt_find_property(dt_root, "ibm,sw-checkstop-fir"))
+				dt_add_property_cells(dt_root,
+					"ibm,sw-checkstop-fir",
+					be32_to_cpu(cinfo->sw_xstop_fir_scom),
+					be32_to_cpu(fir_bit));
+		}
 	}
 
 	return i > 0;
@@ -574,6 +736,9 @@ static void add_chiptod_node(unsigned int chip_id, int flags)
 	case proc_gen_p8:
 		compat_str = "ibm,power8-chiptod";
 		break;
+	case proc_gen_p9:
+		compat_str = "ibm,power9-chiptod";
+		break;
 	default:
 		return;
 	}
@@ -624,10 +789,10 @@ static bool add_chiptod_old(void)
 	return found;
 }
 
-static bool add_chiptod_new(uint32_t master_cpu)
+static bool add_chiptod_new(void)
 {
 	const void *hdif;
-	unsigned int i, master_chip;
+	unsigned int i;
 	bool found = false;
 
 	/*
@@ -635,8 +800,6 @@ static bool add_chiptod_new(uint32_t master_cpu)
 	 */
 	if (!get_hdif(&spira.ntuples.proc_chip, SPPCRD_HDIF_SIG))
 		return found;
-
-	master_chip = pir_to_chip_id(master_cpu);
 
 	for_each_ntuple_idx(&spira.ntuples.proc_chip, hdif, i,
 			    SPPCRD_HDIF_SIG) {
@@ -668,12 +831,11 @@ static bool add_chiptod_new(uint32_t master_cpu)
 		/* The FSP may strip the chiptod info from HDAT; if we find
 		 * a zero-ed out entry, assume that the chiptod is
 		 * present, but we don't have any primary/secondary info. In
-		 * this case, pick the primary based on the CPU that was
-		 * assigned master.
+		 * this case, pick chip zero as the master.
 		 */
 		if (!size) {
 			flags = CHIPTOD_ID_FLAGS_STATUS_OK;
-			if (be32_to_cpu(cinfo->xscom_id) == master_chip)
+			if (be32_to_cpu(cinfo->xscom_id) == 0x0)
 				flags |= CHIPTOD_ID_FLAGS_PRIMARY;
 		}
 
@@ -686,7 +848,6 @@ static bool add_chiptod_new(uint32_t master_cpu)
 static void add_nx_node(u32 gcid)
 {
 	struct dt_node *nx;
-	const char *cp_str;
 	u32 addr;
 	u32 size;
 	struct dt_node *xscom;
@@ -706,22 +867,28 @@ static void add_nx_node(u32 gcid)
 	addr = 0x2010000;
 	size = 0x0004000;
 
-	switch (proc_gen) {
-	case proc_gen_p7:
-		cp_str = "ibm,power7-nx";
-		break;
-	case proc_gen_p8:
-		cp_str = "ibm,power8-nx";
-		break;
-	default:
-		return;
-	}
 	nx = dt_new_addr(xscom, "nx", addr);
 	if (!nx)
 		return;
 
+	switch (proc_gen) {
+	case proc_gen_p7:
+		dt_add_property_strings(nx, "compatible", "ibm,power-nx",
+					"ibm,power7-nx");
+		break;
+	case proc_gen_p8:
+		dt_add_property_strings(nx, "compatible", "ibm,power-nx",
+					"ibm,power8-nx");
+		break;
+	case proc_gen_p9:
+		/* POWER9 NX is not software compatible with P7/P8 NX */
+		dt_add_property_strings(nx, "compatible", "ibm,power9-nx");
+		break;
+	default:
+		return;
+	}
+
 	dt_add_property_cells(nx, "reg", addr, size);
-	dt_add_property_strings(nx, "compatible", "ibm,power-nx", cp_str);
 }
 
 static void add_nx(void)
@@ -751,14 +918,28 @@ static void add_nx(void)
 	}
 }
 
+static void add_nmmu(void)
+{
+	struct dt_node *xscom, *nmmu;
+
+	/* Nest MMU only exists on POWER9 */
+	if (proc_gen != proc_gen_p9)
+		return;
+
+	dt_for_each_compatible(dt_root, xscom, "ibm,xscom") {
+		nmmu = dt_new_addr(xscom, "nmmu", 0x5012c40);
+		dt_add_property_strings(nmmu, "compatible", "ibm,power9-nest-mmu");
+		dt_add_property_cells(nmmu, "reg", 0x5012c40, 0x20);
+	}
+}
 
 static void add_iplparams_sys_params(const void *iplp, struct dt_node *node)
 {
 	const struct iplparams_sysparams *p;
-	u32 sys_type;
-	const char *sys_family;
 	const struct HDIF_common_hdr *hdif = iplp;
 	u16 version = be16_to_cpu(hdif->version);
+	const char *vendor = NULL;
+	u32 sys_attributes;
 
 	p = HDIF_get_idata(iplp, IPLPARAMS_SYSPARAMS, NULL);
 	if (!CHECK_SPPTR(p)) {
@@ -775,38 +956,69 @@ static void add_iplparams_sys_params(const void *iplp, struct dt_node *node)
 
 	dt_add_property_nstr(node, "ibm,sys-model", p->sys_model, 4);
 
-	/* Compatible is 2 entries: ibm,powernv and ibm,<platform>
+	/*
+	 * Compatible has up to three entries:
+	 *	"ibm,powernv", the system family and system type.
+	 *
+	 * On P9 and above the family and type strings come from the HDAT
+	 * directly. On P8 we find it from the system ID numbers.
 	 */
-	sys_type = be32_to_cpu(p->system_type);
-	switch(sys_type >> 28) {
-	case 0:
-		sys_family = "ibm,squadrons";
-		break;
-	case 1:
-		sys_family = "ibm,eclipz";
-		break;
-	case 2:
-		sys_family = "ibm,apollo";
-		break;
-	case 3:
-		sys_family = "ibm,firenze";
-		break;
-	default:
-		sys_family = NULL;
-		prerror("IPLPARAMS: Unknown system family\n");
-		break;
+	if (proc_gen >= proc_gen_p9) {
+		dt_add_property_strings(dt_root, "compatible", "ibm,powernv",
+					p->sys_family_str, p->sys_type_str);
+
+		prlog(PR_INFO, "IPLPARAMS: v0x70 Platform family/type: %s/%s\n",
+		      p->sys_family_str, p->sys_type_str);
+	} else {
+		u32 sys_type = be32_to_cpu(p->system_type);
+		const char *sys_family;
+
+		switch (sys_type >> 28) {
+		case 0:
+			sys_family = "ibm,squadrons";
+			break;
+		case 1:
+			sys_family = "ibm,eclipz";
+			break;
+		case 2:
+			sys_family = "ibm,apollo";
+			break;
+		case 3:
+			sys_family = "ibm,firenze";
+			break;
+		default:
+			sys_family = NULL;
+			prerror("IPLPARAMS: Unknown system family\n");
+			break;
+		}
+
+		dt_add_property_strings(dt_root, "compatible", "ibm,powernv",
+					sys_family);
+		prlog(PR_INFO,
+		      "IPLPARAMS: Legacy platform family: %s"
+		      " (sys_type=0x%08x)\n", sys_family, sys_type);
 	}
-	dt_add_property_strings(dt_root, "compatible", "ibm,powernv",
-				sys_family);
 
 	/* Grab nest frequency when available */
 	if (version >= 0x005b) {
 		u64 freq = be32_to_cpu(p->nest_freq_mhz);
 
 		freq *= 1000000;
-		dt_add_property_cells(dt_root, "nest-frequency",
-				      hi32(freq), lo32(freq));
+		dt_add_property_u64(dt_root, "nest-frequency", freq);
 	}
+
+	if (version >= 0x5f)
+		vendor = p->sys_vendor;
+
+	/* Workaround a bug where we have NULL vendor */
+	if (!vendor || vendor[0] == '\0')
+		vendor = "IBM";
+
+	dt_add_property_string(dt_root, "vendor", vendor);
+
+	sys_attributes = be32_to_cpu(p->sys_attributes);
+	if (sys_attributes & SYS_ATTR_RISK_LEVEL)
+		dt_add_property(node, "elevated-risk-level", NULL, 0);
 }
 
 static void add_iplparams_ipl_params(const void *iplp, struct dt_node *node)
@@ -858,12 +1070,10 @@ static void add_iplparams_serials(const void *iplp, struct dt_node *node)
 	const struct iplparms_serial *ipser;
 	struct dt_node *ser_node;
 	int count, i;
-	
+
 	count = HDIF_get_iarray_size(iplp, IPLPARMS_IDATA_SERIAL);
-	if (!count) {
-		prerror("IPLPARAMS: No serial ports\n");
+	if (count <= 0)
 		return;
-	}
 	prlog(PR_INFO, "IPLPARAMS: %d serial ports in array\n", count);
 
 	node = dt_new(node, "fsp-serial");
@@ -1010,21 +1220,16 @@ static void dt_init_led_node(void)
 	assert(led_node);
 }
 
-static void dt_init_vpd_node(void)
-{
-	struct dt_node *dt_vpd;
-
-	dt_vpd = dt_new(dt_root, "vpd");
-	assert(dt_vpd);
-	dt_add_property_string(dt_vpd, "compatible", "ibm,opal-v3-vpd");
-}
-
 static void hostservices_parse(void)
 {
 	struct HDIF_common_hdr *hs_hdr;
 	const void *dt_blob;
 	unsigned int size;
 	unsigned int ntuples_size;
+
+	/* Deprecated on P9 */
+	if (proc_gen >= proc_gen_p9)
+		return;
 
 	ntuples_size = sizeof(struct HDIF_array_hdr) + 
 		be32_to_cpu(spira.ntuples.array_hdr.ecnt) *
@@ -1047,6 +1252,255 @@ static void hostservices_parse(void)
 		return;
 	}
 	hservices_from_hdat(dt_blob, size);
+}
+
+static void add_stop_levels(void)
+{
+	struct spira_ntuple *t = &spira.ntuples.proc_chip;
+	struct HDIF_common_hdr *hdif;
+	u32 stop_levels = ~0;
+	bool valid = false;
+	int i;
+
+	if (proc_gen < proc_gen_p9)
+		return;
+
+	/*
+	 * OPAL only exports a single set of flags to indicate the supported
+	 * STOP modes while the HDAT descibes the support top levels *per chip*
+	 * We parse the list of chips to find a common set of STOP levels to
+	 * export.
+	 */
+	for_each_ntuple_idx(t, hdif, i, SPPCRD_HDIF_SIG) {
+		unsigned int size;
+		const struct sppcrd_chip_info *cinfo =
+			HDIF_get_idata(hdif, SPPCRD_IDATA_CHIP_INFO, &size);
+		u32 ve, chip_levels;
+
+		if (!cinfo)
+			continue;
+
+		/*
+		 * If the chip info field is too small then assume we have no
+		 * STOP level information.
+		 */
+		if (size < 0x44) {
+			stop_levels = 0;
+			break;
+		}
+
+		ve = be32_to_cpu(cinfo->verif_exist_flags) & CPU_ID_VERIFY_MASK;
+		ve >>= CPU_ID_VERIFY_SHIFT;
+		if (ve == CHIP_VERIFY_NOT_INSTALLED ||
+		    ve == CHIP_VERIFY_UNUSABLE)
+			continue;
+
+		chip_levels = be32_to_cpu(cinfo->stop_levels);
+
+		prlog(PR_INSANE, "CHIP[%x] supported STOP mask 0x%.8x\n",
+			be32_to_cpu(cinfo->proc_chip_id), chip_levels);
+
+		stop_levels &= chip_levels;
+		valid = true;
+	}
+
+	if (!valid)
+		stop_levels = 0;
+
+	dt_add_property_cells(dt_new_check(opal_node, "power-mgt"),
+		"ibm,enabled-stop-levels", stop_levels);
+}
+
+#define NPU_BASE 0x5011000
+#define NPU_SIZE 0x2c
+#define NPU_INDIRECT0	0x8000000009010c3fULL
+#define NPU_INDIRECT1	0x800000000c010c3fULL
+
+static void add_npu(struct dt_node *xscom, const struct HDIF_array_hdr *links,
+			int npu_index, int phb_index)
+{
+	const struct sppcrd_smp_link *link;
+	struct dt_node *npu;
+	int group_target[6]; /* Tracks the PCI slot targeted each link group */
+	int group_count = 0;
+	int link_count = 0;
+	uint32_t size, chip_id;
+	int i;
+
+	size = be32_to_cpu(links->esize);
+	chip_id = dt_get_chip_id(xscom);
+
+	memset(group_target, 0, sizeof(group_target));
+
+	npu = dt_new_addr(xscom, "npu", NPU_BASE);
+	dt_add_property_cells(npu, "reg", NPU_BASE, NPU_SIZE);
+	dt_add_property_cells(npu, "#size-cells", 0);
+	dt_add_property_cells(npu, "#address-cells", 1);
+
+	dt_add_property_strings(npu, "compatible", "ibm,power9-npu");
+	dt_add_property_cells(npu, "ibm,phb-index", phb_index);
+	dt_add_property_cells(npu, "ibm,npu-index", npu_index);
+
+	HDIF_iarray_for_each(links, i, link) {
+		uint16_t slot_id = be16_to_cpu(link->pci_slot_idx);
+		uint32_t link_id = be32_to_cpu(link->link_id);
+		uint64_t speed = 0, nvlink_speed = 0;
+		struct dt_node *node;
+
+		/* only add a link node if this link is targeted at at device */
+		if (be32_to_cpu(link->usage) != SMP_LINK_USE_DEVICE)
+			continue;
+
+		/*
+		 * XXX: The link_id that we get from HDAT is essentially an
+		 * arbitrary ID number so we can't use it as the reg for the
+		 * link node.
+		 *
+		 * a) There's a 1-1 mapping between entries in the SMP link
+		 *    structure and the NPU links.
+		 *
+		 * b) The SMP link array contains them in ascending order.
+		 *
+		 * We have some assurances that b) is correct, but if we get
+		 * broken link numbering it's something to watch for.
+		 *
+		 * If we every have actual A-Bus (SMP) link info in here
+		 * this is going to break.
+		 */
+
+		prlog(PR_DEBUG, "NPU: %04x:%d: Link (%d) targets slot %u",
+			chip_id, link_count, link_count, slot_id);
+
+		if (link_count >= 6) {
+			prerror("NPU: %04x:%d: Ignoring extra link (max 6)\n",
+				chip_id, link_count);
+			break;
+		}
+
+		node = dt_new_addr(npu, "link", link_count);
+		if (!node) {
+			prerror("NPU: %04x:%d: Creating link node failed\n",
+				chip_id, link_count);
+			continue;
+		}
+
+		dt_add_property_string(node, "compatible", "ibm,npu-link");
+		dt_add_property_cells(node, "reg", link_count);
+		dt_add_property_cells(node, "ibm,npu-link-index", link_count);
+		dt_add_property_cells(node, "ibm,workbook-link-id", link_id);
+
+		dt_add_property_u64s(node, "ibm,npu-phy",
+				link_count < 3 ? NPU_INDIRECT0 : NPU_INDIRECT1);
+		dt_add_property_cells(node, "ibm,npu-lane-mask",
+				be32_to_cpu(link->lane_mask));
+		dt_add_property_cells(node, "ibm,npu-brick-id",
+				be32_to_cpu(link->brick_id));
+
+		link_count++;
+
+		/*
+		 * Add the group details if this is an NVlink.
+		 *
+		 * TODO: Cable card stuff.
+		 */
+		if (slot_id) {
+			struct dt_node *slot;
+			const char *name;
+			int group;
+
+			/*
+			 * Search the existing groups for one targeting
+			 * this PCI slot
+			 */
+			for (group = 0; group < group_count; group++)
+				if (group_target[group] == slot_id)
+					break;
+
+			/* no group, make a new one */
+			if (group == group_count) {
+				group_target[group] = slot_id;
+				group_count++;
+			}
+
+			dt_add_property_cells(node, "ibm,npu-group-id", group);
+
+			slot = find_slot_entry_node(dt_root, slot_id);
+			if (!slot) {
+				prerror("NPU: %04x:%d: Unable find node for targeted PCIe slot\n",
+					chip_id, link_count - 1);
+				continue;
+			}
+
+			name = dt_prop_get_def(slot, "ibm,slot-label",
+						(char *)"<SLOT NAME MISSING>");
+
+			prlog(PR_DEBUG, "NPU: %04x:%d: Target slot %s\n",
+				chip_id, link_count - 1, name);
+
+			dt_add_property_string(node, "ibm,slot-label", name);
+			dt_add_property_cells(node, "ibm,pcie-slot",
+					slot->phandle);
+		}
+
+		/* Newer fields which might not be populated */
+		if (size <= 0x24)
+			continue;
+
+		switch (link->link_speed) {
+			case 0: /* 20Gbps */
+				speed = 20000000000ul;
+				nvlink_speed = 0x3;
+				break;
+			case 1: /* 25Gbps */
+				speed = 25000000000ul;
+				nvlink_speed = 0x9;
+				break;
+			case 2: /* 25.78125 Gbps */
+				nvlink_speed =  0x8;
+				speed = 25781250000ul;
+				break;
+		}
+
+		/* ibm,link-speed is in bps and nvidia,link-speed is ~magic~ */
+		dt_add_property_u64s(node, "ibm,link-speed", speed);
+		dt_add_property_cells(node, "nvidia,link-speed", nvlink_speed);
+
+		dt_add_property_cells(node, DT_PRIVATE "occ-flag-pos",
+				PPC_BIT(link->occ_flag_bit));
+	}
+
+	dt_add_property_cells(npu, "ibm,npu-links", link_count);
+}
+
+static void add_npus(void)
+{
+	struct dt_node *xscom;
+	int phb_index = 7; /* Start counting from 7, for no reason */
+	int npu_index = 0;
+
+	if (proc_gen < proc_gen_p9)
+		return;
+
+	dt_for_each_compatible(dt_root, xscom, "ibm,xscom") {
+		const struct HDIF_array_hdr *links;
+
+		links = xscom_to_pcrd(xscom, SPPCRD_IDATA_SMP_LINK);
+		if (!links) {
+			prerror("NPU: Unable to find matching SPPCRD for %s\n",
+				xscom->name);
+			continue;
+		}
+
+		/* should never happen, but stranger things have */
+		if (!dt_find_by_name(dt_root, "ibm,pcie-slots")) {
+			prerror("PCIe slot information missing, can't add npu");
+			continue;
+		}
+
+		/* some hostboots will give us an empty array */
+		if (be32_to_cpu(links->ecnt))
+			add_npu(xscom, links, npu_index++, phb_index++);
+	}
 }
 
 /*
@@ -1090,9 +1544,10 @@ static void fixup_spira(void)
 	spira.ntuples.pcia = spiras->ntuples.pcia;
 	spira.ntuples.proc_chip = spiras->ntuples.proc_chip;
 	spira.ntuples.hs_data = spiras->ntuples.hs_data;
+	spira.ntuples.ipmi_sensor = spiras->ntuples.ipmi_sensor;
 }
 
-int parse_hdat(bool is_opal, uint32_t master_cpu)
+int parse_hdat(bool is_opal)
 {
 	cpu_type = PVR_TYPE(mfspr(SPR_PVR));
 
@@ -1100,16 +1555,19 @@ int parse_hdat(bool is_opal, uint32_t master_cpu)
 
 	fixup_spira();
 
-	dt_root = dt_new_root("");
-
 	/*
 	 * Basic DT root stuff
 	 */
 	dt_add_property_cells(dt_root, "#address-cells", 2);
 	dt_add_property_cells(dt_root, "#size-cells", 2);
-	dt_add_property_string(dt_root, "lid-type", is_opal ? "opal" : "phyp");
 
-	/* Create /vpd node */
+	if (proc_gen < proc_gen_p9)
+		dt_add_property_string(dt_root, "lid-type", is_opal ? "opal" : "phyp");
+
+	/* Add any BMCs and enable the LPC UART */
+	bmc_parse();
+
+	/* Create and populate /vpd node */
 	dt_init_vpd_node();
 
 	/* Create /ibm,opal/led node */
@@ -1126,21 +1584,28 @@ int parse_hdat(bool is_opal, uint32_t master_cpu)
 	/* Parse MS VPD */
 	memory_parse();
 
-	/* Add XSCOM node (must be before chiptod & IO ) */
+	/* Add XSCOM node (must be before chiptod, IO and FSP) */
 	add_xscom();
 
-	/* Add FSP */
+	/* Add any FSPs */
 	fsp_parse();
 
 	/* Add ChipTOD's */
-	if (!add_chiptod_old() && !add_chiptod_new(master_cpu))
+	if (!add_chiptod_old() && !add_chiptod_new())
 		prerror("CHIPTOD: No ChipTOD found !\n");
 
 	/* Add NX */
 	add_nx();
 
+	/* Add nest mmu */
+	add_nmmu();
+
 	/* Add IO HUBs and/or PHBs */
 	io_parse();
+
+	/* Add NPU nodes */
+	if (proc_gen >= proc_gen_p9)
+		add_npus();
 
 	/* Parse VPD */
 	vpd_parse();
@@ -1151,7 +1616,9 @@ int parse_hdat(bool is_opal, uint32_t master_cpu)
 	/* Parse System Attention Indicator inforamtion */
 	slca_dt_add_sai_node();
 
-	prlog(PR_INFO, "Parsing HDAT...done\n");
+	add_stop_levels();
+
+	prlog(PR_DEBUG, "Parsing HDAT...done\n");
 
 	return 0;
 }

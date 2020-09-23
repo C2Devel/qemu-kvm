@@ -98,6 +98,10 @@
 
 #define P9_PIR2THREADID(pir) ((pir) & 0x3)
 
+#define P9_GCID2NODEID(gcid)	(((gcid) >> 3) & 0xf)
+
+#define P9_GCID2CHIPID(gcid) ((gcid) & 0x7)
+
 /* P9 specific ones mostly used by XIVE */
 #define P9_PIR2LOCALCPU(pir) ((pir) & 0xff)
 #define P9_PIRFROMLOCALCPU(chip, cpu)	(((chip) << 8) | (cpu))
@@ -107,6 +111,8 @@ struct dt_node;
 struct centaur_chip;
 struct mfsi;
 struct xive;
+struct lpcm;
+struct vas;
 
 /* Chip type */
 enum proc_chip_type {
@@ -129,7 +135,11 @@ enum proc_chip_quirks {
 	QUIRK_NO_OCC_IRQ       	= 0x00000010,
 	QUIRK_SIMICS		= 0x00000020,
 	QUIRK_SLOW_SIM		= 0x00000040,
-} proc_chip_quirks;
+	QUIRK_NO_DIRECT_CTL	= 0x00000080,
+	QUIRK_NO_RNG		= 0x00000100,
+};
+
+extern enum proc_chip_quirks proc_chip_quirks;
 
 static inline bool chip_quirk(unsigned int q)
 {
@@ -151,6 +161,7 @@ struct proc_chip {
 	/* These are only initialized after xcom_init */
 	enum proc_chip_type	type;
 	uint32_t		ec_level;	/* 0xMm (DD1.0 = 0x10) */
+	uint8_t                 ec_rev;		/* sub-revision */
 
 	/* Those two values are only populated on machines with an FSP
 	 * dbob_id = Drawer/Block/Octant/Blade (DBOBID)
@@ -169,12 +180,7 @@ struct proc_chip {
 	uint64_t		xscom_base;
 
 	/* Used by hw/lpc.c */
-	uint32_t		lpc_xbase;
-	void			*lpc_mbase;
-	struct lock		lpc_lock;
-	uint8_t			lpc_fw_idsel;
-	uint8_t			lpc_fw_rdsz;
-	struct list_head	lpc_clients;
+	struct lpcm		*lpc;
 
 	/* Used by hw/slw.c */
 	uint64_t		slw_base;
@@ -186,11 +192,12 @@ struct proc_chip {
 	uint64_t		homer_size;
 	uint64_t		occ_common_base;
 	uint64_t		occ_common_size;
-	u8			throttle;
+	uint8_t			throttle;
 
 	/* Must hold capi_lock to change */
-	u8			capp_phb3_attached_mask;
-	u8			capp_ucode_loaded;
+	uint8_t			capp_phb3_attached_mask;
+	uint8_t			capp_phb4_attached_mask;
+	uint8_t			capp_ucode_loaded;
 
 	/* Used by hw/centaur.c */
 	struct centaur_chip	*centaurs;
@@ -206,6 +213,8 @@ struct proc_chip {
 
 	/* Used by hw/xive.c */
 	struct xive		*xive;
+
+	struct vas		*vas;
 };
 
 extern uint32_t pir_to_chip_id(uint32_t pir);
@@ -220,6 +229,17 @@ extern struct proc_chip *get_chip(uint32_t chip_id);
 
 extern void init_chips(void);
 
+/* helper to get number of chips in the system */
+static inline int nr_chips(void)
+{
+	struct proc_chip *chip;
+	int nr_chips = 0;
+
+	for_each_chip(chip)
+		nr_chips++;
+
+	return nr_chips;
+}
 
 #endif /* __CHIP_H */
 

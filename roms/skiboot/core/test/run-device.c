@@ -31,9 +31,10 @@ static inline bool fake_is_rodata(const void *p)
 #define zalloc(bytes) calloc((bytes), 1)
 
 #include "../device.c"
-#include "../../ccan/list/list.c" /* For list_check */
 #include <assert.h>
 #include "../../test/dt_common.c"
+const char *prop_to_fix[] = {"something", NULL};
+const char **props_to_fix(struct dt_node *node);
 
 static void check_path(const struct dt_node *node, const char * expected_path)
 {
@@ -88,18 +89,29 @@ static bool is_sorted(const struct dt_node *root)
 	return true;
 }
 
+/*handler for phandle fixup test */
+const char **props_to_fix(struct dt_node *node)
+{
+	const struct dt_property *prop;
+
+	prop = dt_find_property(node, "something");
+	if (prop)
+		return prop_to_fix;
+
+	return NULL;
+}
 
 int main(void)
 {
-	struct dt_node *root, *c1, *c2, *gc1, *gc2, *gc3, *ggc1;
+	struct dt_node *root, *c1, *c2, *gc1, *gc2, *gc3, *ggc1, *ggc2;
 	struct dt_node *addrs, *addr1, *addr2;
-	struct dt_node *i;
+	struct dt_node *i, *subtree, *ev1, *ut1, *ut2;
 	const struct dt_property *p;
 	struct dt_property *p2;
 	unsigned int n;
 	char *s;
 	size_t sz;
-	u32 phandle;
+	u32 phandle, ev1_ph, new_prop_ph;
 
 	root = dt_new_root("");
 	assert(!list_top(&root->properties, struct dt_property, list));
@@ -151,6 +163,7 @@ int main(void)
 	assert(!list_top(&addr1->properties, struct dt_property, list));
 	check_path(addr1, "/addrs/addr@1337");
 	assert(dt_find_by_name(root, "addr@1337") == addr1);
+	assert(dt_find_by_name_addr(root, "addr", 0x1337) == addr1);
 	assert(dt_find_by_path(root, "/addrs/addr@1337") == addr1);
 
 	addr2 = dt_new_2addr(addrs, "2addr", 0xdead, 0xbeef);
@@ -367,6 +380,70 @@ int main(void)
 
 	dt_free(root);
 
+	/* check dt_translate_address */
+
+	/* NB: the root bus has two address cells */
+	root = dt_new_root("");
+
+	c1 = dt_new_addr(root, "some-32bit-bus", 0x80000000);
+	dt_add_property_cells(c1, "#address-cells", 1);
+	dt_add_property_cells(c1, "#size-cells", 1);
+	dt_add_property_cells(c1, "ranges", 0x0, 0x8, 0x0, 0x1000);
+
+	gc1 = dt_new_addr(c1, "test", 0x0500);
+	dt_add_property_cells(gc1, "reg", 0x0500, 0x10);
+
+	assert(dt_translate_address(gc1, 0, NULL) == 0x800000500ul);
+
+	/* try three level translation */
+
+	gc2 = dt_new_addr(c1, "another-32bit-bus", 0x40000000);
+	dt_add_property_cells(gc2, "#address-cells", 1);
+	dt_add_property_cells(gc2, "#size-cells", 1);
+	dt_add_property_cells(gc2, "ranges",	0x0, 0x600, 0x100,
+						0x100, 0x800, 0x100);
+
+	ggc1 = dt_new_addr(gc2, "test", 0x50);
+	dt_add_property_cells(ggc1, "reg", 0x50, 0x10);
+	assert(dt_translate_address(ggc1, 0, NULL) == 0x800000650ul);
+
+	/* test multiple ranges work */
+	ggc2 = dt_new_addr(gc2, "test", 0x150);
+	dt_add_property_cells(ggc2, "reg", 0x150, 0x10);
+	assert(dt_translate_address(ggc2, 0, NULL) == 0x800000850ul);
+
+	/* try 64bit -> 64bit */
+
+	c2 = dt_new_addr(root, "some-64bit-bus", 0xe00000000);
+	dt_add_property_cells(c2, "#address-cells", 2);
+	dt_add_property_cells(c2, "#size-cells", 2);
+	dt_add_property_cells(c2, "ranges", 0x0, 0x0, 0xe, 0x0, 0x2, 0x0);
+
+	gc2 = dt_new_addr(c2, "test", 0x100000000ul);
+	dt_add_property_u64s(gc2, "reg", 0x100000000ul, 0x10ul);
+	assert(dt_translate_address(gc2, 0, NULL) == 0xf00000000ul);
+
+	dt_free(root);
+
+	/* phandle fixup test */
+	subtree = dt_new_root("subtree");
+	ev1 = dt_new(subtree, "ev@1");
+	ev1_ph = ev1->phandle;
+	dt_new(ev1,"a@1");
+	dt_new(ev1,"a@2");
+	dt_new(ev1,"a@3");
+	ut1 = dt_new(subtree, "ut@1");
+	dt_add_property(ut1, "something", (const void *)&ev1->phandle, 4);
+	ut2 = dt_new(subtree, "ut@2");
+	dt_add_property(ut2, "something", (const void *)&ev1->phandle, 4);
+
+	dt_adjust_subtree_phandle(subtree, props_to_fix);
+	assert(!(ev1->phandle == ev1_ph));
+	new_prop_ph = dt_prop_get_u32(ut1, "something");
+	assert(!(new_prop_ph == ev1_ph));
+	new_prop_ph = dt_prop_get_u32(ut2, "something");
+	assert(!(new_prop_ph == ev1_ph));
+	dt_free(subtree);
 	return 0;
 }
 

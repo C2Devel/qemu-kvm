@@ -57,9 +57,7 @@ do {                                                       \
 
 #define PFLASH_LAZY_ROMD_THRESHOLD 42
 
-#define CFI_PFLASH02(obj) OBJECT_CHECK(pflash_t, (obj), TYPE_CFI_PFLASH02)
-
-struct pflash_t {
+struct PFlashCFI02 {
     /*< private >*/
     SysBusDevice parent_obj;
     /*< public >*/
@@ -83,9 +81,8 @@ struct pflash_t {
     uint16_t ident3;
     uint16_t unlock_addr0;
     uint16_t unlock_addr1;
-    uint8_t cfi_len;
     uint8_t cfi_table[0x52];
-    QEMUTimer *timer;
+    QEMUTimer timer;
     /* The device replicates the flash memory across its memory space.  Emulate
      * that by having a container (.mem) filled with an array of aliases
      * (.mem_mappings) pointing to the flash memory (.orig_mem).
@@ -102,7 +99,7 @@ struct pflash_t {
 /*
  * Set up replicated mappings of the same region.
  */
-static void pflash_setup_mappings(pflash_t *pfl)
+static void pflash_setup_mappings(PFlashCFI02 *pfl)
 {
     unsigned i;
     hwaddr size = memory_region_size(&pfl->orig_mem);
@@ -116,7 +113,7 @@ static void pflash_setup_mappings(pflash_t *pfl)
     }
 }
 
-static void pflash_register_memory(pflash_t *pfl, int rom_mode)
+static void pflash_register_memory(PFlashCFI02 *pfl, int rom_mode)
 {
     memory_region_rom_device_set_romd(&pfl->orig_mem, rom_mode);
     pfl->rom_mode = rom_mode;
@@ -124,7 +121,7 @@ static void pflash_register_memory(pflash_t *pfl, int rom_mode)
 
 static void pflash_timer (void *opaque)
 {
-    pflash_t *pfl = opaque;
+    PFlashCFI02 *pfl = opaque;
 
     DPRINTF("%s: command %02x done\n", __func__, pfl->cmd);
     /* Reset flash */
@@ -138,8 +135,8 @@ static void pflash_timer (void *opaque)
     pfl->cmd = 0;
 }
 
-static uint32_t pflash_read (pflash_t *pfl, hwaddr offset,
-                             int width, int be)
+static uint32_t pflash_read(PFlashCFI02 *pfl, hwaddr offset,
+                            int width, int be)
 {
     hwaddr boff;
     uint32_t ret;
@@ -235,10 +232,11 @@ static uint32_t pflash_read (pflash_t *pfl, hwaddr offset,
         break;
     case 0x98:
         /* CFI query mode */
-        if (boff > pfl->cfi_len)
-            ret = 0;
-        else
+        if (boff < sizeof(pfl->cfi_table)) {
             ret = pfl->cfi_table[boff];
+        } else {
+            ret = 0;
+        }
         break;
     }
 
@@ -246,7 +244,7 @@ static uint32_t pflash_read (pflash_t *pfl, hwaddr offset,
 }
 
 /* update flash content on disk */
-static void pflash_update(pflash_t *pfl, int offset,
+static void pflash_update(PFlashCFI02 *pfl, int offset,
                           int size)
 {
     int offset_end;
@@ -260,8 +258,8 @@ static void pflash_update(pflash_t *pfl, int offset,
     }
 }
 
-static void pflash_write (pflash_t *pfl, hwaddr offset,
-                          uint32_t value, int width, int be)
+static void pflash_write(PFlashCFI02 *pfl, hwaddr offset,
+                         uint32_t value, int width, int be)
 {
     hwaddr boff;
     uint8_t *p;
@@ -431,7 +429,7 @@ static void pflash_write (pflash_t *pfl, hwaddr offset,
             }
             pfl->status = 0x00;
             /* Let's wait 5 seconds before chip erase is done */
-            timer_mod(pfl->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+            timer_mod(&pfl->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                       (NANOSECONDS_PER_SECOND * 5));
             break;
         case 0x30:
@@ -446,7 +444,7 @@ static void pflash_write (pflash_t *pfl, hwaddr offset,
             }
             pfl->status = 0x00;
             /* Let's wait 1/2 second before sector erase is done */
-            timer_mod(pfl->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+            timer_mod(&pfl->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                       (NANOSECONDS_PER_SECOND / 2));
             break;
         default:
@@ -595,7 +593,7 @@ static const MemoryRegionOps pflash_cfi02_ops_le = {
 
 static void pflash_cfi02_realize(DeviceState *dev, Error **errp)
 {
-    pflash_t *pfl = CFI_PFLASH02(dev);
+    PFlashCFI02 *pfl = PFLASH_CFI02(dev);
     uint32_t chip_len;
     int ret;
     Error *local_err = NULL;
@@ -658,12 +656,11 @@ static void pflash_cfi02_realize(DeviceState *dev, Error **errp)
     pfl->rom_mode = 1;
     sysbus_init_mmio(SYS_BUS_DEVICE(dev), &pfl->mem);
 
-    pfl->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, pflash_timer, pfl);
+    timer_init_ns(&pfl->timer, QEMU_CLOCK_VIRTUAL, pflash_timer, pfl);
     pfl->wcycle = 0;
     pfl->cmd = 0;
     pfl->status = 0;
     /* Hardcoded CFI table (mostly from SG29 Spansion flash) */
-    pfl->cfi_len = 0x52;
     /* Standard "QRY" string */
     pfl->cfi_table[0x10] = 'Q';
     pfl->cfi_table[0x11] = 'R';
@@ -742,35 +739,42 @@ static void pflash_cfi02_realize(DeviceState *dev, Error **errp)
 }
 
 static Property pflash_cfi02_properties[] = {
-    DEFINE_PROP_DRIVE("drive", struct pflash_t, blk),
-    DEFINE_PROP_UINT32("num-blocks", struct pflash_t, nb_blocs, 0),
-    DEFINE_PROP_UINT32("sector-length", struct pflash_t, sector_len, 0),
-    DEFINE_PROP_UINT8("width", struct pflash_t, width, 0),
-    DEFINE_PROP_UINT8("mappings", struct pflash_t, mappings, 0),
-    DEFINE_PROP_UINT8("big-endian", struct pflash_t, be, 0),
-    DEFINE_PROP_UINT16("id0", struct pflash_t, ident0, 0),
-    DEFINE_PROP_UINT16("id1", struct pflash_t, ident1, 0),
-    DEFINE_PROP_UINT16("id2", struct pflash_t, ident2, 0),
-    DEFINE_PROP_UINT16("id3", struct pflash_t, ident3, 0),
-    DEFINE_PROP_UINT16("unlock-addr0", struct pflash_t, unlock_addr0, 0),
-    DEFINE_PROP_UINT16("unlock-addr1", struct pflash_t, unlock_addr1, 0),
-    DEFINE_PROP_STRING("name", struct pflash_t, name),
+    DEFINE_PROP_DRIVE("drive", PFlashCFI02, blk),
+    DEFINE_PROP_UINT32("num-blocks", PFlashCFI02, nb_blocs, 0),
+    DEFINE_PROP_UINT32("sector-length", PFlashCFI02, sector_len, 0),
+    DEFINE_PROP_UINT8("width", PFlashCFI02, width, 0),
+    DEFINE_PROP_UINT8("mappings", PFlashCFI02, mappings, 0),
+    DEFINE_PROP_UINT8("big-endian", PFlashCFI02, be, 0),
+    DEFINE_PROP_UINT16("id0", PFlashCFI02, ident0, 0),
+    DEFINE_PROP_UINT16("id1", PFlashCFI02, ident1, 0),
+    DEFINE_PROP_UINT16("id2", PFlashCFI02, ident2, 0),
+    DEFINE_PROP_UINT16("id3", PFlashCFI02, ident3, 0),
+    DEFINE_PROP_UINT16("unlock-addr0", PFlashCFI02, unlock_addr0, 0),
+    DEFINE_PROP_UINT16("unlock-addr1", PFlashCFI02, unlock_addr1, 0),
+    DEFINE_PROP_STRING("name", PFlashCFI02, name),
     DEFINE_PROP_END_OF_LIST(),
 };
+
+static void pflash_cfi02_unrealize(DeviceState *dev, Error **errp)
+{
+    PFlashCFI02 *pfl = PFLASH_CFI02(dev);
+    timer_del(&pfl->timer);
+}
 
 static void pflash_cfi02_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = pflash_cfi02_realize;
+    dc->unrealize = pflash_cfi02_unrealize;
     dc->props = pflash_cfi02_properties;
     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
 }
 
 static const TypeInfo pflash_cfi02_info = {
-    .name           = TYPE_CFI_PFLASH02,
+    .name           = TYPE_PFLASH_CFI02,
     .parent         = TYPE_SYS_BUS_DEVICE,
-    .instance_size  = sizeof(struct pflash_t),
+    .instance_size  = sizeof(PFlashCFI02),
     .class_init     = pflash_cfi02_class_init,
 };
 
@@ -781,22 +785,25 @@ static void pflash_cfi02_register_types(void)
 
 type_init(pflash_cfi02_register_types)
 
-pflash_t *pflash_cfi02_register(hwaddr base,
-                                DeviceState *qdev, const char *name,
-                                hwaddr size,
-                                BlockBackend *blk, uint32_t sector_len,
-                                int nb_blocs, int nb_mappings, int width,
-                                uint16_t id0, uint16_t id1,
-                                uint16_t id2, uint16_t id3,
-                                uint16_t unlock_addr0, uint16_t unlock_addr1,
-                                int be)
+PFlashCFI02 *pflash_cfi02_register(hwaddr base,
+                                   const char *name,
+                                   hwaddr size,
+                                   BlockBackend *blk,
+                                   uint32_t sector_len,
+                                   int nb_mappings, int width,
+                                   uint16_t id0, uint16_t id1,
+                                   uint16_t id2, uint16_t id3,
+                                   uint16_t unlock_addr0,
+                                   uint16_t unlock_addr1,
+                                   int be)
 {
-    DeviceState *dev = qdev_create(NULL, TYPE_CFI_PFLASH02);
+    DeviceState *dev = qdev_create(NULL, TYPE_PFLASH_CFI02);
 
     if (blk) {
         qdev_prop_set_drive(dev, "drive", blk, &error_abort);
     }
-    qdev_prop_set_uint32(dev, "num-blocks", nb_blocs);
+    assert(size % sector_len == 0);
+    qdev_prop_set_uint32(dev, "num-blocks", size / sector_len);
     qdev_prop_set_uint32(dev, "sector-length", sector_len);
     qdev_prop_set_uint8(dev, "width", width);
     qdev_prop_set_uint8(dev, "mappings", nb_mappings);
@@ -811,5 +818,5 @@ pflash_t *pflash_cfi02_register(hwaddr base,
     qdev_init_nofail(dev);
 
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return CFI_PFLASH02(dev);
+    return PFLASH_CFI02(dev);
 }

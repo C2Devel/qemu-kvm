@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2016 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,9 +27,22 @@ enum resource_id {
 	RESOURCE_ID_KERNEL,
 	RESOURCE_ID_INITRAMFS,
 	RESOURCE_ID_CAPP,
+	RESOURCE_ID_IMA_CATALOG,
+	RESOURCE_ID_VERSION,
 };
 #define RESOURCE_SUBID_NONE 0
 #define RESOURCE_SUBID_SUPPORTED 1
+
+struct bmc_platform {
+	const char *name;
+
+	/*
+	 * Map IPMI_OEM_X to vendor commands for this BMC
+	 * 0 = unimplimented
+	 */
+	uint32_t ipmi_oem_partial_add_esel;
+	uint32_t ipmi_oem_pnor_access_status;
+};
 
 /*
  * Each platform can provide a set of hooks
@@ -37,6 +50,13 @@ enum resource_id {
  */
 struct platform {
 	const char	*name;
+
+	/*
+	 * If BMC is constant, bmc platform specified here.
+	 * Platforms can also call set_bmc_platform() if BMC platform is
+	 * not a constant.
+	 */
+	const struct bmc_platform *bmc;
 
 	/*
 	 * Probe platform, return true on a match, called before
@@ -82,6 +102,11 @@ struct platform {
 	 */
 	void		(*pci_setup_phb)(struct phb *phb, unsigned int index);
 
+	/*
+	 * This is called before resetting the PHBs (lift PERST) and
+	 * probing the devices. The PHBs have already been initialized.
+	 */
+	void		(*pre_pci_fixup)(void);
 	/*
 	 * Called during PCI scan for each device. For bridges, this is
 	 * called before its children are probed. This is called for
@@ -174,6 +199,7 @@ extern struct platform __platforms_start;
 extern struct platform __platforms_end;
 
 extern struct platform	platform;
+extern const struct bmc_platform *bmc_platform;
 
 extern bool manufacturing_mode;
 
@@ -189,6 +215,6 @@ extern int resource_loaded(enum resource_id id, uint32_t idx);
 
 extern int wait_for_resource_loaded(enum resource_id id, uint32_t idx);
 
-extern void mambo_sim_exit(void);
+extern void set_bmc_platform(const struct bmc_platform *bmc);
 
 #endif /* __PLATFORM_H */

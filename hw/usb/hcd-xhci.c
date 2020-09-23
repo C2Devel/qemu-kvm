@@ -811,8 +811,9 @@ static void xhci_er_reset(XHCIState *xhci, int v)
 {
     XHCIInterrupter *intr = &xhci->intr[v];
     XHCIEvRingSeg seg;
+    dma_addr_t erstba = xhci_addr64(intr->erstba_low, intr->erstba_high);
 
-    if (intr->erstsz == 0) {
+    if (intr->erstsz == 0 || erstba == 0) {
         /* disabled */
         intr->er_start = 0;
         intr->er_size = 0;
@@ -824,7 +825,6 @@ static void xhci_er_reset(XHCIState *xhci, int v)
         xhci_die(xhci);
         return;
     }
-    dma_addr_t erstba = xhci_addr64(intr->erstba_low, intr->erstba_high);
     pci_dma_read(PCI_DEVICE(xhci), erstba, &seg, sizeof(seg));
     le32_to_cpus(&seg.addr_low);
     le32_to_cpus(&seg.addr_high);
@@ -1954,7 +1954,12 @@ static void xhci_kick_epctx(XHCIEPContext *epctx, unsigned int streamid)
         for (i = 0; i < length; i++) {
             TRBType type;
             type = xhci_ring_fetch(xhci, ring, &xfer->trbs[i], NULL);
-            assert(type);
+            if (!type) {
+                xhci_die(xhci);
+                xhci_ep_free_xfer(xfer);
+                epctx->kick_active--;
+                return;
+            }
         }
         xfer->streamid = streamid;
 
@@ -3368,7 +3373,7 @@ static void usb_xhci_realize(struct PCIDevice *dev, Error **errp)
         xhci->max_pstreams_mask = 0;
     }
 
-    if (pci_bus_is_express(dev->bus) ||
+    if (pci_bus_is_express(pci_get_bus(dev)) ||
         xhci_get_flag(xhci, XHCI_FLAG_FORCE_PCIE_ENDCAP)) {
         ret = pcie_endpoint_cap_init(dev, 0xa0);
         assert(ret > 0);
@@ -3555,12 +3560,14 @@ static const VMStateDescription vmstate_xhci_slot = {
     }
 };
 
-static void xhci_event_pre_save(void *opaque)
+static int xhci_event_pre_save(void *opaque)
 {
     XHCIEvent *s = opaque;
 
     s->cve_2014_5263_a = ((uint8_t *)&s->type)[0];
     s->cve_2014_5263_b = ((uint8_t *)&s->type)[1];
+
+    return 0;
 }
 
 bool migrate_cve_2014_5263_xhci_fields;
@@ -3667,6 +3674,13 @@ static Property xhci_properties[] = {
     DEFINE_PROP_END_OF_LIST(),
 };
 
+static void xhci_instance_init(Object *obj)
+{
+    /* QEMU_PCI_CAP_EXPRESS initialization does not depend on QEMU command
+     * line, therefore, no need to wait to realize like other devices */
+    PCI_DEVICE(obj)->cap_present |= QEMU_PCI_CAP_EXPRESS;
+}
+
 static void xhci_class_init(ObjectClass *klass, void *data)
 {
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
@@ -3679,7 +3693,6 @@ static void xhci_class_init(ObjectClass *klass, void *data)
     k->realize      = usb_xhci_realize;
     k->exit         = usb_xhci_exit;
     k->class_id     = PCI_CLASS_SERIAL_USB;
-    k->is_express   = 1;
 }
 
 static const TypeInfo xhci_info = {
@@ -3687,6 +3700,7 @@ static const TypeInfo xhci_info = {
     .parent        = TYPE_PCI_DEVICE,
     .instance_size = sizeof(XHCIState),
     .class_init    = xhci_class_init,
+    .instance_init = xhci_instance_init,
     .abstract      = true,
     .interfaces = (InterfaceInfo[]) {
         { INTERFACE_PCIE_DEVICE },

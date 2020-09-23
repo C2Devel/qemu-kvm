@@ -13,6 +13,7 @@
 #include <gmodule.h>
 #include <sys/param.h>
 #include "block/block_int.h"
+#include "block/qdict.h"
 #include "qapi/qmp/qerror.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qstring.h"
@@ -497,7 +498,7 @@ static int vxhs_open(BlockDriverState *bs, QDict *options,
 
 out:
     g_free(of_vsa_addr);
-    QDECREF(backing_options);
+    qobject_unref(backing_options);
     qemu_opts_del(tcp_opts);
     qemu_opts_del(opts);
     g_free(cacert);

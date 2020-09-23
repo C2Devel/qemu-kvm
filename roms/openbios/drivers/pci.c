@@ -150,6 +150,30 @@ static unsigned long pci_bus_addr_to_host_addr(int space, uint32_t ba)
     }
 }
 
+static inline void pci_decode_pci_addr(pci_addr addr, int *flags,
+                                       int *space_code, uint32_t *mask)
+{
+    *flags = 0;
+
+    if (addr & 0x01) {
+        *space_code = IO_SPACE;
+        *mask = 0x00000001;
+    } else {
+        if (addr & 0x04) {
+            *space_code = MEMORY_SPACE_64;
+            *flags |= IS_NOT_RELOCATABLE; /* XXX: why not relocatable? */
+        } else {
+            *space_code = MEMORY_SPACE_32;
+        }
+
+        if (addr & 0x08) {
+            *flags |= IS_PREFETCHABLE;
+        }
+
+        *mask = 0x0000000F;
+    }
+}
+
 static void
 ob_pci_open(int *idx)
 {
@@ -343,28 +367,20 @@ ob_pci_encode_unit(int *idx)
 	        ss, dev, fn, buf);
 }
 
-/* ( pci-addr.lo pci-addr.mid pci-addr.hi size -- virt ) */
-
-static void
-ob_pci_bus_map_in(int *idx)
-{
+/* Map PCI MMIO or IO space from the BAR address. Note it is up to the caller
+   to understand whether the resulting address is in MEM or IO space and
+   use the appropriate accesses */
+static ucell ob_pci_map(uint32_t ba, ucell size) {
 	phys_addr_t phys;
-	uint32_t ba;
-	ucell size, virt, tmp;
-	int space;
+	uint32_t mask;
+	int flags, space_code;
+	ucell virt;
+	
+	pci_decode_pci_addr(ba, &flags, &space_code, &mask);
 
-	PCI_DPRINTF("ob_pci_bar_map_in idx=%p\n", idx);
-
-	size = POP();
-	tmp = POP();
-	POP();
-	ba = POP();
-
-	/* Get the space from the pci-addr.hi */
-	space = ((tmp & PCI_RANGE_TYPE_MASK) >> 24);
-
-	phys = pci_bus_addr_to_host_addr(space, ba);
-
+	phys = pci_bus_addr_to_host_addr(space_code,
+			ba & ~mask);
+	
 #if defined(CONFIG_OFMEM)
 	ofmem_claim_phys(phys, size, 0);
 
@@ -381,6 +397,33 @@ ob_pci_bus_map_in(int *idx)
 	virt = size;	/* Keep compiler quiet */
 	virt = phys;
 #endif
+
+	return virt;
+}
+
+static void ob_pci_unmap(ucell virt, ucell size) {
+#if defined(CONFIG_OFMEM)
+	ofmem_unmap(virt, size); 
+#endif
+}
+
+/* ( pci-addr.lo pci-addr.mid pci-addr.hi size -- virt ) */
+
+static void
+ob_pci_bus_map_in(int *idx)
+{
+	uint32_t ba;
+	ucell size;
+	ucell virt;
+
+	PCI_DPRINTF("ob_pci_bar_map_in idx=%p\n", idx);
+
+	size = POP();
+	POP();
+	POP();
+	ba = POP();
+
+	virt = ob_pci_map(ba, size);
 
 	PUSH(virt);
 }
@@ -633,6 +676,15 @@ int eth_config_cb (const pci_config_t *config)
         return 0;
 }
 
+int sunhme_config_cb(const pci_config_t *config)
+{
+	phandle_t ph = get_cur_dev();
+	
+	set_int_property(ph, "hm-rev", 0x21);
+	
+	return eth_config_cb(config);
+}
+
 int rtl8139_config_cb(const pci_config_t *config)
 {
 #ifdef CONFIG_PPC
@@ -648,28 +700,34 @@ int rtl8139_config_cb(const pci_config_t *config)
 	return eth_config_cb(config);
 }
 
-static inline void pci_decode_pci_addr(pci_addr addr, int *flags,
-				       int *space_code, uint32_t *mask)
+int sungem_config_cb (const pci_config_t *config)
 {
-    *flags = 0;
+	phandle_t ph = get_cur_dev();
+	uint32_t val, *mmio;
+	uint8_t mac[6];
+	ucell virt;
 
-	if (addr & 0x01) {
-		*space_code = IO_SPACE;
-		*mask = 0x00000001;
-	} else {
-	    if (addr & 0x04) {
-            *space_code = MEMORY_SPACE_64;
-            *flags |= IS_NOT_RELOCATABLE; /* XXX: why not relocatable? */
-        } else {
-            *space_code = MEMORY_SPACE_32;
-        }
+#define MAC_ADDR0	(0x6080UL/4)	/* MAC Address 0 Register	*/
+#define MAC_ADDR1	(0x6084UL/4)	/* MAC Address 1 Register	*/
+#define MAC_ADDR2	(0x6088UL/4)	/* MAC Address 2 Register	*/
 
-        if (addr & 0x08) {
-            *flags |= IS_PREFETCHABLE;
-        }
-
-        *mask = 0x0000000F;
-	}
+	/* Map PCI memory BAR 0 to access the sungem registers */
+	virt = ob_pci_map(config->assigned[0], 0x8000);
+	mmio = (void *)(uintptr_t)virt;
+	
+	val = __le32_to_cpu(*(mmio + MAC_ADDR0));
+	mac[5] = val & 0xff;
+	mac[4] = (val >> 8) & 0xff;
+	val = __le32_to_cpu(*(mmio + MAC_ADDR1));
+	mac[3] = val & 0xff;
+	mac[2] = (val >> 8) & 0xff;
+	val = __le32_to_cpu(*(mmio + MAC_ADDR2));
+	mac[1] = val & 0xff;
+	mac[0] = (val >> 8) & 0xff;
+	set_property(ph, "local-mac-address", (char *)mac, 6);
+	
+	ob_pci_unmap(virt, 0x8000);
+	return 0;
 }
 
 /*
@@ -916,14 +974,14 @@ int ebus_config_cb(const pci_config_t *config)
     props[0] = 0x14;
     props[1] = 0x3f8;
     props[2] = 1;
-    props[3] = find_dev("/");
+    props[3] = find_dev("/pci");
     props[4] = 0x2b;
     
     /* PS2 keyboard */
     props[5] = 0x14;
     props[6] = 0x60;
     props[7] = 1;
-    props[8] = find_dev("/");
+    props[8] = find_dev("/pci");
     props[9] = 0x29;
     
     set_property(dev, "interrupt-map", (char *)props, 10 * sizeof(props[0]));
@@ -985,6 +1043,40 @@ int ebus_config_cb(const pci_config_t *config)
     fword("property");
     
     push_str("eeprom");
+    fword("device-name");
+    fword("finish-device");
+
+    /* Build power node */
+    fword("new-device");
+    PUSH(0x14);
+    fword("encode-int");
+    PUSH(0x7240);
+    fword("encode-int");
+    fword("encode+");
+    PUSH(0x4);
+    fword("encode-int");
+    fword("encode+");
+    push_str("reg");
+    fword("property");
+
+    PUSH(0);
+    PUSH(0);
+    push_str("button");
+    fword("property");
+
+    PUSH(1);
+    fword("encode-int");
+    push_str("interrupts");
+    fword("property");
+
+    /* Map the power registers so we can use them */
+    virt = ofmem_map_io(io_phys_base + 0x7240, 0x4);
+    PUSH(virt);
+    fword("encode-int");
+    push_str("address");
+    fword("property");
+
+    push_str("power");
     fword("device-name");
     fword("finish-device");
 
@@ -1371,8 +1463,16 @@ static void ob_scan_sabre_pci_bus(int *bus_num, unsigned long *mem_base,
 		is_multi = 0;
 		
 		if (devnum == 1) {
+			/* Force io_base/mem_base to match the pciA simba range */
+			*io_base = 0x0;       /* because of arch->iobase */
+			*mem_base = 0x20000000;
+			
 			ob_configure_pci_device(path, bus_num, mem_base, io_base,
 				bus, 1, 1, &is_multi);
+			
+			/* Force io_base/mem_base to match the pciB simba range */
+			*io_base = 0x800000;  /* because of arch->iobase */
+			*mem_base = 0x60000000;
 			
 			ph = ob_configure_pci_device(path, bus_num, mem_base, io_base,
 				bus, 1, 0, &is_multi);
@@ -1430,6 +1530,7 @@ static void ob_configure_pci_bridge(pci_addr addr,
 
     /* Set the base limit registers */
     pci_config_write16(addr, PCI_MEMORY_BASE, ((*mem_base >> 16) & ~(0xf)));
+    pci_config_write16(addr, PCI_IO_BASE_UPPER, (*io_base >> 16));
     pci_config_write8(addr, PCI_IO_BASE, ((*io_base >> 8) & ~(0xf)));
 
     /* Always ensure legacy ioports are accessible during enumeration.
@@ -1437,6 +1538,7 @@ static void ob_configure_pci_bridge(pci_addr addr,
        the configuration process, so we allow them during the secondary
        bus scan and then set the correct IO limit below. */
     io_scan_limit = *io_base + (0xffff - *io_base);
+    pci_config_write16(addr, PCI_IO_LIMIT_UPPER, (io_scan_limit >> 16));
     pci_config_write8(addr, PCI_IO_LIMIT, (io_scan_limit >> 8) & ~(0xf));
 
     /* make pci bridge parent device, prepare for recursion */
@@ -1471,6 +1573,7 @@ static void ob_configure_pci_bridge(pci_addr addr,
 
     /* Set the limit registers */
     pci_config_write16(addr, PCI_MEMORY_LIMIT, (((*mem_base - 1) >> 16) & ~(0xf)));
+    pci_config_write16(addr, PCI_IO_LIMIT_UPPER, ((*io_base - 1) >> 16));
     pci_config_write8(addr, PCI_IO_LIMIT, (((*io_base - 1) >> 8) & ~(0xf)));
 
     /* Disable unused address spaces */
@@ -1756,13 +1859,11 @@ static phandle_t ob_pci_host_set_interrupt_map(phandle_t host)
            
 static void ob_pci_host_bus_interrupt(ucell dnode, u32 *props, int *ncells, u32 addr, u32 intno)
 {
-    /* Note: this can be removed when the Simba bridges are in place
+    /* Note: this is invalid when the Simba bridges are in place
        as it is impossible to physically plug hardware into the PCI
-       root bus */
-    *ncells += pci_encode_phys_addr(props + *ncells, 0, 0, addr, 0, 0);
-    props[(*ncells)++] = intno;
-    props[(*ncells)++] = dnode;
-    props[(*ncells)++] = SUN4U_PCIAINTERRUPT(addr, intno);
+       root bus (and no hardware support for mapping these interrupts
+       either) */
+    return;
 }
 
 #else

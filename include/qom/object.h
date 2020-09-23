@@ -14,7 +14,7 @@
 #ifndef QEMU_OBJECT_H
 #define QEMU_OBJECT_H
 
-#include "qapi-types.h"
+#include "qapi/qapi-builtin-types.h"
 #include "qemu/queue.h"
 
 struct TypeImpl;
@@ -78,6 +78,28 @@ typedef struct InterfaceInfo InterfaceInfo;
  * In the above example, we create a simple type that is described by #TypeInfo.
  * #TypeInfo describes information about the type including what it inherits
  * from, the instance and class size, and constructor/destructor hooks.
+ *
+ * Alternatively several static types could be registered using helper macro
+ * DEFINE_TYPES()
+ *
+ * <example>
+ *   <programlisting>
+ * static const TypeInfo device_types_info[] = {
+ *     {
+ *         .name = TYPE_MY_DEVICE_A,
+ *         .parent = TYPE_DEVICE,
+ *         .instance_size = sizeof(MyDeviceA),
+ *     },
+ *     {
+ *         .name = TYPE_MY_DEVICE_B,
+ *         .parent = TYPE_DEVICE,
+ *         .instance_size = sizeof(MyDeviceB),
+ *     },
+ * };
+ *
+ * DEFINE_TYPES(device_types_info)
+ *   </programlisting>
+ * </example>
  *
  * Every type has an #ObjectClass associated with it.  #ObjectClass derivatives
  * are instantiated dynamically but there is only ever one instance for any
@@ -773,7 +795,7 @@ const char *object_get_typename(const Object *obj);
  * @info and all of the strings it points to should exist for the life time
  * that the type is registered.
  *
- * Returns: 0 on failure, the new #Type on success.
+ * Returns: the new #Type.
  */
 Type type_register_static(const TypeInfo *info);
 
@@ -784,9 +806,33 @@ Type type_register_static(const TypeInfo *info);
  * Unlike type_register_static(), this call does not require @info or its
  * string members to continue to exist after the call returns.
  *
- * Returns: 0 on failure, the new #Type on success.
+ * Returns: the new #Type.
  */
 Type type_register(const TypeInfo *info);
+
+/**
+ * type_register_static_array:
+ * @infos: The array of the new type #TypeInfo structures.
+ * @nr_infos: number of entries in @infos
+ *
+ * @infos and all of the strings it points to should exist for the life time
+ * that the type is registered.
+ */
+void type_register_static_array(const TypeInfo *infos, int nr_infos);
+
+/**
+ * DEFINE_TYPES:
+ * @type_array: The array containing #TypeInfo structures to register
+ *
+ * @type_array should be static constant that exists for the life time
+ * that the type is registered.
+ */
+#define DEFINE_TYPES(type_array)                                            \
+static void do_qemu_init_ ## type_array(void)                               \
+{                                                                           \
+    type_register_static_array(type_array, ARRAY_SIZE(type_array));         \
+}                                                                           \
+type_init(do_qemu_init_ ## type_array)
 
 /**
  * object_class_dynamic_cast_assert:
@@ -865,6 +911,17 @@ void object_class_foreach(void (*fn)(ObjectClass *klass, void *opaque),
  * Returns: A singly-linked list of the classes in reverse hashtable order.
  */
 GSList *object_class_get_list(const char *implements_type,
+                              bool include_abstract);
+
+/**
+ * object_class_get_list_sorted:
+ * @implements_type: The type to filter for, including its derivatives.
+ * @include_abstract: Whether to include abstract classes.
+ *
+ * Returns: A singly-linked list of the classes in alphabetical
+ * case-insensitive order.
+ */
+GSList *object_class_get_list_sorted(const char *implements_type,
                               bool include_abstract);
 
 /**
@@ -971,6 +1028,22 @@ void object_property_iter_init(ObjectPropertyIterator *iter,
                                Object *obj);
 
 /**
+ * object_class_property_iter_init:
+ * @klass: the class
+ *
+ * Initializes an iterator for traversing all properties
+ * registered against an object class and all parent classes.
+ *
+ * It is forbidden to modify the property list while iterating,
+ * whether removing or adding properties.
+ *
+ * This can be used on abstract classes as it does not create a temporary
+ * instance.
+ */
+void object_class_property_iter_init(ObjectPropertyIterator *iter,
+                                     ObjectClass *klass);
+
+/**
  * object_property_iter_next:
  * @iter: the iterator instance
  *
@@ -1030,6 +1103,11 @@ char *object_property_get_str(Object *obj, const char *name,
  * @errp: returns an error if this function fails
  *
  * Writes an object's canonical path to a property.
+ *
+ * If the link property was created with
+ * <code>OBJ_PROP_LINK_STRONG</code> bit, the old target object is
+ * unreferenced, and a reference is added to the new target object.
+ *
  */
 void object_property_set_link(Object *obj, Object *value,
                               const char *name, Error **errp);
@@ -1320,7 +1398,7 @@ void object_property_add_child(Object *obj, const char *name,
 
 typedef enum {
     /* Unref the link pointer when the property is deleted */
-    OBJ_PROP_LINK_UNREF_ON_RELEASE = 0x1,
+    OBJ_PROP_LINK_STRONG = 0x1,
 } ObjectPropertyLinkFlags;
 
 /**
@@ -1358,8 +1436,9 @@ void object_property_allow_set_link(const Object *, const char *,
  * link property.  The reference count for <code>*@child</code> is
  * managed by the property from after the function returns till the
  * property is deleted with object_property_del().  If the
- * <code>@flags</code> <code>OBJ_PROP_LINK_UNREF_ON_RELEASE</code> bit is set,
- * the reference count is decremented when the property is deleted.
+ * <code>@flags</code> <code>OBJ_PROP_LINK_STRONG</code> bit is set,
+ * the reference count is decremented when the property is deleted or
+ * modified.
  */
 void object_property_add_link(Object *obj, const char *name,
                               const char *type, Object **child,
@@ -1426,14 +1505,14 @@ void object_class_property_add_bool(ObjectClass *klass, const char *name,
  */
 void object_property_add_enum(Object *obj, const char *name,
                               const char *typename,
-                              const char * const *strings,
+                              const QEnumLookup *lookup,
                               int (*get)(Object *, Error **),
                               void (*set)(Object *, int, Error **),
                               Error **errp);
 
 void object_class_property_add_enum(ObjectClass *klass, const char *name,
                                     const char *typename,
-                                    const char * const *strings,
+                                    const QEnumLookup *lookup,
                                     int (*get)(Object *, Error **),
                                     void (*set)(Object *, int, Error **),
                                     Error **errp);

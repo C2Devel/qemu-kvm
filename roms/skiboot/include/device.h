@@ -61,12 +61,29 @@ struct dt_node *dt_new_root(const char *name);
 /* Graft a root node into this tree. */
 bool dt_attach_root(struct dt_node *parent, struct dt_node *root);
 
+/* Wrappers for last_phandle operations */
+static inline u32 get_last_phandle(void)
+{
+	return last_phandle;
+}
+
+static inline void set_last_phandle(u32 phandle)
+{
+	last_phandle = phandle;
+}
+
+static inline u32 new_phandle(void)
+{
+	return ++last_phandle;
+}
+
 /* Add a child node. */
 struct dt_node *dt_new(struct dt_node *parent, const char *name);
 struct dt_node *dt_new_addr(struct dt_node *parent, const char *name,
 			    uint64_t unit_addr);
 struct dt_node *dt_new_2addr(struct dt_node *parent, const char *name,
 			     uint64_t unit_addr0, uint64_t unit_addr1);
+struct dt_node *dt_new_check(struct dt_node *parent, const char *name);
 
 /* Copy node to new parent, including properties and subnodes */
 struct dt_node *dt_copy(struct dt_node *node, struct dt_node *parent);
@@ -118,6 +135,8 @@ static inline struct dt_property *dt_add_property_u64(struct dt_node *node,
 }
 
 void dt_del_property(struct dt_node *node, struct dt_property *prop);
+
+void dt_check_del_prop(struct dt_node *node, const char *name);
 
 /* Warning: moves *prop! */
 void dt_resize_property(struct dt_property **prop, size_t len);
@@ -243,5 +262,14 @@ u64 dt_translate_address(const struct dt_node *node, unsigned int index,
  * tree. This is mainly here for testing.
  */
 int dt_cmp_subnodes(const struct dt_node *a,  const struct dt_node *b);
+
+struct dt_node *__dt_find_by_name_addr(struct dt_node *parent, const char *name,
+				const char *addr);
+struct dt_node *dt_find_by_name_addr(struct dt_node *parent, const char *name,
+				uint64_t addr);
+
+/* phandle fixup helper */
+void dt_adjust_subtree_phandle(struct dt_node *subtree,
+				const char** (get_properties_to_fix)(struct dt_node *n));
 
 #endif /* __DEVICE_H */

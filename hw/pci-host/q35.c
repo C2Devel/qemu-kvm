@@ -51,9 +51,10 @@ static void q35_host_realize(DeviceState *dev, Error **errp)
     sysbus_add_io(sbd, MCH_HOST_BRIDGE_CONFIG_DATA, &pci->data_mem);
     sysbus_init_ioports(sbd, MCH_HOST_BRIDGE_CONFIG_DATA, 4);
 
-    pci->bus = pci_bus_new(DEVICE(s), "pcie.0",
-                           s->mch.pci_address_space, s->mch.address_space_io,
-                           0, TYPE_PCIE_BUS);
+    pci->bus = pci_root_bus_new(DEVICE(s), "pcie.0",
+                                s->mch.pci_address_space,
+                                s->mch.address_space_io,
+                                0, TYPE_PCIE_BUS);
     PC_MACHINE(qdev_get_machine())->bus = pci->bus;
     qdev_set_parent_bus(DEVICE(&s->mch), BUS(pci->bus));
     qdev_init_nofail(DEVICE(&s->mch));
@@ -351,7 +352,7 @@ static void mch_update_pam(MCHPCIState *mch)
     memory_region_transaction_begin();
     for (i = 0; i < 13; i++) {
         pam_update(&mch->pam_regions[i], i,
-                   pd->config[MCH_HOST_BRIDGE_PAM0 + ((i + 1) / 2)]);
+                   pd->config[MCH_HOST_BRIDGE_PAM0 + (DIV_ROUND_UP(i, 2))]);
     }
     memory_region_transaction_commit();
 }

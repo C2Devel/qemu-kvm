@@ -32,6 +32,9 @@
 #include <timebase.h>
 #include <platform.h>
 #include <errorlog.h>
+#include <xive.h>
+#include <sbe-p9.h>
+#include <phys-map.h>
 
 static LIST_HEAD(psis);
 static u64 psi_link_timer;
@@ -39,7 +42,6 @@ static u64 psi_link_timeout;
 static bool psi_link_poll_active;
 static bool psi_ext_irq_policy = EXTERNAL_IRQ_POLICY_LINUX;
 
-static void psi_register_interrupts(struct psi *psi);
 static void psi_activate_phb(struct psi *psi);
 
 static struct lock psi_lock = LOCK_UNLOCKED;
@@ -179,7 +181,7 @@ static void psi_link_poll(void *data __unused)
 		list_for_each(&psis, psi, list) {
 			u64 val;
 
-			if (psi->active || !psi->working)
+			if (psi->active)
 				continue;
 
 			val = in_be64(psi->regs + PSIHB_CR);
@@ -220,9 +222,6 @@ static void psi_link_poll(void *data __unused)
 
 void psi_enable_fsp_interrupt(struct psi *psi)
 {
-	if (!psi->working)
-		return;
-
 	/* Enable FSP interrupts in the GXHB */
 	lock(&psi_lock);
 	out_be64(psi->regs + PSIHB_CR,
@@ -272,63 +271,16 @@ static void handle_psi_interrupt(struct psi *psi, u64 val)
 		printf("PSI: FSP error detected\n");
 }
 
-/* TODO: Determine which of these needs to be handled by powernv */
-static void handle_extra_interrupt(struct psi *psi)
-{
-	u64 val;
-
-	val = in_be64(psi->regs + PSIHB_IRQ_STATUS);
-
-	/*
-	 * Decode interrupt type, call appropriate handlers
-	 * when available.
-	 */
-	if (val & PSIHB_IRQ_STAT_OCC)
-		occ_interrupt(psi->chip_id);
-	if (val & PSIHB_IRQ_STAT_FSI)
-		printf("PSI: FSI irq received\n");
-	if (val & PSIHB_IRQ_STAT_LPC) {
-		lpc_interrupt(psi->chip_id);
-
-		/*
-		 * i2c interrupts are ORed with the LPC ones on
-		 * Murano DD2.1 and Venice DD2.0
-		 */
-		p8_i2c_interrupt(psi->chip_id);
-	}
-	if (val & PSIHB_IRQ_STAT_LOCAL_ERR)
-		prd_psi_interrupt(psi->chip_id);
-	if (val & PSIHB_IRQ_STAT_HOST_ERR) {
-		if (platform.external_irq)
-			platform.external_irq(psi->chip_id);
-	} else {
-		u64 xivr;
-
-		/*
-		 * The way our FPGA "pulses" the external interrupt
-		 * on BMC machines means we might not see it in the
-		 * status register anymore, so look at the latch in
-		 * the XIVR
-		 */
-		xivr = in_be64(psi->regs + PSIHB_XIVR_HOST_ERR);
-		if (xivr & PPC_BIT(39) && platform.external_irq)
-			platform.external_irq(psi->chip_id);
-	}
-
-	/*
-	 * TODO: Per Vicente Chung, CRESPs don't generate interrupts,
-	 * and are just informational. Need to define the policy
-	 * to handle them.
-	 */
-}
-
 static void psi_spurious_fsp_irq(struct psi *psi)
 {
 	u64 reg, bit;
 
 	prerror("PSI: Spurious interrupt, attempting clear\n");
 
-	if (proc_gen == proc_gen_p8) {
+	if (proc_gen == proc_gen_p9) {
+		reg = PSIHB_XSCOM_P9_HBCSR_CLR;
+		bit = PSIHB_XSCOM_P9_HBSCR_FSP_IRQ;
+	} else if (proc_gen == proc_gen_p8) {
 		reg = PSIHB_XSCOM_P8_HBCSR_CLR;
 		bit = PSIHB_XSCOM_P8_HBSCR_FSP_IRQ;
 	} else {
@@ -343,7 +295,7 @@ bool psi_poll_fsp_interrupt(struct psi *psi)
 	return !!(in_be64(psi->regs + PSIHB_CR) & PSIHB_CR_FSP_IRQ);
 }
 
-static void psi_interrupt(struct irq_source *is, uint32_t isn __unused)
+static void psihb_interrupt(struct irq_source *is, uint32_t isn __unused)
 {
 	struct psi *psi = is->data;
 	u64 val;
@@ -385,10 +337,6 @@ static void psi_interrupt(struct irq_source *is, uint32_t isn __unused)
 			fsp_interrupt();
 	}
 
-	 /* P8 additional interrupt? */
-	if (proc_gen == proc_gen_p8)
-		handle_extra_interrupt(psi);
-
 	/* Poll the console buffers on any interrupt since we don't
 	 * get send notifications
 	 */
@@ -400,9 +348,6 @@ static int64_t psi_p7_set_xive(struct irq_source *is, uint32_t isn __unused,
 {
 	struct psi *psi = is->data;
 	uint64_t xivr;
-
-	if (!psi->working)
-		return OPAL_HARDWARE;
 
 	/* Populate the XIVR */
 	xivr  = (uint64_t)server << 40;
@@ -420,9 +365,6 @@ static int64_t psi_p7_get_xive(struct irq_source *is, uint32_t isn __unused,
 	struct psi *psi = is->data;
 	uint64_t xivr;
 
-	if (!psi->working)
-		return OPAL_HARDWARE;
-
 	/* Read & decode the XIVR */
 	xivr = in_be64(psi->regs + PSIHB_XIVR);
 
@@ -432,34 +374,77 @@ static int64_t psi_p7_get_xive(struct irq_source *is, uint32_t isn __unused,
 	return OPAL_SUCCESS;
 }
 
+static uint64_t psi_p7_irq_attributes(struct irq_source *is __unused,
+				      uint32_t isn __unused)
+{
+	return IRQ_ATTR_TARGET_OPAL | IRQ_ATTR_TARGET_FREQUENT;
+}
+
+static const uint32_t psi_p8_irq_to_xivr[P8_IRQ_PSI_IRQ_COUNT] = {
+	[P8_IRQ_PSI_FSP]	= PSIHB_XIVR_FSP,
+	[P8_IRQ_PSI_OCC]	= PSIHB_XIVR_OCC,
+	[P8_IRQ_PSI_FSI]	= PSIHB_XIVR_FSI,
+	[P8_IRQ_PSI_LPC]	= PSIHB_XIVR_LPC,
+	[P8_IRQ_PSI_LOCAL_ERR]	= PSIHB_XIVR_LOCAL_ERR,
+	[P8_IRQ_PSI_EXTERNAL]= PSIHB_XIVR_HOST_ERR,
+};
+
+static void psi_cleanup_irq(struct psi *psi)
+{
+	uint32_t irq;
+	uint64_t xivr, xivr_p;
+
+	for (irq = 0; irq < P8_IRQ_PSI_IRQ_COUNT; irq++) {
+		prlog(PR_DEBUG, "PSI[0x%03x]: Cleaning up IRQ %d\n",
+		      psi->chip_id, irq);
+
+		xivr_p = psi_p8_irq_to_xivr[irq];
+		xivr = in_be64(psi->regs + xivr_p);
+		xivr |= (0xffull << 32);
+		out_be64(psi->regs + xivr_p, xivr);
+		time_wait_ms_nopoll(10);
+		xivr = in_be64(psi->regs + xivr_p);
+		if (xivr & PPC_BIT(39)) {
+			printf(" Need EOI !\n");
+			icp_send_eoi(psi->interrupt + irq);
+		}
+	}
+}
+
+/* Called on a fast reset, make sure we aren't stuck with
+ * an accepted and never EOId PSI interrupt
+ */
+void psi_irq_reset(void)
+{
+	struct psi *psi;
+
+	printf("PSI: Hot reset!\n");
+
+	assert(proc_gen == proc_gen_p8);
+
+	list_for_each(&psis, psi, list) {
+		psi_cleanup_irq(psi);
+	}
+}
+
+static const struct irq_source_ops psi_p7_irq_ops = {
+	.get_xive = psi_p7_get_xive,
+	.set_xive = psi_p7_set_xive,
+	.interrupt = psihb_interrupt,
+	.attributes = psi_p7_irq_attributes,
+};
+
+
 static int64_t psi_p8_set_xive(struct irq_source *is, uint32_t isn,
 			       uint16_t server, uint8_t priority)
 {
 	struct psi *psi = is->data;
 	uint64_t xivr_p, xivr;
+	uint32_t irq_idx = isn & 7;
 
-	switch(isn & 7) {
-	case P8_IRQ_PSI_FSP:
-		xivr_p = PSIHB_XIVR_FSP;
-		break;
-	case P8_IRQ_PSI_OCC:
-		xivr_p = PSIHB_XIVR_OCC;
-		break;
-	case P8_IRQ_PSI_FSI:
-		xivr_p = PSIHB_XIVR_FSI;
-		break;
-	case P8_IRQ_PSI_LPC:
-		xivr_p = PSIHB_XIVR_LPC;
-		break;
-	case P8_IRQ_PSI_LOCAL_ERR:
-		xivr_p = PSIHB_XIVR_LOCAL_ERR;
-		break;
-	case P8_IRQ_PSI_HOST_ERR:
-		xivr_p = PSIHB_XIVR_HOST_ERR;
-		break;
-	default:
-		return OPAL_PARAMETER;
-	}
+	if (irq_idx >= P8_IRQ_PSI_IRQ_COUNT)
+ 		return OPAL_PARAMETER;
+	xivr_p = psi_p8_irq_to_xivr[irq_idx];
 
 	/* Populate the XIVR */
 	xivr  = (uint64_t)server << 40;
@@ -476,29 +461,12 @@ static int64_t psi_p8_get_xive(struct irq_source *is, uint32_t isn __unused,
 {
 	struct psi *psi = is->data;
 	uint64_t xivr_p, xivr;
+	uint32_t irq_idx = isn & 7;
 
-	switch(isn & 7) {
-	case P8_IRQ_PSI_FSP:
-		xivr_p = PSIHB_XIVR_FSP;
-		break;
-	case P8_IRQ_PSI_OCC:
-		xivr_p = PSIHB_XIVR_OCC;
-		break;
-	case P8_IRQ_PSI_FSI:
-		xivr_p = PSIHB_XIVR_FSI;
-		break;
-	case P8_IRQ_PSI_LPC:
-		xivr_p = PSIHB_XIVR_LPC;
-		break;
-	case P8_IRQ_PSI_LOCAL_ERR:
-		xivr_p = PSIHB_XIVR_LOCAL_ERR;
-		break;
-	case P8_IRQ_PSI_HOST_ERR:
-		xivr_p = PSIHB_XIVR_HOST_ERR;
-		break;
-	default:
-		return OPAL_PARAMETER;
-	}
+	if (irq_idx >= P8_IRQ_PSI_IRQ_COUNT)
+ 		return OPAL_PARAMETER;
+
+	xivr_p = psi_p8_irq_to_xivr[irq_idx];
 
 	/* Read & decode the XIVR */
 	xivr = in_be64(psi->regs + xivr_p);
@@ -509,51 +477,215 @@ static int64_t psi_p8_get_xive(struct irq_source *is, uint32_t isn __unused,
 	return OPAL_SUCCESS;
 }
 
-/* Called on a fast reset, make sure we aren't stuck with
- * an accepted and never EOId PSI interrupt
- */
-void psi_irq_reset(void)
+static void psihb_p8_interrupt(struct irq_source *is, uint32_t isn)
 {
-	struct psi *psi;
-	uint64_t xivr;
+	struct psi *psi = is->data;
+	uint32_t idx = isn - psi->interrupt;
 
-	printf("PSI: Hot reset!\n");
+	switch (idx) {
+	case P8_IRQ_PSI_FSP:
+		psihb_interrupt(is, isn);
+		break;
+	case P8_IRQ_PSI_OCC:
+		occ_p8_interrupt(psi->chip_id);
+		break;
+	case P8_IRQ_PSI_FSI:
+		printf("PSI: FSI irq received\n");
+		break;
+	case P8_IRQ_PSI_LPC:
+		lpc_interrupt(psi->chip_id);
 
-	assert(proc_gen == proc_gen_p7);
-
-	list_for_each(&psis, psi, list) {
-		/* Mask the interrupt & clean the XIVR */
-		xivr = 0x000000ff00000000UL;
-		xivr |=	P7_IRQ_BUID(psi->interrupt) << 16;
-		out_be64(psi->regs + PSIHB_XIVR, xivr);
-
-#if 0 /* Seems to checkstop ... */
 		/*
-		 * Maybe not anymore; we were just blindly sending
-		 * this on all iopaths, not just the active one;
-		 * We don't even know if those psis are even correct.
+		 * i2c interrupts are ORed with the LPC ones on
+		 * Murano DD2.1 and Venice DD2.0
 		 */
-		/* Send a dummy EOI to make sure the ICP is clear */
-		icp_send_eoi(psi->interrupt);
-#endif
+		p8_i2c_interrupt(psi->chip_id);
+		break;
+	case P8_IRQ_PSI_LOCAL_ERR:
+		prd_psi_interrupt(psi->chip_id);
+		break;
+	case P8_IRQ_PSI_EXTERNAL:
+		if (platform.external_irq)
+			platform.external_irq(psi->chip_id);
+		break;
 	}
+
+	/*
+	 * TODO: Per Vicente Chung, CRESPs don't generate interrupts,
+	 * and are just informational. Need to define the policy
+	 * to handle them.
+	 */
 }
 
-static const struct irq_source_ops psi_p7_irq_ops = {
-	.get_xive = psi_p7_get_xive,
-	.set_xive = psi_p7_set_xive,
-	.interrupt = psi_interrupt,
-};
+static uint64_t psi_p8_irq_attributes(struct irq_source *is, uint32_t isn)
+{
+	struct psi *psi = is->data;
+	uint32_t idx = isn - psi->interrupt;
+	uint64_t attr;
+
+	if (psi->no_lpc_irqs && idx == P8_IRQ_PSI_LPC)
+		return IRQ_ATTR_TARGET_LINUX;
+
+	if (idx == P8_IRQ_PSI_EXTERNAL &&
+	    psi_ext_irq_policy == EXTERNAL_IRQ_POLICY_LINUX)
+		return IRQ_ATTR_TARGET_LINUX;
+
+	attr = IRQ_ATTR_TARGET_OPAL;
+	if (idx == P8_IRQ_PSI_EXTERNAL || idx == P8_IRQ_PSI_LPC ||
+	    idx == P8_IRQ_PSI_FSP)
+		attr |= IRQ_ATTR_TARGET_FREQUENT;
+	return attr;
+}
+
+static char *psi_p8_irq_name(struct irq_source *is, uint32_t isn)
+{
+	struct psi *psi = is->data;
+	uint32_t idx = isn - psi->interrupt;
+
+	static const char *names[P8_IRQ_PSI_IRQ_COUNT] = {
+		"psi:fsp",
+		"psi:occ",
+		"psi:fsi",
+		"psi:lpchc",
+		"psi:local_err",
+		"psi:external",
+	};
+
+	if (idx >= P8_IRQ_PSI_IRQ_COUNT)
+		return NULL;
+	return strdup(names[idx]);
+}
 
 static const struct irq_source_ops psi_p8_irq_ops = {
 	.get_xive = psi_p8_get_xive,
 	.set_xive = psi_p8_set_xive,
-	.interrupt = psi_interrupt,
+	.interrupt = psihb_p8_interrupt,
+	.attributes = psi_p8_irq_attributes,
+	.name = psi_p8_irq_name,
 };
 
-static const struct irq_source_ops psi_p8_host_err_ops = {
-	.get_xive = psi_p8_get_xive,
-	.set_xive = psi_p8_set_xive,
+static void psihb_p9_interrupt(struct irq_source *is, uint32_t isn)
+{
+	struct psi *psi = is->data;
+	uint32_t idx = isn - psi->interrupt;
+
+	switch (idx) {
+	case P9_PSI_IRQ_PSI:
+		psihb_interrupt(is, isn);
+		break;
+	case P9_PSI_IRQ_OCC:
+		occ_p9_interrupt(psi->chip_id);
+		break;
+	case P9_PSI_IRQ_FSI:
+		printf("PSI: FSI irq received\n");
+		break;
+	case P9_PSI_IRQ_LPCHC:
+		lpc_interrupt(psi->chip_id);
+		break;
+	case P9_PSI_IRQ_LOCAL_ERR:
+		prd_psi_interrupt(psi->chip_id);
+		break;
+	case P9_PSI_IRQ_GLOBAL_ERR:
+		printf("PSI: Global error irq received\n");
+		break;
+	case P9_PSI_IRQ_EXTERNAL:
+		if (platform.external_irq)
+			platform.external_irq(psi->chip_id);
+		break;
+	case P9_PSI_IRQ_LPC_SIRQ0:
+	case P9_PSI_IRQ_LPC_SIRQ1:
+	case P9_PSI_IRQ_LPC_SIRQ2:
+	case P9_PSI_IRQ_LPC_SIRQ3:
+		lpc_serirq(psi->chip_id, idx - P9_PSI_IRQ_LPC_SIRQ0);
+		break;
+	case P9_PSI_IRQ_SBE_I2C:
+		p8_i2c_interrupt(psi->chip_id);
+		break;
+	case P9_PSI_IRQ_DIO:
+		printf("PSI: DIO irq received\n");
+		break;
+	case P9_PSI_IRQ_PSU:
+		sbe_interrupt(psi->chip_id);
+		break;
+	}
+}
+
+static uint64_t psi_p9_irq_attributes(struct irq_source *is __unused,
+				      uint32_t isn)
+{
+	struct psi *psi = is->data;
+	unsigned int idx = isn & 0xf;
+	bool is_lpc_serirq;
+
+	 is_lpc_serirq =
+		 (idx == P9_PSI_IRQ_LPC_SIRQ0 ||
+		  idx == P9_PSI_IRQ_LPC_SIRQ1 ||
+		  idx == P9_PSI_IRQ_LPC_SIRQ2 ||
+		  idx == P9_PSI_IRQ_LPC_SIRQ3);
+
+	/* If LPC interrupts are disabled, route them to Linux
+	 * (who will not request them since they aren't referenced
+	 * in the device tree)
+	 */
+	 if (is_lpc_serirq && psi->no_lpc_irqs)
+		return IRQ_ATTR_TARGET_LINUX;
+
+	 /* For serirq, check the LPC layer for policy */
+	 if (is_lpc_serirq)
+		 return lpc_get_irq_policy(psi->chip_id, idx - P9_PSI_IRQ_LPC_SIRQ0);
+
+	return IRQ_ATTR_TARGET_OPAL;
+}
+
+static char *psi_p9_irq_name(struct irq_source *is, uint32_t isn)
+{
+	struct psi *psi = is->data;
+	uint32_t idx = isn - psi->interrupt;
+
+	static const char *names[P9_PSI_NUM_IRQS] = {
+		"psi:fsp",
+		"psi:occ",
+		"psi:fsi",
+		"psi:lpchc",
+		"psi:local_err",
+		"psi:global_err",
+		"psi:external",
+		"psi:lpc_serirq_mux0", /* Have a callback to get name ? */
+		"psi:lpc_serirq_mux1", /* Have a callback to get name ? */
+		"psi:lpc_serirq_mux2", /* Have a callback to get name ? */
+		"psi:lpc_serirq_mux3", /* Have a callback to get name ? */
+		"psi:i2c",
+		"psi:dio",
+		"psi:psu"
+	};
+
+	if (idx >= P9_PSI_NUM_IRQS)
+		return NULL;
+	return strdup(names[idx]);
+}
+
+static void psi_p9_irq_ndd1_eoi(struct irq_source *is, uint32_t isn)
+{
+	struct psi *psi = is->data;
+	unsigned int idx = isn & 0xf;
+
+	if (idx >= P9_PSI_IRQ_LPC_SIRQ0 &&
+	    idx <= P9_PSI_IRQ_LPC_SIRQ3)
+		lpc_p9_sirq_eoi(psi->chip_id, idx - P9_PSI_IRQ_LPC_SIRQ0);
+	__xive_source_eoi(is, isn);
+}
+
+static const struct irq_source_ops psi_p9_ndd1_irq_ops = {
+	.interrupt = psihb_p9_interrupt,
+	.attributes = psi_p9_irq_attributes,
+	.name = psi_p9_irq_name,
+	.eoi = psi_p9_irq_ndd1_eoi,
+};
+
+static const struct irq_source_ops psi_p9_irq_ops = {
+	.interrupt = psihb_p9_interrupt,
+	.attributes = psi_p9_irq_attributes,
+	.name = psi_p9_irq_name,
 };
 
 static void psi_tce_enable(struct psi *psi, bool enable)
@@ -566,6 +698,7 @@ static void psi_tce_enable(struct psi *psi, bool enable)
 		addr = psi->regs + PSIHB_CR;
 		break;
 	case proc_gen_p8:
+	case proc_gen_p9:
 		addr = psi->regs + PSIHB_PHBSCR;
 		break;
 	default:
@@ -602,6 +735,7 @@ void psi_init_for_fsp(struct psi *psi)
 			 PSIHB_TAR_16K_ENTRIES);
 		break;
 	case proc_gen_p8:
+	case proc_gen_p9:
 		out_be64(psi->regs + PSIHB_TAR, PSI_TCE_TABLE_BASE |
 			 PSIHB_TAR_256K_ENTRIES);
 		break;
@@ -643,75 +777,117 @@ void psi_set_external_irq_policy(bool policy)
 	psi_ext_irq_policy = policy;
 }
 
-/*
- * Register interrupt sources for all working links, not just the active ones.
- * This is a one time activity.
- */
-static void psi_register_interrupts(struct psi *psi)
+static void psi_init_p7_interrupt(struct psi *psi)
+{
+	/* On P7, we get a single interrupt */
+	out_be64(psi->regs + PSIHB_XIVR,
+		 P7_IRQ_BUID(psi->interrupt) << 16 |
+		 0xffull << 32);
+
+	/* Configure it in the GX controller as well */
+	gx_configure_psi_buid(psi->chip_id, P7_IRQ_BUID(psi->interrupt));
+
+	/* Register the IRQ source */
+	register_irq_source(&psi_p7_irq_ops, psi, psi->interrupt, 1);
+}
+
+static void psi_init_p8_interrupts(struct psi *psi)
+{
+	uint32_t irq;
+	uint64_t xivr_p;
+
+	/* On P8 we get a block of 8, set up the base/mask
+	 * and mask all the sources for now
+	 */
+	out_be64(psi->regs + PSIHB_IRSN,
+		 SETFIELD(PSIHB_IRSN_COMP, 0ul, psi->interrupt) |
+		 SETFIELD(PSIHB_IRSN_MASK, 0ul, 0x7fff8ul) |
+		 PSIHB_IRSN_DOWNSTREAM_EN |
+		 PSIHB_IRSN_UPSTREAM_EN);
+
+	for (irq = 0; irq < P8_IRQ_PSI_IRQ_COUNT; irq++) {
+		xivr_p = psi_p8_irq_to_xivr[irq];
+		out_be64(psi->regs  + xivr_p, (0xffull << 32) | (irq << 29));
+	}
+
+	/*
+	 * Register the IRQ sources FSP, OCC, FSI, LPC
+	 * and Local Error. Host Error is actually the
+	 * external interrupt and the policy for that comes
+	 * from the platform
+	 */
+	register_irq_source(&psi_p8_irq_ops, psi,
+			    psi->interrupt, P8_IRQ_PSI_IRQ_COUNT);
+}
+
+static void psi_init_p9_interrupts(struct psi *psi)
+{
+	struct proc_chip *chip;
+	bool is_p9ndd1;
+	u64 val;
+
+	/* Grab chip */
+	chip = get_chip(psi->chip_id);
+	if (!chip)
+		return;
+
+	/* Configure the CI BAR */
+	phys_map_get(chip->id, PSIHB_ESB, 0, &val, NULL);
+	val |= PSIHB_ESB_CI_VALID;
+	out_be64(psi->regs + PSIHB_ESB_CI_BASE, val);
+
+	val = in_be64(psi->regs + PSIHB_ESB_CI_BASE);
+	psi->esb_mmio = (void *)(val & ~PSIHB_ESB_CI_VALID);
+	prlog(PR_DEBUG, "PSI[0x%03x]: ESB MMIO at @%p\n",
+	       psi->chip_id, psi->esb_mmio);
+
+	/* Grab and configure the notification port */
+	val = xive_get_notify_port(psi->chip_id, XIVE_HW_SRC_PSI);
+	val |= PSIHB_ESB_NOTIF_VALID;
+	out_be64(psi->regs + PSIHB_ESB_NOTIF_ADDR, val);
+
+	/* Setup interrupt offset */
+	val = xive_get_notify_base(psi->interrupt);
+	val <<= 32;
+	out_be64(psi->regs + PSIHB_IVT_OFFSET, val);
+
+	/* Register sources */
+	is_p9ndd1 = (chip->ec_level < 0x20 &&
+		     chip->type == PROC_CHIP_P9_NIMBUS);
+
+	if (is_p9ndd1) {
+		prlog(PR_DEBUG,
+		      "PSI[0x%03x]: Interrupts sources registered for P9N DD1.x\n",
+		      psi->chip_id);
+		xive_register_hw_source(psi->interrupt, P9_PSI_NUM_IRQS,
+					12, psi->esb_mmio, XIVE_SRC_LSI,
+					psi, &psi_p9_ndd1_irq_ops);
+	} else {
+		prlog(PR_DEBUG,
+		      "PSI[0x%03x]: Interrupts sources registered for P9 DD2.x\n",
+		      psi->chip_id);
+		xive_register_hw_source(psi->interrupt, P9_PSI_NUM_IRQS,
+					12, psi->esb_mmio, XIVE_SRC_LSI,
+					psi, &psi_p9_irq_ops);
+	}
+
+	/* Reset irq handling and switch to ESB mode */
+	out_be64(psi->regs + PSIHB_INTERRUPT_CONTROL, PSIHB_IRQ_RESET);
+	out_be64(psi->regs + PSIHB_INTERRUPT_CONTROL, 0);
+}
+
+static void psi_init_interrupts(struct psi *psi)
 {
 	/* Configure the interrupt BUID and mask it */
 	switch (proc_gen) {
 	case proc_gen_p7:
-		/* On P7, we get a single interrupt */
-		out_be64(psi->regs + PSIHB_XIVR,
-			 P7_IRQ_BUID(psi->interrupt) << 16 |
-			 0xffull << 32);
-
-		/* Configure it in the GX controller as well */
-		gx_configure_psi_buid(psi->chip_id,
-				      P7_IRQ_BUID(psi->interrupt));
-
-		/* Register the IRQ source */
-		register_irq_source(&psi_p7_irq_ops,
-				    psi, psi->interrupt, 1);
+		psi_init_p7_interrupt(psi);
 		break;
 	case proc_gen_p8:
-		/* On P8 we get a block of 8, set up the base/mask
-		 * and mask all the sources for now
-		 */
-		out_be64(psi->regs + PSIHB_IRSN,
-			 SETFIELD(PSIHB_IRSN_COMP, 0ul, psi->interrupt) |
-			 SETFIELD(PSIHB_IRSN_MASK, 0ul, 0x7fff8ul) |
-			 PSIHB_IRSN_DOWNSTREAM_EN |
-			 PSIHB_IRSN_UPSTREAM_EN);
-		out_be64(psi->regs + PSIHB_XIVR_FSP,
-			 (0xffull << 32) | (P8_IRQ_PSI_FSP << 29));
-		out_be64(psi->regs + PSIHB_XIVR_OCC,
-			 (0xffull << 32) | (P8_IRQ_PSI_OCC << 29));
-		out_be64(psi->regs + PSIHB_XIVR_FSI,
-			 (0xffull << 32) | (P8_IRQ_PSI_FSI << 29));
-		out_be64(psi->regs + PSIHB_XIVR_LPC,
-			 (0xffull << 32) | (P8_IRQ_PSI_LPC << 29));
-		out_be64(psi->regs + PSIHB_XIVR_LOCAL_ERR,
-			 (0xffull << 32) | (P8_IRQ_PSI_LOCAL_ERR << 29));
-		out_be64(psi->regs + PSIHB_XIVR_HOST_ERR,
-			 (0xffull << 32) | (P8_IRQ_PSI_HOST_ERR << 29));
-
-		/*
-		 * Register the IRQ sources FSP, OCC, FSI, LPC
-		 * and Local Error. Host Error is actually the
-		 * external interrupt and the policy for that comes
-		 * from the platform
-		 */
-		if (psi_ext_irq_policy == EXTERNAL_IRQ_POLICY_SKIBOOT) {
-			register_irq_source(&psi_p8_irq_ops,
-					    psi,
-					    psi->interrupt + P8_IRQ_PSI_SKIBOOT_BASE,
-					    P8_IRQ_PSI_ALL_COUNT);
-		} else {
-			register_irq_source(&psi_p8_irq_ops,
-					    psi,
-					    psi->interrupt + P8_IRQ_PSI_SKIBOOT_BASE,
-					    P8_IRQ_PSI_LOCAL_COUNT);
-			/*
-			 * Host Error is handled by powernv; host error
-			 * is at offset 5 from the PSI base.
-			 */
-			register_irq_source(&psi_p8_host_err_ops,
-					    psi,
-					    psi->interrupt + P8_IRQ_PSI_LINUX_BASE,
-					    P8_IRQ_PSI_LINUX_COUNT);
-		}
+		psi_init_p8_interrupts(psi);
+		break;
+	case proc_gen_p9:
+		psi_init_p9_interrupts(psi);
 		break;
 	default:
 		/* Unknown: just no interrupts */
@@ -759,6 +935,22 @@ static void psi_activate_phb(struct psi *psi)
 #endif
 }
 
+static void psi_create_p9_int_map(struct psi *psi, struct dt_node *np)
+{
+	uint32_t map[P9_PSI_NUM_IRQS][4];
+	int i;
+
+	for (i = 0; i < P9_PSI_NUM_IRQS; i++) {
+		map[i][0] = i;
+		map[i][1] = get_ics_phandle();
+		map[i][2] = psi->interrupt + i;
+		map[i][3] = 1;
+	}
+	dt_add_property(np, "interrupt-map", map, sizeof(map));
+	dt_add_property_cells(np, "#address-cells", 0);
+	dt_add_property_cells(np, "#interrupt-cells", 1);
+}
+
 static void psi_create_mm_dtnode(struct psi *psi)
 {
 	struct dt_node *np;
@@ -769,7 +961,7 @@ static void psi_create_mm_dtnode(struct psi *psi)
 		return;
 
 	/* Hard wire size to 4G */
-	dt_add_property_cells(np, "reg", hi32(addr), lo32(addr), 1, 0);
+	dt_add_property_u64s(np, "reg", addr, 0x100000000ull);
 	switch (proc_gen) {
 	case proc_gen_p7:
 		dt_add_property_strings(np, "compatible", "ibm,psi",
@@ -779,15 +971,21 @@ static void psi_create_mm_dtnode(struct psi *psi)
 		dt_add_property_strings(np, "compatible", "ibm,psi",
 					"ibm,power8-psi");
 		break;
+	case proc_gen_p9:
+		dt_add_property_strings(np, "compatible", "ibm,psi",
+					"ibm,power9-psi");
+		psi_create_p9_int_map(psi, np);
+		break;
 	default:
 		dt_add_property_strings(np, "compatible", "ibm,psi");
 	}
 	dt_add_property_cells(np, "interrupt-parent", get_ics_phandle());
 	dt_add_property_cells(np, "interrupts", psi->interrupt, 1);
 	dt_add_property_cells(np, "ibm,chip-id", psi->chip_id);
+	psi->node = np;
 }
 
-static struct psi *alloc_psi(uint64_t base)
+static struct psi *alloc_psi(struct proc_chip *chip, uint64_t base)
 {
 	struct psi *psi;
 
@@ -797,6 +995,7 @@ static struct psi *alloc_psi(uint64_t base)
 		return NULL;
 	}
 	psi->xscom_base = base;
+	psi->chip_id = chip->id;
 	return psi;
 }
 
@@ -812,13 +1011,13 @@ static struct psi *psi_probe_p7(struct proc_chip *chip, u64 base)
 		return NULL;
 	}
 	if (val & PSIHB_XSCOM_P7_HBBAR_EN) {
-		psi = alloc_psi(base);
+		psi = alloc_psi(chip, base);
 		if (!psi)
 			return NULL;
-		psi->working = true;
 		rc = val >> 36;	/* Bits 0:1 = 0x00; 2:27 Bridge BAR... */
 		rc <<= 20;	/* ... corresponds to bits 18:43 of base addr */
 		psi->regs = (void *)rc;
+		psi->interrupt = get_psi_interrupt(chip->id);
 	} else
 		printf("PSI[0x%03x]: Working link not found\n", chip->id);
 
@@ -837,14 +1036,31 @@ static struct psi *psi_probe_p8(struct proc_chip *chip, u64 base)
 		return NULL;
 	}
 	if (val & PSIHB_XSCOM_P8_HBBAR_EN) {
-		psi = alloc_psi(base);
+		psi = alloc_psi(chip, base);
 		if (!psi)
 			return NULL;
-		psi->working = true;
 		psi->regs = (void *)(val & ~PSIHB_XSCOM_P8_HBBAR_EN);
+		psi->interrupt = get_psi_interrupt(chip->id);
 	} else
 		printf("PSI[0x%03x]: Working chip not found\n", chip->id);
 
+	return psi;
+}
+
+static struct psi *psi_probe_p9(struct proc_chip *chip, u64 base)
+{
+	struct psi *psi = NULL;
+	uint64_t addr;
+
+	phys_map_get(chip->id, PSIHB_REG, 0, &addr, NULL);
+	xscom_write(chip->id, base + PSIHB_XSCOM_P9_BASE,
+		    addr | PSIHB_XSCOM_P9_HBBAR_EN);
+
+	psi = alloc_psi(chip, base);
+	if (!psi)
+		return NULL;
+	psi->regs = (void *)addr;
+	psi->interrupt = xive_alloc_hw_irqs(chip->id, P9_PSI_NUM_IRQS, 16);
 	return psi;
 }
 
@@ -866,6 +1082,8 @@ static bool psi_init_psihb(struct dt_node *psihb)
 		psi = psi_probe_p7(chip, base);
 	else if (dt_node_is_compatible(psihb, "ibm,power8-psihb-x"))
 		psi = psi_probe_p8(chip, base);
+	else if (dt_node_is_compatible(psihb, "ibm,power9-psihb-x"))
+		psi = psi_probe_p9(chip, base);
 	else {
 		prerror("PSI: Unknown processor type\n");
 		return false;
@@ -881,18 +1099,17 @@ static bool psi_init_psihb(struct dt_node *psihb)
 		psi->active = true;
 		unlock(&psi_lock);
 	}
-
-	psi->chip_id = chip->id;
-	psi->interrupt = get_psi_interrupt(chip->id);
-
 	chip->psi = psi;
 
-	psi_create_mm_dtnode(psi);
-	psi_register_interrupts(psi);
-	psi_activate_phb(psi);
+	if (dt_has_node_property(psihb, "no-lpc-interrupts", NULL))
+		psi->no_lpc_irqs = true;
 
-	printf("PSI[0x%03x]: Found PSI bridge [working=%d, active=%d]\n",
-			psi->chip_id, psi->working, psi->active);
+	psi_activate_phb(psi);
+	psi_init_interrupts(psi);
+	psi_create_mm_dtnode(psi);
+
+	prlog(PR_INFO, "PSI[0x%03x]: Found PSI bridge [active=%d]\n",
+	      psi->chip_id, psi->active);
 	return true;
 }
 
@@ -919,4 +1136,5 @@ void psi_init(void)
 	dt_for_each_compatible(dt_root, np, "ibm,psihb-x")
 		psi_init_psihb(np);
 }
+
 

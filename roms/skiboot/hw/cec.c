@@ -4,7 +4,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 	http://www.apache.org/licenses/LICENSE-2.0
+ *	http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -71,6 +71,9 @@ static int64_t opal_pci_get_hub_diag_data(uint64_t hub_id,
 					  uint64_t diag_buffer_len)
 {
 	struct io_hub *hub = cec_get_hub_by_id(hub_id);
+
+	if (!opal_addr_valid(diag_buffer))
+		return OPAL_PARAMETER;
 
 	if (!hub)
 		return OPAL_PARAMETER;

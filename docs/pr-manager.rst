@@ -36,7 +36,7 @@ accepts the path to the helper program's Unix socket.  For example,
 the following command line defines a ``pr-manager-helper`` object and
 attaches it to a SCSI passthrough device::
 
-      $ qemu-system-x86_64
+      $ qemu-kvm
           -device virtio-scsi \
           -object pr-manager-helper,id=helper0,path=/var/run/qemu-pr-helper.sock
           -drive if=none,id=hd,driver=raw,file.filename=/dev/sdb,file.pr-manager=helper0
@@ -44,7 +44,7 @@ attaches it to a SCSI passthrough device::
 
 Alternatively, using ``-blockdev``::
 
-      $ qemu-system-x86_64
+      $ qemu-kvm
           -device virtio-scsi \
           -object pr-manager-helper,id=helper0,path=/var/run/qemu-pr-helper.sock
           -blockdev node-name=hd,driver=raw,file.driver=host_device,file.filename=/dev/sdb,file.pr-manager=helper0

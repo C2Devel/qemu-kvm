@@ -32,9 +32,9 @@ struct virtiodrive_s {
 static int
 virtio_blk_op(struct disk_op_s *op, int write)
 {
-    struct virtiodrive_s *vdrive_gf =
-        container_of(op->drive_gf, struct virtiodrive_s, drive);
-    struct vring_virtqueue *vq = vdrive_gf->vq;
+    struct virtiodrive_s *vdrive =
+        container_of(op->drive_fl, struct virtiodrive_s, drive);
+    struct vring_virtqueue *vq = vdrive->vq;
     struct virtio_blk_outhdr hdr = {
         .type = write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN,
         .ioprio = 0,
@@ -48,7 +48,7 @@ virtio_blk_op(struct disk_op_s *op, int write)
         },
         {
             .addr       = op->buf_fl,
-            .length     = vdrive_gf->drive.blksize * op->count,
+            .length     = vdrive->drive.blksize * op->count,
         },
         {
             .addr       = (void*)(&status),
@@ -61,7 +61,7 @@ virtio_blk_op(struct disk_op_s *op, int write)
         vring_add_buf(vq, sg, 2, 1, 0, 0);
     else
         vring_add_buf(vq, sg, 1, 2, 0, 0);
-    vring_kick(&vdrive_gf->vp, vq, 1);
+    vring_kick(&vdrive->vp, vq, 1);
 
     /* Wait for reply */
     while (!vring_more_used(vq))
@@ -73,7 +73,7 @@ virtio_blk_op(struct disk_op_s *op, int write)
     /* Clear interrupt status register.  Avoid leaving interrupts stuck if
      * VRING_AVAIL_F_NO_INTERRUPT was ignored and interrupts were raised.
      */
-    vp_get_isr(&vdrive_gf->vp);
+    vp_get_isr(&vdrive->vp);
 
     return status == VIRTIO_BLK_S_OK ? DISK_RET_SUCCESS : DISK_RET_EBADTRACK;
 }
@@ -99,7 +99,7 @@ init_virtio_blk(void *data)
     struct pci_device *pci = data;
     u8 status = VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER;
     dprintf(1, "found virtio-blk at %pP\n", pci);
-    struct virtiodrive_s *vdrive = malloc_fseg(sizeof(*vdrive));
+    struct virtiodrive_s *vdrive = malloc_low(sizeof(*vdrive));
     if (!vdrive) {
         warn_noalloc();
         return;
@@ -118,13 +118,14 @@ init_virtio_blk(void *data)
         struct vp_device *vp = &vdrive->vp;
         u64 features = vp_get_features(vp);
         u64 version1 = 1ull << VIRTIO_F_VERSION_1;
+        u64 iommu_platform = 1ull << VIRTIO_F_IOMMU_PLATFORM;
         u64 blk_size = 1ull << VIRTIO_BLK_F_BLK_SIZE;
         if (!(features & version1)) {
             dprintf(1, "modern device without virtio_1 feature bit: %pP\n", pci);
             goto fail;
         }
 
-        features = features & (version1 | blk_size);
+        features = features & (version1 | iommu_platform | blk_size);
         vp_set_features(vp, features);
         status |= VIRTIO_CONFIG_S_FEATURES_OK;
         vp_set_status(vp, status);

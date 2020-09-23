@@ -29,6 +29,8 @@
 #include <affinity.h>
 #include <opal-msg.h>
 #include <timer.h>
+#include <elf-abi.h>
+#include <errorlog.h>
 
 /* Pending events to signal via opal_poll_events */
 uint64_t opal_pending_events;
@@ -50,16 +52,22 @@ static uint64_t opal_dynamic_events;
 extern uint32_t attn_trigger;
 extern uint32_t hir_trigger;
 
+/* We make this look like a Surveillance error, even though it really
+ * isn't one.
+ */
+DEFINE_LOG_ENTRY(OPAL_INJECTED_HIR, OPAL_MISC_ERR_EVT, OPAL_SURVEILLANCE,
+		OPAL_SURVEILLANCE_ERR, OPAL_PREDICTIVE_ERR_GENERAL,
+		OPAL_MISCELLANEOUS_INFO_ONLY);
+
 void opal_table_init(void)
 {
 	struct opal_table_entry *s = __opal_table_start;
 	struct opal_table_entry *e = __opal_table_end;
 
-	printf("OPAL table: %p .. %p, branch table: %p\n",
-	       s, e, opal_branch_table);
+	prlog(PR_DEBUG, "OPAL table: %p .. %p, branch table: %p\n",
+	      s, e, opal_branch_table);
 	while(s < e) {
-		uint64_t *func = s->func;
-		opal_branch_table[s->token] = *func;
+		opal_branch_table[s->token] = function_entry_address(s->func);
 		opal_num_args[s->token] = s->nargs;
 		s++;
 	}
@@ -113,12 +121,36 @@ void opal_trace_entry(struct stack_frame *eframe)
 
 void __opal_register(uint64_t token, void *func, unsigned int nargs)
 {
-	uint64_t *opd = func;
-
 	assert(token <= OPAL_LAST);
 
-	opal_branch_table[token] = *opd;
+	opal_branch_table[token] = function_entry_address(func);
 	opal_num_args[token] = nargs;
+}
+
+/*
+ * add_opal_firmware_exports_node: adds properties to the device-tree which
+ * the OS will then change into sysfs nodes.
+ * The properties must be placed under /ibm,opal/firmware/exports.
+ * The new sysfs nodes are created under /opal/exports.
+ * To be correctly exported the properties must contain:
+ * 	name
+ * 	base memory location (u64)
+ * 	size 		     (u64)
+ */
+static void add_opal_firmware_exports_node(struct dt_node *node)
+{
+	struct dt_node *exports = dt_new(node, "exports");
+	uint64_t sym_start = (uint64_t)__sym_map_start;
+	uint64_t sym_size = (uint64_t)__sym_map_end - sym_start;
+
+	/*
+	 * These property names will be used by Linux as the user-visible file
+	 * name, so make them meaningful if possible. We use _ as the separator
+	 * here to remain consistent with existing file names in /sys/opal.
+	 */
+	dt_add_property_u64s(exports, "symbol_map", sym_start, sym_size);
+	dt_add_property_u64s(exports, "hdat_map", SPIRA_HEAP_BASE,
+				SPIRA_HEAP_SIZE);
 }
 
 static void add_opal_firmware_node(void)
@@ -126,18 +158,25 @@ static void add_opal_firmware_node(void)
 	struct dt_node *firmware = dt_new(opal_node, "firmware");
 	uint64_t sym_start = (uint64_t)__sym_map_start;
 	uint64_t sym_size = (uint64_t)__sym_map_end - sym_start;
+
 	dt_add_property_string(firmware, "compatible", "ibm,opal-firmware");
 	dt_add_property_string(firmware, "name", "firmware");
 	dt_add_property_string(firmware, "version", version);
-	dt_add_property_cells(firmware, "symbol-map",
-			      hi32(sym_start), lo32(sym_start),
-			      hi32(sym_size), lo32(sym_size));
+	/*
+	 * As previous OS versions use symbol-map located at
+	 * /ibm,opal/firmware we will keep a copy of symbol-map here
+	 * for backwards compatibility
+	 */
+	dt_add_property_u64s(firmware, "symbol-map", sym_start, sym_size);
+
+	add_opal_firmware_exports_node(firmware);
 }
 
 void add_opal_node(void)
 {
 	uint64_t base, entry, size;
 	extern uint32_t opal_entry;
+	struct dt_node *opal_event;
 
 	/* XXX TODO: Reorg this. We should create the base OPAL
 	 * node early on, and have the various sub modules populate
@@ -152,11 +191,7 @@ void add_opal_node(void)
 	size = (CPU_STACKS_BASE +
 		(uint64_t)(cpu_max_pir + 1) * STACK_SIZE) - SKIBOOT_BASE;
 
-	if (!opal_node) {
-		opal_node = dt_new(dt_root, "ibm,opal");
-		assert(opal_node);
-	}
-
+	opal_node = dt_new_check(dt_root, "ibm,opal");
 	dt_add_property_cells(opal_node, "#address-cells", 0);
 	dt_add_property_cells(opal_node, "#size-cells", 0);
 
@@ -171,6 +206,12 @@ void add_opal_node(void)
 	dt_add_property_u64(opal_node, "opal-base-address", base);
 	dt_add_property_u64(opal_node, "opal-entry-address", entry);
 	dt_add_property_u64(opal_node, "opal-runtime-size", size);
+
+	/* Add irqchip interrupt controller */
+	opal_event = dt_new(opal_node, "event");
+	dt_add_property_strings(opal_event, "compatible", "ibm,opal-event");
+	dt_add_property_cells(opal_event, "#interrupt-cells", 0x1);
+	dt_add_property(opal_event, "interrupt-controller", 0, 0);
 
 	add_opal_firmware_node();
 	add_associativity_ref_point();
@@ -306,9 +347,10 @@ void opal_run_pollers(void)
 {
 	struct opal_poll_entry *poll_ent;
 	static int pollers_with_lock_warnings = 0;
+	static int poller_recursion = 0;
 
 	/* Don't re-enter on this CPU */
-	if (this_cpu()->in_poller) {
+	if (this_cpu()->in_poller && poller_recursion < 16) {
 		/**
 		 * @fwts-label OPALPollerRecursion
 		 * @fwts-advice Recursion detected in opal_run_pollers(). This
@@ -317,6 +359,9 @@ void opal_run_pollers(void)
 		 */
 		prlog(PR_ERR, "OPAL: Poller recursion detected.\n");
 		backtrace();
+		poller_recursion++;
+		if (poller_recursion == 16)
+			prlog(PR_ERR, "OPAL: Squashing future poller recursion warnings (>16).\n");
 		return;
 	}
 	this_cpu()->in_poller = true;
@@ -359,6 +404,10 @@ void opal_run_pollers(void)
 
 static int64_t opal_poll_events(__be64 *outstanding_event_mask)
 {
+
+	if (!opal_addr_valid(outstanding_event_mask))
+		return OPAL_PARAMETER;
+
 	/* Check if we need to trigger an attn for test use */
 	if (attn_trigger == 0xdeadbeef) {
 		prlog(PR_EMERG, "Triggering attn\n");
@@ -367,7 +416,9 @@ static int64_t opal_poll_events(__be64 *outstanding_event_mask)
 
 	/* Test the host initiated reset */
 	if (hir_trigger == 0xdeadbeef) {
-		fsp_trigger_reset();
+		uint32_t plid = log_simple_error(&e_info(OPAL_INJECTED_HIR),
+			"SURV: Injected HIR, initiating FSP R/R\n");
+		fsp_trigger_reset(plid);
 		hir_trigger = 0;
 	}
 

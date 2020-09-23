@@ -28,7 +28,6 @@ owner=mreitz@redhat.com
 seq="$(basename $0)"
 echo "QA output created by $seq"
 
-here="$PWD"
 status=1	# failure is the default!
 
 _cleanup()
@@ -78,7 +77,7 @@ _send_qemu_cmd $QEMU_HANDLE \
        'arguments': { 'device': 'drv' }}" \
     'return'
 
-$QEMU_IO_PROG -f raw -c 'read -P 42 0 64k' \
+$QEMU_IO_PROG -f raw -r -c 'read -P 42 0 64k' \
     "nbd+unix:///drv?socket=$TEST_DIR/nbd" 2>&1 \
     | _filter_qemu_io | _filter_nbd
 
@@ -87,7 +86,7 @@ _send_qemu_cmd $QEMU_HANDLE \
        'arguments': { 'device': 'drv' }}" \
     'return'
 
-$QEMU_IO_PROG -f raw -c close \
+$QEMU_IO_PROG -f raw -r -c close \
     "nbd+unix:///drv?socket=$TEST_DIR/nbd" 2>&1 \
     | _filter_qemu_io | _filter_nbd
 

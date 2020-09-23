@@ -46,6 +46,35 @@ const void *vpd_find_keyword(const void *rec, size_t rec_sz,
 	return NULL;
 }
 
+/* vpd_valid - does some basic sanity checks to ensure a VPD blob is
+ *             actually a VPD blob
+ */
+bool vpd_valid(const void *vvpd, size_t vpd_size)
+{
+	const uint8_t *vpd = vvpd;
+	int size, i = 0;
+
+	/* find the record start byte */
+	while (i < vpd_size)
+		if (vpd[i++] == 0x84)
+			break;
+
+	if (i >= vpd_size)
+		return false;
+
+	/* next two bytes are the record length, little endian */
+	size  = 2;
+	size += vpd[i];
+	size += vpd[i + 1] << 8;
+
+	i += size; /* skip to the end marker */
+
+	if (i >= vpd_size || vpd[i] != 0x78)
+		return false;
+
+	return true;
+}
+
 /* Locate  a record in a VPD blob
  *
  * Note: This works with VPD LIDs. It will scan until it finds
@@ -60,6 +89,9 @@ const void *vpd_find_record(const void *vpd, size_t vpd_size,
 	size_t rec_sz;
 	uint8_t namesz = 0;
 	const char *rec_name;
+
+	if (!vpd)
+		return NULL;
 
 	while (CHECK_SPACE(p, 4, end)) {
 		/* Get header byte */
@@ -81,7 +113,8 @@ const void *vpd_find_record(const void *vpd, size_t vpd_size,
 		/* Find record name */
 		rec_name = vpd_find_keyword(p, rec_sz, "RT", &namesz);
 		if (rec_name && strncmp(record, rec_name, namesz) == 0) {
-			*sz = rec_sz;
+			if (sz)
+				*sz = rec_sz;
 			return p;
 		}
 
@@ -115,8 +148,8 @@ const void *vpd_find(const void *vpd, size_t vpd_size,
 	return p;
 }
 
-static void *vpd;
-static size_t vpd_size;
+static void *vpd_lid;
+static size_t vpd_lid_size;
 static uint32_t vpd_lid_no;
 
 /* Helper to load a VPD LID. Pass a ptr to the corresponding LX keyword */
@@ -143,9 +176,9 @@ static void *vpd_lid_preload(const uint8_t *lx)
 	 * I've seen so far are much smaller.
 	 */
 #define VPD_LID_MAX_SIZE	0x4000
-	vpd = malloc(VPD_LID_MAX_SIZE);
+	vpd_lid = malloc(VPD_LID_MAX_SIZE);
 
-	if (!vpd) {
+	if (!vpd_lid) {
 		prerror("VPD: Failed to allocate memory for LID\n");
 		return NULL;
 	}
@@ -154,18 +187,18 @@ static void *vpd_lid_preload(const uint8_t *lx)
 	vpd_lid_no = fsp_adjust_lid_side(vpd_lid_no);
 	printf("VPD: Trying to load VPD LID 0x%08x...\n", vpd_lid_no);
 
-	vpd_size = VPD_LID_MAX_SIZE;
+	vpd_lid_size = VPD_LID_MAX_SIZE;
 
 	/* Load it from the FSP */
-	rc = fsp_preload_lid(vpd_lid_no, vpd, &vpd_size);
+	rc = fsp_preload_lid(vpd_lid_no, vpd_lid, &vpd_lid_size);
 	if (rc) {
 		prerror("VPD: Error %d loading VPD LID\n", rc);
 		goto fail;
 	}
 
-	return vpd;
+	return vpd_lid;
  fail:
-	free(vpd);
+	free(vpd_lid);
 	return NULL;
 }
 
@@ -186,8 +219,11 @@ void vpd_iohub_load(struct dt_node *hub_node)
 	lxrn = p[0];
         lx = (const char *)&p[1];
 
-	assert(vpd);
-	assert(vpd_lid_no);
+	/* verify the lid preload has started */
+	if (!vpd_lid || !vpd_lid_no) {
+		prlog(PR_WARNING, "VPD: WARNING: Unable to load VPD lid");
+		return;
+	}
 
 	r = fsp_wait_lid_loaded(vpd_lid_no);
 
@@ -200,7 +236,7 @@ void vpd_iohub_load(struct dt_node *hub_node)
 	else
 		memcpy(record, "VINI", 4);
 
-	valid_lx = vpd_find(vpd, vpd_size, record, "LX", &lx_size);
+	valid_lx = vpd_find(vpd_lid, vpd_lid_size, record, "LX", &lx_size);
 	if (!valid_lx || lx_size != 8) {
 		prerror("VPD: Cannot find validation LX record\n");
 		goto fail;
@@ -210,21 +246,15 @@ void vpd_iohub_load(struct dt_node *hub_node)
 		goto fail;
 	}
 
-	printf("VPD: Loaded %zu bytes\n", vpd_size);
+	printf("VPD: Loaded %zu bytes\n", vpd_lid_size);
 
-	/* Got it ! */
-	vpd = realloc(vpd, vpd_size);
-
-	if (!vpd)
-		goto fail;
-
-	dt_add_property(hub_node, "ibm,io-vpd", vpd, vpd_size);
-	free(vpd);
+	dt_add_property(hub_node, "ibm,io-vpd", vpd_lid, vpd_lid_size);
+	free(vpd_lid);
 	return;
 
 fail:
-	free(vpd);
-	vpd = NULL;
+	free(vpd_lid);
+	vpd_lid = NULL;
 	prerror("VPD: Failed to load VPD LID\n");
 	return;
 }
@@ -240,5 +270,16 @@ void vpd_preload(struct dt_node *hub_node)
 
 	lxr = (const char *)&p[1];
 
-	vpd = vpd_lid_preload(lxr);
+	vpd_lid = vpd_lid_preload(lxr);
+}
+
+void preload_io_vpd(void)
+{
+	const struct dt_property *prop;
+
+	prop = dt_find_property(dt_root, "ibm,io-vpd");
+	if (!prop) {
+		/* LX VPD Lid not already loaded */
+		vpd_preload(dt_root);
+	}
 }

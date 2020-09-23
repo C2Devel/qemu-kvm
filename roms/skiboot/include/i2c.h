@@ -28,6 +28,9 @@ struct i2c_bus {
 	void			(*free_req)(struct i2c_request *req);
 	void			(*set_req_timeout)(struct i2c_request *req,
 						   uint64_t duration);
+	uint64_t		(*run_req)(struct i2c_request *req);
+	int			(*check_quirk)(void *data, struct i2c_request *req, int *rc);
+	void			*check_quirk_data;
 };
 
 /*
@@ -89,8 +92,30 @@ static inline void i2c_set_req_timeout(struct i2c_request *req,
 		req->bus->set_req_timeout(req, duration);
 }
 
+static inline uint64_t i2c_run_req(struct i2c_request *req)
+{
+	if (req->bus->run_req)
+		return req->bus->run_req(req);
+	return 0;
+}
+
+static inline int i2c_check_quirk(struct i2c_request *req, int *rc)
+{
+	if (req->bus->check_quirk)
+		return req->bus->check_quirk(req->bus->check_quirk_data, req, rc);
+	return 0;
+}
+
+/* I2C synchronous request API */
+int i2c_request_send(int bus_id, int dev_addr, int read_write,
+		     uint32_t offset, uint32_t offset_bytes, void* buf,
+		     size_t buflen, int timeout);
+
 /* P8 implementation details */
 extern void p8_i2c_init(void);
 extern void p8_i2c_interrupt(uint32_t chip_id);
+
+/* P9 I2C Ownership Change OCC interrupt handler */
+extern void p9_i2c_bus_owner_change(u32 chip_id);
 
 #endif /* __I2C_H */

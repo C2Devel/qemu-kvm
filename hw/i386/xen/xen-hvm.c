@@ -16,8 +16,8 @@
 #include "hw/i386/apic-msidef.h"
 #include "hw/xen/xen_common.h"
 #include "hw/xen/xen_backend.h"
-#include "qmp-commands.h"
-
+#include "qapi/error.h"
+#include "qapi/qapi-commands-misc.h"
 #include "qemu/error-report.h"
 #include "qemu/range.h"
 #include "sysemu/xen-mapcache.h"
@@ -1446,7 +1446,7 @@ void xen_hvm_modified_memory(ram_addr_t start, ram_addr_t length)
         if (rc) {
             fprintf(stderr,
                     "%s failed for "RAM_ADDR_FMT" ("RAM_ADDR_FMT"): %i, %s\n",
-                    __func__, start, nb_pages, rc, strerror(-rc));
+                    __func__, start, nb_pages, errno, strerror(errno));
         }
     }
 }

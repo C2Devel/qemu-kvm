@@ -39,11 +39,12 @@
 #define MSR_LE		PPC_BIT(63)	/* Little Endian */
 
 /* PIR */
-#define SPR_PIR_P9_MASK		0x07ff	/* Mask of implemented bits */
+#define SPR_PIR_P9_MASK		0x7fff	/* Mask of implemented bits */
 #define SPR_PIR_P8_MASK		0x1fff	/* Mask of implemented bits */
 #define SPR_PIR_P7_MASK		0x03ff	/* Mask of implemented bits */
 
 /* SPR register definitions */
+#define SPR_DSCR	0x011	/* RW: Data stream control reg */
 #define SPR_DSISR	0x012	/* RW: Data storage interrupt status reg */
 #define SPR_DAR		0x013	/* RW: Data address reg */
 #define SPR_DEC		0x016	/* RW: Decrement Register */
@@ -51,6 +52,8 @@
 #define SPR_SRR0	0x01a	/* RW: Exception save/restore reg 0 */
 #define SPR_SRR1	0x01b	/* RW: Exception save/restore reg 1 */
 #define SPR_CFAR	0x01c	/* RW: Come From Address Register */
+#define SPR_AMR		0x01d	/* RW: Authority Mask Register */
+#define SPR_IAMR	0x03d	/* RW: Instruction Authority Mask Register */
 #define SPR_RPR		0x0ba   /* RW: Relative Priority Register */
 #define SPR_TBRL	0x10c	/* RO: Timebase low */
 #define SPR_TBRU	0x10d	/* RO: Timebase high */
@@ -67,6 +70,7 @@
 #define SPR_SPURR	0x134	/* RW: Scaled Processor Utilization Resource */
 #define SPR_PURR	0x135	/* RW: Processor Utilization Resource reg */
 #define SPR_HDEC	0x136	/* RW: Hypervisor Decrementer */
+#define SPR_HRMOR	0x139	/* RW: Hypervisor Real Mode Offset reg */
 #define SPR_HSRR0	0x13a	/* RW: HV Exception save/restore reg 0 */
 #define SPR_HSRR1	0x13b	/* RW: HV Exception save/restore reg 1 */
 #define SPR_TFMR	0x13d
@@ -74,6 +78,7 @@
 #define SPR_HMER	0x150	/* Hypervisor Maintenance Exception */
 #define SPR_HMEER	0x151	/* HMER interrupt enable mask */
 #define SPR_AMOR	0x15d
+#define SPR_PSSCR	0x357   /* RW: Stop status and control (ISA 3) */
 #define SPR_TSCR	0x399
 #define SPR_HID0	0x3f0
 #define SPR_HID1	0x3f1
@@ -81,6 +86,7 @@
 #define SPR_HID4	0x3f4
 #define SPR_HID5	0x3f6
 #define SPR_PIR		0x3ff	/* RO: Processor Identification */
+
 
 /* Bits in LPCR */
 
@@ -96,6 +102,14 @@
 #define SPR_LPCR_P8_PECE2	PPC_BIT(49)   /* Wake on external interrupts */
 #define SPR_LPCR_P8_PECE3	PPC_BIT(50)   /* Wake on decrementer */
 #define SPR_LPCR_P8_PECE4	PPC_BIT(51)   /* Wake on MCs, HMIs, etc... */
+
+#define SPR_LPCR_P9_PECE	(PPC_BITMASK(47,51) | PPC_BITMASK(17,17))
+#define SPR_LPCR_P9_PECEU0	PPC_BIT(17)   /* Wake on HVI */
+#define SPR_LPCR_P9_PECEL0	PPC_BIT(47)   /* Wake on priv doorbell */
+#define SPR_LPCR_P9_PECEL1	PPC_BIT(48)   /* Wake on hv doorbell */
+#define SPR_LPCR_P9_PECEL2	PPC_BIT(49)   /* Wake on external interrupts */
+#define SPR_LPCR_P9_PECEL3	PPC_BIT(50)   /* Wake on decrementer */
+#define SPR_LPCR_P9_PECEL4	PPC_BIT(51)   /* Wake on MCs, HMIs, etc... */
 #define SPR_LPCR_P9_LD		PPC_BIT(46)   /* Large decrementer mode bit */
 
 
@@ -163,10 +177,12 @@
 /* Bits in HID0 */
 #define SPR_HID0_POWER8_4LPARMODE	PPC_BIT(2)
 #define SPR_HID0_POWER8_2LPARMODE	PPC_BIT(6)
+#define SPR_HID0_POWER8_DYNLPARDIS	PPC_BIT(15)
 #define SPR_HID0_POWER8_HILE		PPC_BIT(19)
 #define SPR_HID0_POWER9_HILE		PPC_BIT(4)
 #define SPR_HID0_POWER8_ENABLE_ATTN	PPC_BIT(31)
 #define SPR_HID0_POWER9_ENABLE_ATTN	PPC_BIT(3)
+#define SPR_HID0_POWER9_RADIX		PPC_BIT(8)
 
 /* PVR bits */
 #define SPR_PVR_TYPE			0xffff0000
@@ -195,11 +211,27 @@
 #define smt_medium_low	or 6,6,6
 #define smt_extra_high	or 7,7,7
 #define smt_very_low	or 31,31,31
+#define smt_lowest	smt_low ; smt_very_low
 
 #else /* __ASSEMBLY__ */
 
 #include <compiler.h>
 #include <stdint.h>
+#include <stdbool.h>
+
+static inline bool is_power9n(uint32_t version)
+{
+	if (PVR_TYPE(version) != PVR_TYPE_P9)
+		return false;
+	/*
+	 * Bit 13 tells us:
+	 *   0 = Scale out (aka Nimbus)
+	 *   1 = Scale up  (aka Cumulus)
+	 */
+	if ((version >> 13) & 1)
+		return false;
+	return true;
+}
 
 /*
  * SMT priority
@@ -212,6 +244,7 @@ static inline void smt_medium_high(void){ asm volatile("or 5,5,5");	}
 static inline void smt_medium_low(void)	{ asm volatile("or 6,6,6");	}
 static inline void smt_extra_high(void)	{ asm volatile("or 7,7,7");	}
 static inline void smt_very_low(void)	{ asm volatile("or 31,31,31");	}
+static inline void smt_lowest(void)	{ smt_low(); smt_very_low();	}
 
 /*
  * SPR access functions
@@ -287,6 +320,27 @@ static inline void sync_icache(void)
 	asm volatile("sync; icbi 0,%0; sync; isync" : : "r" (0) : "memory");
 }
 
+/*
+ * Doorbells
+ */
+static inline void msgclr(void)
+{
+	uint64_t rb = (0x05 << (63-36));
+	asm volatile("msgclr %0" : : "r"(rb));
+}
+
+static inline void p9_dbell_receive(void)
+{
+	uint64_t rb = (0x05 << (63-36));
+	/* msgclr ; msgsync ; lwsync */
+	asm volatile("msgclr %0 ; .long 0x7c0006ec ; lwsync" : : "r"(rb));
+}
+
+static inline void p9_dbell_send(uint32_t pir)
+{
+	uint64_t rb = (0x05 << (63-36)) | pir;
+	asm volatile("sync ; msgsnd %0" : : "r"(rb));
+}
 
 /*
  * Byteswap load/stores

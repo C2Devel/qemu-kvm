@@ -1,6 +1,36 @@
 #ifndef HW_COMPAT_H
 #define HW_COMPAT_H
 
+#define HW_COMPAT_2_11 \
+    {\
+        .driver   = "hpet",\
+        .property = "hpet-offset-saved",\
+        .value    = "false",\
+    },{\
+        .driver   = "virtio-blk-pci",\
+        .property = "vectors",\
+        .value    = "2",\
+    },{\
+        .driver   = "vhost-user-blk-pci",\
+        .property = "vectors",\
+        .value    = "2",\
+    },{\
+        .driver   = "e1000",\
+        .property = "migrate_tso_props",\
+        .value    = "off",\
+    },
+
+#define HW_COMPAT_2_10 \
+    {\
+        .driver   = "virtio-mouse-device",\
+        .property = "wheel-axis",\
+        .value    = "false",\
+    },{\
+        .driver   = "virtio-tablet-device",\
+        .property = "wheel-axis",\
+        .value    = "false",\
+    },
+
 #define HW_COMPAT_2_9 \
     {\
         .driver   = "pci-bridge",\
@@ -150,10 +180,6 @@
         .driver   = "fw_cfg_io",\
         .property = "dma_enabled",\
         .value    = "off",\
-    },{\
-        .driver   = "vmgenid",\
-        .property = "x-write-pointer-available",\
-        .value    = "off",\
     },
 
 #define HW_COMPAT_2_3 \
@@ -232,7 +258,7 @@
 /* Mostly like HW_COMPAT_2_1 but:
  *    we don't need virtio-scsi-pci since 7.0 already had that on
  *
- * RH: Note, qemu-extended-regs should have been enabled in the 7.1 
+ * RH: Note, qemu-extended-regs should have been enabled in the 7.1
  * machine type, but was accidentally turned off in 7.2 onwards.
  *
  */
@@ -404,13 +430,13 @@
         .property = "x-pcie-pm-init",\
         .value    = "off",\
     },{ /* HW_COMPAT_RHEL7_3 */ \
-        .driver   = "e1000e",\
-        .property = "__redhat_e1000e_7_3_intr_state",\
-        .value    = "on",\
-    },{ /* HW_COMPAT_RHEL7_3 */ \
         .driver   = "virtio-net-device",\
         .property = "x-mtu-bypass-backend",\
         .value    = "off",\
+    },{ /* HW_COMPAT_RHEL7_3 */ \
+        .driver   = "e1000e",\
+        .property = "__redhat_e1000e_7_3_intr_state",\
+        .value    = "on",\
     },
 
 /* Mostly like HW_COMPAT_2_9 except
@@ -423,5 +449,43 @@
         .property = "pt",\
         .value    = "off",\
     },
+
+/* The same as HW_COMPAT_2_11 + HW_COMPAT_2_10 */
+#define HW_COMPAT_RHEL7_5 \
+    { /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_11 */ \
+        .driver   = "hpet",\
+        .property = "hpet-offset-saved",\
+        .value    = "false",\
+    },{ /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_11 */ \
+        .driver   = "virtio-blk-pci",\
+        .property = "vectors",\
+        .value    = "2",\
+    },{ /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_11 */ \
+        .driver   = "vhost-user-blk-pci",\
+        .property = "vectors",\
+        .value    = "2",\
+    },{ /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_11 but \
+           bz 1608778 modified for our naming */ \
+        .driver   = "e1000-82540em",\
+        .property = "migrate_tso_props",\
+        .value    = "off",\
+    },{ /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_10 */ \
+        .driver   = "virtio-mouse-device",\
+        .property = "wheel-axis",\
+        .value    = "false",\
+    },{ /* HW_COMPAT_RHEL7_5 from HW_COMPAT_2_10 */ \
+        .driver   = "virtio-tablet-device",\
+        .property = "wheel-axis",\
+        .value    = "false",\
+    },{ /* HW_COMPAT_RHEL7_5 */ \
+        .driver   = "cirrus-vga",\
+        .property = "vgamem_mb",\
+        .value    = "16",\
+    },{ /* HW_COMPAT_RHEL7_5 */ \
+        .driver   = "migration",\
+        .property = "decompress-error-check",\
+        .value    = "off",\
+    },
+
 
 #endif /* HW_COMPAT_H */

@@ -159,7 +159,7 @@ external
 ;
 
 : instance-to-package ( ihandle -- phandle )
-  ?ihandle ihandle>phandle
+  ?ihandle instance-to-package
 ;
 
 : package-to-path ( buflen buf phandle -- length )
@@ -347,6 +347,14 @@ external
   
   find-method 0= if -1 else drop 0 then
 ;
+
+[IFDEF] CONFIG_SPARC64
+
+: SUNW,power-off ( -- )
+  power-off
+;
+
+[THEN]
 
 finish-device
 device-end

@@ -66,8 +66,10 @@ call32_prep(u8 method)
 
     // Backup cmos index register and disable nmi
     u8 cmosindex = inb(PORT_CMOS_INDEX);
-    outb(cmosindex | NMI_DISABLE_BIT, PORT_CMOS_INDEX);
-    inb(PORT_CMOS_DATA);
+    if (!(cmosindex & NMI_DISABLE_BIT)) {
+        outb(cmosindex | NMI_DISABLE_BIT, PORT_CMOS_INDEX);
+        inb(PORT_CMOS_DATA);
+    }
     SET_LOW(Call16Data.cmosindex, cmosindex);
 
     SET_LOW(Call16Data.method, method);
@@ -84,7 +86,9 @@ call32_post(void)
 
     if (!CONFIG_CALL32_SMM || method != C16_SMM) {
         // Restore a20
-        set_a20(GET_LOW(Call16Data.a20));
+        u8 a20 = GET_LOW(Call16Data.a20);
+        if (!a20)
+            set_a20(0);
 
         // Restore gdt and fs/gs
         struct descloc_s gdt;
@@ -101,8 +105,11 @@ call32_post(void)
     }
 
     // Restore cmos index register
-    outb(GET_LOW(Call16Data.cmosindex), PORT_CMOS_INDEX);
-    inb(PORT_CMOS_DATA);
+    u8 cmosindex = GET_LOW(Call16Data.cmosindex);
+    if (!(cmosindex & NMI_DISABLE_BIT)) {
+        outb(cmosindex, PORT_CMOS_INDEX);
+        inb(PORT_CMOS_DATA);
+    }
     return method;
 }
 
@@ -496,6 +503,7 @@ void
 thread_setup(void)
 {
     CanInterrupt = 1;
+    call16_override(1);
     if (! CONFIG_THREADS)
         return;
     ThreadControl = romfile_loadint("etc/threads", 1);

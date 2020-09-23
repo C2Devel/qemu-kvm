@@ -207,6 +207,13 @@ int bootprio_find_named_rom(const char *name, int instance)
     return find_prio(desc);
 }
 
+static int usb_portmap(struct usbdevice_s *usbdev)
+{
+    if (usbdev->hub->op->portmap)
+        return usbdev->hub->op->portmap(usbdev->hub, usbdev->port);
+    return usbdev->port + 1;
+}
+
 static char *
 build_usb_path(char *buf, int max, struct usbhub_s *hub)
 {
@@ -214,7 +221,7 @@ build_usb_path(char *buf, int max, struct usbhub_s *hub)
         // Root hub - nothing to add.
         return buf;
     char *p = build_usb_path(buf, max, hub->usbdev->hub);
-    p += snprintf(p, buf+max-p, "/hub@%x", hub->usbdev->port+1);
+    p += snprintf(p, buf+max-p, "/hub@%x", usb_portmap(hub->usbdev));
     return p;
 }
 
@@ -227,12 +234,12 @@ int bootprio_find_usb(struct usbdevice_s *usbdev, int lun)
     p = build_pci_path(desc, sizeof(desc), "usb", usbdev->hub->cntl->pci);
     p = build_usb_path(p, desc+sizeof(desc)-p, usbdev->hub);
     snprintf(p, desc+sizeof(desc)-p, "/storage@%x/*@0/*@0,%x"
-             , usbdev->port+1, lun);
+             , usb_portmap(usbdev), lun);
     int ret = find_prio(desc);
     if (ret >= 0)
         return ret;
     // Try usb-host/redir - for example: /pci@i0cf8/usb@1,2/usb-host@1
-    snprintf(p, desc+sizeof(desc)-p, "/usb-*@%x", usbdev->port+1);
+    snprintf(p, desc+sizeof(desc)-p, "/usb-*@%x", usb_portmap(usbdev));
     return find_prio(desc);
 }
 
@@ -372,24 +379,24 @@ boot_add_bcv(u16 seg, u16 ip, u16 desc, int prio)
 }
 
 void
-boot_add_floppy(struct drive_s *drive_g, const char *desc, int prio)
+boot_add_floppy(struct drive_s *drive, const char *desc, int prio)
 {
     bootentry_add(IPL_TYPE_FLOPPY, defPrio(prio, DefaultFloppyPrio)
-                  , (u32)drive_g, desc);
+                  , (u32)drive, desc);
 }
 
 void
-boot_add_hd(struct drive_s *drive_g, const char *desc, int prio)
+boot_add_hd(struct drive_s *drive, const char *desc, int prio)
 {
     bootentry_add(IPL_TYPE_HARDDISK, defPrio(prio, DefaultHDPrio)
-                  , (u32)drive_g, desc);
+                  , (u32)drive, desc);
 }
 
 void
-boot_add_cd(struct drive_s *drive_g, const char *desc, int prio)
+boot_add_cd(struct drive_s *drive, const char *desc, int prio)
 {
     bootentry_add(IPL_TYPE_CDROM, defPrio(prio, DefaultCDPrio)
-                  , (u32)drive_g, desc);
+                  , (u32)drive, desc);
 }
 
 // Add a CBFS payload entry
@@ -482,7 +489,7 @@ interactive_bootmenu(void)
     int maxmenu = 0;
     struct bootentry_s *pos;
     hlist_for_each_entry(pos, &BootList, node) {
-        char desc[60];
+        char desc[77];
         maxmenu++;
         printf("%d. %s\n", maxmenu
                , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
@@ -648,13 +655,13 @@ boot_disk(u8 bootdrv, int checksig)
 
 // Boot from a CD-ROM
 static void
-boot_cdrom(struct drive_s *drive_g)
+boot_cdrom(struct drive_s *drive)
 {
     if (! CONFIG_CDROM_BOOT)
         return;
     printf("Booting from DVD/CD...\n");
 
-    int status = cdrom_boot(drive_g);
+    int status = cdrom_boot(drive);
     if (status) {
         printf("Boot failed: Could not read from CDROM (code %04x)\n", status);
         return;

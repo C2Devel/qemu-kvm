@@ -23,6 +23,9 @@
 static bool zalloc_should_fail = false;
 static int zalloc_should_fail_after = 0;
 
+/* Fake top_of_ram -- needed for API's */
+unsigned long top_of_ram = 0xffffffffffffffffULL;
+
 static void *zalloc(size_t size)
 {
         if (zalloc_should_fail && zalloc_should_fail_after == 0) {

@@ -25,8 +25,11 @@
 
 static void print_usage(int code)
 {
-	printf("usage: putscom [-c|--chip chip-id] addr value\n");
+	printf("usage: putscom [-c|--chip chip-id] [-b|--list-bits] addr value\n");
 	printf("       putscom -v|--version\n");
+	printf("\n");
+	printf("       NB: --list-bits shows which PPC bits are set\n");
+	exit(code);
 	exit(code);
 }
 
@@ -37,6 +40,7 @@ int main(int argc, char *argv[])
 	uint64_t val = -1ull, addr = -1ull;
 	uint32_t def_chip, chip_id = 0xffffffff;
 	bool got_addr = false, got_val = false;
+	bool list_bits = false;
 	int rc;
 
 	while(1) {
@@ -47,7 +51,7 @@ int main(int argc, char *argv[])
 		};
 		int c, oidx = 0;
 
-		c = getopt_long(argc, argv, "-c:hv", long_opts, &oidx);
+		c = getopt_long(argc, argv, "-c:bhv", long_opts, &oidx);
 		if (c == EOF)
 			break;
 		switch(c) {
@@ -61,7 +65,10 @@ int main(int argc, char *argv[])
 			got_val = true;
 			break;
 		case 'c':
-			chip_id = strtoul(optarg, NULL, 0);
+			chip_id = strtoul(optarg, NULL, 16);
+			break;
+		case 'b':
+			list_bits = true;
 			break;
 		case 'v':
 			printf("xscom utils version %s\n", version);
@@ -92,12 +99,26 @@ int main(int argc, char *argv[])
 		fprintf(stderr,"Error %d writing XSCOM\n", rc);
 		exit(1);
 	}
-	rc = xscom_read(chip_id, addr, &val);
-	if (rc) {
-		fprintf(stderr,"Error %d reading XSCOM\n", rc);
-		exit(1);
+	if (xscom_readable(addr)) {
+		rc = xscom_read(chip_id, addr, &val);
+		if (rc) {
+			fprintf(stderr,"Error %d reading XSCOM\n", rc);
+			exit(1);
+		}
 	}
-	printf("%016" PRIx64 "\n", val);
+
+	printf("%016" PRIx64, val);
+	if (list_bits) {
+		int i;
+
+		printf(" - set: ");
+
+		for (i = 0; i < 64; i++)
+			if (val & PPC_BIT(i))
+				printf("%d ", i);
+	}
+
+	putchar('\n');
 	return 0;
 }
 

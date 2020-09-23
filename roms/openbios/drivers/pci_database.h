@@ -41,6 +41,8 @@ extern int ebus_config_cb(const pci_config_t *config);
 extern int i82378_config_cb(const pci_config_t *config);
 extern int usb_ohci_config_cb(const pci_config_t *config);
 extern int rtl8139_config_cb(const pci_config_t *config);
+extern int sungem_config_cb (const pci_config_t *config);
+extern int sunhme_config_cb(const pci_config_t *config);
 
 static inline int pci_compat_len(const pci_dev_t *dev)
 {

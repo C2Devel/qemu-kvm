@@ -659,11 +659,11 @@ GlusterFS is a user space distributed file system.
 You can boot from the GlusterFS disk image with the command:
 @example
 URI:
-qemu-system-x86_64 -drive file=gluster[+@var{type}]://[@var{host}[:@var{port}]]/@var{volume}/@var{path}
+qemu-kvm -drive file=gluster[+@var{type}]://[@var{host}[:@var{port}]]/@var{volume}/@var{path}
                                [?socket=...][,file.debug=9][,file.logfile=...]
 
 JSON:
-qemu-system-x86_64 'json:@{"driver":"qcow2",
+qemu-kvm 'json:@{"driver":"qcow2",
                            "file":@{"driver":"gluster",
                                     "volume":"testvol","path":"a.img","debug":9,"logfile":"...",
                                     "server":[@{"type":"tcp","host":"...","port":"..."@},
@@ -711,22 +711,22 @@ qemu-img create gluster://@var{host}/@var{volume}/@var{path} @var{size}
 
 Examples
 @example
-qemu-system-x86_64 -drive file=gluster://1.2.3.4/testvol/a.img
-qemu-system-x86_64 -drive file=gluster+tcp://1.2.3.4/testvol/a.img
-qemu-system-x86_64 -drive file=gluster+tcp://1.2.3.4:24007/testvol/dir/a.img
-qemu-system-x86_64 -drive file=gluster+tcp://[1:2:3:4:5:6:7:8]/testvol/dir/a.img
-qemu-system-x86_64 -drive file=gluster+tcp://[1:2:3:4:5:6:7:8]:24007/testvol/dir/a.img
-qemu-system-x86_64 -drive file=gluster+tcp://server.domain.com:24007/testvol/dir/a.img
-qemu-system-x86_64 -drive file=gluster+unix:///testvol/dir/a.img?socket=/tmp/glusterd.socket
-qemu-system-x86_64 -drive file=gluster+rdma://1.2.3.4:24007/testvol/a.img
-qemu-system-x86_64 -drive file=gluster://1.2.3.4/testvol/a.img,file.debug=9,file.logfile=/var/log/qemu-gluster.log
-qemu-system-x86_64 'json:@{"driver":"qcow2",
+qemu-kvm -drive file=gluster://1.2.3.4/testvol/a.img
+qemu-kvm -drive file=gluster+tcp://1.2.3.4/testvol/a.img
+qemu-kvm -drive file=gluster+tcp://1.2.3.4:24007/testvol/dir/a.img
+qemu-kvm -drive file=gluster+tcp://[1:2:3:4:5:6:7:8]/testvol/dir/a.img
+qemu-kvm -drive file=gluster+tcp://[1:2:3:4:5:6:7:8]:24007/testvol/dir/a.img
+qemu-kvm -drive file=gluster+tcp://server.domain.com:24007/testvol/dir/a.img
+qemu-kvm -drive file=gluster+unix:///testvol/dir/a.img?socket=/tmp/glusterd.socket
+qemu-kvm -drive file=gluster+rdma://1.2.3.4:24007/testvol/a.img
+qemu-kvm -drive file=gluster://1.2.3.4/testvol/a.img,file.debug=9,file.logfile=/var/log/qemu-gluster.log
+qemu-kvm 'json:@{"driver":"qcow2",
                            "file":@{"driver":"gluster",
                                     "volume":"testvol","path":"a.img",
                                     "debug":9,"logfile":"/var/log/qemu-gluster.log",
                                     "server":[@{"type":"tcp","host":"1.2.3.4","port":24007@},
                                               @{"type":"unix","socket":"/var/run/glusterd.socket"@}]@}@}'
-qemu-system-x86_64 -drive driver=qcow2,file.driver=gluster,file.volume=testvol,file.path=/path/a.img,
+qemu-kvm -drive driver=qcow2,file.driver=gluster,file.volume=testvol,file.path=/path/a.img,
                                        file.debug=9,file.logfile=/var/log/qemu-gluster.log,
                                        file.server.0.type=tcp,file.server.0.host=1.2.3.4,file.server.0.port=24007,
                                        file.server.1.type=unix,file.server.1.socket=/var/run/glusterd.socket
@@ -739,13 +739,13 @@ You can access disk images located on a remote ssh server
 by using the ssh protocol:
 
 @example
-qemu-system-x86_64 -drive file=ssh://[@var{user}@@]@var{server}[:@var{port}]/@var{path}[?host_key_check=@var{host_key_check}]
+qemu-kvm -drive file=ssh://[@var{user}@@]@var{server}[:@var{port}]/@var{path}[?host_key_check=@var{host_key_check}]
 @end example
 
 Alternative syntax using properties:
 
 @example
-qemu-system-x86_64 -drive file.driver=ssh[,file.user=@var{user}],file.host=@var{server}[,file.port=@var{port}],file.path=@var{path}[,file.host_key_check=@var{host_key_check}]
+qemu-kvm -drive file.driver=ssh[,file.user=@var{user}],file.host=@var{server}[,file.port=@var{port}],file.path=@var{path}[,file.host_key_check=@var{host_key_check}]
 @end example
 
 @var{ssh} is the protocol.
@@ -785,6 +785,43 @@ warning: ssh server @code{ssh.example.com:22} does not support fsync
 With sufficiently new versions of libssh2 and OpenSSH, @code{fsync} is
 supported.
 
+@node disk_images_nvme
+@subsection NVMe disk images
+
+NVM Express (NVMe) storage controllers can be accessed directly by a userspace
+driver in QEMU.  This bypasses the host kernel file system and block layers
+while retaining QEMU block layer functionalities, such as block jobs, I/O
+throttling, image formats, etc.  Disk I/O performance is typically higher than
+with @code{-drive file=/dev/sda} using either thread pool or linux-aio.
+
+The controller will be exclusively used by the QEMU process once started. To be
+able to share storage between multiple VMs and other applications on the host,
+please use the file based protocols.
+
+Before starting QEMU, bind the host NVMe controller to the host vfio-pci
+driver.  For example:
+
+@example
+# modprobe vfio-pci
+# lspci -n -s 0000:06:0d.0
+06:0d.0 0401: 1102:0002 (rev 08)
+# echo 0000:06:0d.0 > /sys/bus/pci/devices/0000:06:0d.0/driver/unbind
+# echo 1102 0002 > /sys/bus/pci/drivers/vfio-pci/new_id
+
+# qemu-kvm -drive file=nvme://@var{host}:@var{bus}:@var{slot}.@var{func}/@var{namespace}
+@end example
+
+Alternative syntax using properties:
+
+@example
+qemu-kvm -drive file.driver=nvme,file.device=@var{host}:@var{bus}:@var{slot}.@var{func},file.namespace=@var{namespace}
+@end example
+
+@var{host}:@var{bus}:@var{slot}.@var{func} is the NVMe controller's PCI device
+address on the host.
+
+@var{namespace} is the NVMe namespace number, starting from 1.
+
 @node disk_image_locking
 @subsection Disk image file locking
 
@@ -807,6 +844,16 @@ shortcomings of the POSIX locking API.
 QEMU transparently handles lock handover during shared storage migration.  For
 shared virtual disk images between multiple VMs, the "share-rw" device option
 should be used.
+
+By default, the guest has exclusive write access to its disk image. If the
+guest can safely share the disk image with other writers the @code{-device
+...,share-rw=on} parameter can be used.  This is only safe if the guest is
+running software, such as a cluster file system, that coordinates disk accesses
+to avoid corruption.
+
+Note that share-rw=on only declares the guest's ability to share the disk.
+Some QEMU features, such as image file formats, require exclusive write access
+to the disk image and this is unaffected by the share-rw=on option.
 
 Alternatively, locking can be fully disabled by "locking=off" block device
 option. In the command line, the option is usually in the form of

@@ -172,26 +172,25 @@ enum phb4_state {
  * changes here, please make sure the base state isn't
  * conflicting with those defined in pci-slot.h
  */
-#define PHB4_SLOT_NORMAL			0x00000000
-#define PHB4_SLOT_LINK				0x00000100
-#define   PHB4_SLOT_LINK_START			0x00000101
-#define   PHB4_SLOT_LINK_WAIT_ELECTRICAL	0x00000102
-#define   PHB4_SLOT_LINK_WAIT			0x00000103
-#define PHB4_SLOT_HRESET			0x00000200
-#define   PHB4_SLOT_HRESET_START		0x00000201
-#define   PHB4_SLOT_HRESET_DELAY		0x00000202
-#define   PHB4_SLOT_HRESET_DELAY2		0x00000203
-#define PHB4_SLOT_FRESET			0x00000300
-#define   PHB4_SLOT_FRESET_START		0x00000301
-#define PHB4_SLOT_PFRESET			0x00000400
-#define   PHB4_SLOT_PFRESET_START		0x00000401
-#define   PHB4_SLOT_PFRESET_ASSERT_DELAY	0x00000402
-#define   PHB4_SLOT_PFRESET_DEASSERT_DELAY	0x00000403
-#define PHB4_SLOT_CRESET			0x00000500
-#define   PHB4_SLOT_CRESET_START		0x00000501
-#define   PHB4_SLOT_CRESET_WAIT_CQ		0x00000502
-#define   PHB4_SLOT_CRESET_REINIT		0x00000503
-#define   PHB4_SLOT_CRESET_FRESET		0x00000504
+#define PHB4_SLOT_NORMAL			PCI_SLOT_STATE_NORMAL
+#define PHB4_SLOT_LINK				PCI_SLOT_STATE_LINK
+#define   PHB4_SLOT_LINK_START			(PHB4_SLOT_LINK + 1)
+#define   PHB4_SLOT_LINK_WAIT_ELECTRICAL	(PHB4_SLOT_LINK + 2)
+#define   PHB4_SLOT_LINK_WAIT			(PHB4_SLOT_LINK + 3)
+#define   PHB4_SLOT_LINK_STABLE			(PHB4_SLOT_LINK + 4)
+#define PHB4_SLOT_HRESET			PCI_SLOT_STATE_HRESET
+#define   PHB4_SLOT_HRESET_START		(PHB4_SLOT_HRESET + 1)
+#define   PHB4_SLOT_HRESET_DELAY		(PHB4_SLOT_HRESET + 2)
+#define   PHB4_SLOT_HRESET_DELAY2		(PHB4_SLOT_HRESET + 3)
+#define PHB4_SLOT_FRESET			PCI_SLOT_STATE_FRESET
+#define   PHB4_SLOT_FRESET_START		(PHB4_SLOT_FRESET + 1)
+#define   PHB4_SLOT_FRESET_ASSERT_DELAY		(PHB4_SLOT_FRESET + 2)
+#define   PHB4_SLOT_FRESET_DEASSERT_DELAY	(PHB4_SLOT_FRESET + 3)
+#define PHB4_SLOT_CRESET			PCI_SLOT_STATE_CRESET
+#define   PHB4_SLOT_CRESET_START		(PHB4_SLOT_CRESET + 1)
+#define   PHB4_SLOT_CRESET_WAIT_CQ		(PHB4_SLOT_CRESET + 2)
+#define   PHB4_SLOT_CRESET_REINIT		(PHB4_SLOT_CRESET + 3)
+#define   PHB4_SLOT_CRESET_FRESET		(PHB4_SLOT_CRESET + 4)
 
 /*
  * PHB4 error descriptor. Errors from all components (PBCQ, PHB)
@@ -215,9 +214,10 @@ struct phb4_err {
 	uint32_t err_bit;
 };
 
-/* Link timeouts, increments of 100ms */
-#define PHB4_LINK_WAIT_RETRIES		20
-#define PHB4_LINK_ELECTRICAL_RETRIES	20
+#define PHB4_LINK_LINK_RETRIES		3
+/* Link timeouts, increments of 10ms */
+#define PHB4_LINK_ELECTRICAL_RETRIES	100
+#define PHB4_LINK_WAIT_RETRIES		200
 
 /* PHB4 flags */
 #define PHB4_AIB_FENCED		0x00000001
@@ -226,17 +226,13 @@ struct phb4_err {
 #define PHB4_CAPP_RECOVERY	0x00000008
 
 struct phb4 {
-	unsigned int		index;	    /* 0..2 index inside P8 */
+	unsigned int		index;	    /* 0..5 index inside p9 */
 	unsigned int		flags;
-	unsigned int		chip_id;    /* Chip ID (== GCID on P8) */
+	unsigned int		chip_id;    /* Chip ID (== GCID on p9) */
 	enum phb4_state		state;
 	unsigned int		rev;        /* 00MMmmmm */
-#define PHB4_REV_MURANO_DD10	0xa30001
-#define PHB4_REV_VENICE_DD10	0xa30002
-#define PHB4_REV_MURANO_DD20	0xa30003
-#define PHB4_REV_MURANO_DD21	0xa30004
-#define PHB4_REV_VENICE_DD20	0xa30005
-#define PHB4_REV_NAPLES_DD10	0xb30001
+#define PHB4_REV_NIMBUS_DD10	0xa40001
+#define PHB4_REV_NIMBUS_DD20	0xa40002
 	void			*regs;
 	void			*int_mmio;
 	uint64_t		pe_xscom;   /* XSCOM bases */
@@ -281,6 +277,7 @@ struct phb4 {
 	uint64_t		mbt_cache[32][2];
 	uint64_t		mdt_cache[512]; /* max num of PEs */
 	uint64_t		mist_cache[4096/4];/* max num of MSIs */
+	uint64_t		pfir_cache;	/* Used by complete reset */
 	uint64_t		nfir_cache;	/* Used by complete reset */
 	bool			err_pending;
 	struct phb4_err		err;
@@ -310,6 +307,13 @@ static inline void phb4_set_err_pending(struct phb4 *p, bool pending)
 	}
 
 	p->err_pending = pending;
+}
+
+#define PHB4_PER_CHIP                        6 /* Max 6 PHBs per chip on p9 */
+
+static inline int phb4_get_opal_id(unsigned int chip_id, unsigned int index)
+{
+	return chip_id * PHB4_PER_CHIP + index;
 }
 
 #endif /* __PHB4_H */

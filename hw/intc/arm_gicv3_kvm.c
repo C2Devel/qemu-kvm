@@ -293,7 +293,7 @@ static void kvm_arm_gicv3_put(GICv3State *s)
             kvm_gicr_access(s, GICR_PROPBASER + 4, ncpu, &regh, true);
 
             reg64 = c->gicr_pendbaser;
-            if (!c->gicr_ctlr & GICR_CTLR_ENABLE_LPIS) {
+            if (!(c->gicr_ctlr & GICR_CTLR_ENABLE_LPIS)) {
                 /* Setting PTZ is advised if LPIs are disabled, to reduce
                  * GIC initialization time.
                  */
@@ -795,10 +795,9 @@ static void kvm_arm_gicv3_class_init(ObjectClass *klass, void *data)
 
     agcc->pre_save = kvm_arm_gicv3_get;
     agcc->post_load = kvm_arm_gicv3_put;
-    kgc->parent_realize = dc->realize;
-    kgc->parent_reset = dc->reset;
-    dc->realize = kvm_arm_gicv3_realize;
-    dc->reset = kvm_arm_gicv3_reset;
+    device_class_set_parent_realize(dc, kvm_arm_gicv3_realize,
+                                    &kgc->parent_realize);
+    device_class_set_parent_reset(dc, kvm_arm_gicv3_reset, &kgc->parent_reset);
 }
 
 static const TypeInfo kvm_arm_gicv3_info = {

@@ -10,7 +10,7 @@ if [ -z "$MAMBO_BINARY" ]; then
 fi
 
 if [ ! -x "$MAMBO_PATH/$MAMBO_BINARY" ]; then
-    echo 'Could not find executable MAMBO_BINARY. Skipping hello_world test';
+    echo "Could not find executable MAMBO_BINARY ($MAMBO_PATH/$MAMBO_BINARY). Skipping hello_world test";
     exit 0;
 fi
 
@@ -42,6 +42,7 @@ spawn $MAMBO_PATH/$MAMBO_BINARY -n -f ../../test/hello_world/run_hello_world.tcl
 expect {
 timeout { send_user "\nTimeout waiting for hello world\n"; exit 1 }
 eof { send_user "\nUnexpected EOF\n;" exit 1 }
+"Machine Check Stop" { exit 1;}
 "Execution stopped: Sim Support exit requested stop"
 }
 wait

@@ -103,7 +103,7 @@ void cpu_alpha_store_gr(CPUAlphaState *env, unsigned reg, uint64_t val)
 }
 
 #if defined(CONFIG_USER_ONLY)
-int alpha_cpu_handle_mmu_fault(CPUState *cs, vaddr address,
+int alpha_cpu_handle_mmu_fault(CPUState *cs, vaddr address, int size,
                                int rw, int mmu_idx)
 {
     AlphaCPU *cpu = ALPHA_CPU(cs);
@@ -162,6 +162,14 @@ static int get_physical_address(CPUAlphaState *env, target_ulong addr,
     /* Interpret the page table exactly like PALcode does.  */
 
     pt = env->ptbr;
+
+    /* TODO: rather than using ldq_phys() to read the page table we should
+     * use address_space_ldq() so that we can handle the case when
+     * the page table read gives a bus fault, rather than ignoring it.
+     * For the existing code the zero data that ldq_phys will return for
+     * an access to invalid memory will result in our treating the page
+     * table as invalid, which may even be the right behaviour.
+     */
 
     /* L1 page table read.  */
     index = (addr >> (TARGET_PAGE_BITS + 20)) & 0x3ff;
@@ -239,7 +247,7 @@ hwaddr alpha_cpu_get_phys_page_debug(CPUState *cs, vaddr addr)
     return (fail >= 0 ? -1 : phys);
 }
 
-int alpha_cpu_handle_mmu_fault(CPUState *cs, vaddr addr, int rw,
+int alpha_cpu_handle_mmu_fault(CPUState *cs, vaddr addr, int size, int rw,
                                int mmu_idx)
 {
     AlphaCPU *cpu = ALPHA_CPU(cs);
@@ -474,7 +482,7 @@ void QEMU_NORETURN dynamic_excp(CPUAlphaState *env, uintptr_t retaddr,
     cs->exception_index = excp;
     env->error_code = error;
     if (retaddr) {
-        cpu_restore_state(cs, retaddr);
+        cpu_restore_state(cs, retaddr, true);
         /* Floating-point exceptions (our only users) point to the next PC.  */
         env->pc += 4;
     }

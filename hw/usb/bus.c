@@ -59,12 +59,6 @@ static int usb_device_post_load(void *opaque, int version_id)
     } else {
         dev->attached = true;
     }
-    if (dev->setup_index < 0 ||
-        dev->setup_len < 0 ||
-        dev->setup_index > dev->setup_len ||
-        dev->setup_len > sizeof(dev->data_buf)) {
-        return -EINVAL;
-    }
     return 0;
 }
 
@@ -341,9 +335,7 @@ static USBDevice *usb_try_create_simple(USBBus *bus, const char *name,
     object_property_set_bool(OBJECT(dev), true, "realized", &err);
     if (err) {
         error_propagate(errp, err);
-        error_prepend(errp, "Failed to initialize USB device '%s': ",
-                      name);
-        object_unparent(OBJECT(dev));
+        error_prepend(errp, "Failed to initialize USB device '%s': ", name);
         return NULL;
     }
     return dev;
@@ -558,28 +550,6 @@ int usb_device_detach(USBDevice *dev)
 
     usb_detach(port);
     dev->attached = false;
-    return 0;
-}
-
-int usb_device_delete_addr(int busnr, int addr)
-{
-    USBBus *bus;
-    USBPort *port;
-    USBDevice *dev;
-
-    bus = usb_bus_find(busnr);
-    if (!bus)
-        return -1;
-
-    QTAILQ_FOREACH(port, &bus->used, next) {
-        if (port->dev->addr == addr)
-            break;
-    }
-    if (!port)
-        return -1;
-    dev = port->dev;
-
-    object_unparent(OBJECT(dev));
     return 0;
 }
 

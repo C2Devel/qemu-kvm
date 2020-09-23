@@ -45,6 +45,9 @@
 /* Don't do rfc1323 performance enhancements */
 #define TCP_DO_RFC1323 0
 
+static int slirp_fmt(char *str, size_t size, const char *format, ...);
+static int slirp_fmt0(char *str, size_t size, const char *format, ...);
+
 /*
  * Tcp initialization
  */
@@ -148,7 +151,16 @@ tcp_respond(struct tcpcb *tp, struct tcpiphdr *ti, struct mbuf *m,
 		m->m_data += IF_MAXLINKHDR;
 		*mtod(m, struct tcpiphdr *) = *ti;
 		ti = mtod(m, struct tcpiphdr *);
-		memset(&ti->ti, 0, sizeof(ti->ti));
+		switch (af) {
+		case AF_INET:
+		    ti->ti.ti_i4.ih_x1 = 0;
+		    break;
+		case AF_INET6:
+		    ti->ti.ti_i6.ih_x1 = 0;
+		    break;
+		default:
+		    g_assert_not_reached();
+		}
 		flags = TH_ACK;
 	} else {
 		/*
@@ -627,42 +639,42 @@ tcp_emu(struct socket *so, struct mbuf *m)
 			struct socket *tmpso;
 			struct sockaddr_in addr;
 			socklen_t addrlen = sizeof(struct sockaddr_in);
-			struct sbuf *so_rcv = &so->so_rcv;
+			char *eol = g_strstr_len(m->m_data, m->m_len, "\r\n");
 
-			memcpy(so_rcv->sb_wptr, m->m_data, m->m_len);
-			so_rcv->sb_wptr += m->m_len;
-			so_rcv->sb_rptr += m->m_len;
-			m->m_data[m->m_len] = 0; /* NULL terminate */
-			if (strchr(m->m_data, '\r') || strchr(m->m_data, '\n')) {
-				if (sscanf(so_rcv->sb_data, "%u%*[ ,]%u", &n1, &n2) == 2) {
-					HTONS(n1);
-					HTONS(n2);
-					/* n2 is the one on our host */
-					for (tmpso = slirp->tcb.so_next;
-					     tmpso != &slirp->tcb;
-					     tmpso = tmpso->so_next) {
-						if (tmpso->so_laddr.s_addr == so->so_laddr.s_addr &&
-						    tmpso->so_lport == n2 &&
-						    tmpso->so_faddr.s_addr == so->so_faddr.s_addr &&
-						    tmpso->so_fport == n1) {
-							if (getsockname(tmpso->s,
-								(struct sockaddr *)&addr, &addrlen) == 0)
-							   n2 = ntohs(addr.sin_port);
-							break;
-						}
+			if (!eol) {
+				return 1;
+			}
+
+			*eol = '\0';
+			if (sscanf(m->m_data, "%u%*[ ,]%u", &n1, &n2) == 2) {
+				HTONS(n1);
+				HTONS(n2);
+				/* n2 is the one on our host */
+				for (tmpso = slirp->tcb.so_next; tmpso != &slirp->tcb;
+					 tmpso = tmpso->so_next) {
+					if (tmpso->so_laddr.s_addr == so->so_laddr.s_addr &&
+						tmpso->so_lport == n2 &&
+						tmpso->so_faddr.s_addr == so->so_faddr.s_addr &&
+						tmpso->so_fport == n1) {
+						if (getsockname(tmpso->s, (struct sockaddr *)&addr,
+										&addrlen) == 0)
+							n2 = addr.sin_port;
+						break;
 					}
 				}
-                                so_rcv->sb_cc = snprintf(so_rcv->sb_data,
-                                                         so_rcv->sb_datalen,
-                                                         "%d,%d\r\n", n1, n2);
-				so_rcv->sb_rptr = so_rcv->sb_data;
-				so_rcv->sb_wptr = so_rcv->sb_data + so_rcv->sb_cc;
+				NTOHS(n1);
+				NTOHS(n2);
+				m_inc(m, snprintf(NULL, 0, "%d,%d\r\n", n1, n2) + 1);
+                                m->m_len = slirp_fmt(m->m_data, M_ROOM(m), "%d,%d\r\n", n1, n2);
+			} else {
+				*eol = '\r';
 			}
-			m_free(m);
-			return 0;
+
+			return 1;
 		}
 
         case EMU_FTP: /* ftp */
+		m_inc(m, m->m_len + 1);
                 *(m->m_data+m->m_len) = 0; /* NUL terminate for strstr */
 		if ((bptr = (char *)strstr(m->m_data, "ORT")) != NULL) {
 			/*
@@ -693,9 +705,9 @@ tcp_emu(struct socket *so, struct mbuf *m)
 			n4 =  (laddr & 0xff);
 
 			m->m_len = bptr - m->m_data; /* Adjust length */
-                        m->m_len += snprintf(bptr, m->m_size - m->m_len,
-                                             "ORT %d,%d,%d,%d,%d,%d\r\n%s",
-                                             n1, n2, n3, n4, n5, n6, x==7?buff:"");
+                        m->m_len += slirp_fmt(bptr, M_FREEROOM(m),
+                                              "ORT %d,%d,%d,%d,%d,%d\r\n%s",
+                                              n1, n2, n3, n4, n5, n6, x == 7 ? buff : "");
 			return 1;
 		} else if ((bptr = (char *)strstr(m->m_data, "27 Entering")) != NULL) {
 			/*
@@ -726,10 +738,9 @@ tcp_emu(struct socket *so, struct mbuf *m)
 			n4 =  (laddr & 0xff);
 
 			m->m_len = bptr - m->m_data; /* Adjust length */
-			m->m_len += snprintf(bptr, m->m_size - m->m_len,
-                                             "27 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n%s",
-                                             n1, n2, n3, n4, n5, n6, x==7?buff:"");
-
+                        m->m_len += slirp_fmt(bptr, M_FREEROOM(m),
+                                              "27 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n%s",
+                                              n1, n2, n3, n4, n5, n6, x == 7 ? buff : "");
 			return 1;
 		}
 
@@ -752,14 +763,15 @@ tcp_emu(struct socket *so, struct mbuf *m)
 		if (m->m_data[m->m_len-1] == '\0' && lport != 0 &&
 		    (so = tcp_listen(slirp, INADDR_ANY, 0, so->so_laddr.s_addr,
 		                     htons(lport), SS_FACCEPTONCE)) != NULL)
-                    m->m_len = snprintf(m->m_data, m->m_size, "%d",
-                                        ntohs(so->so_fport)) + 1;
+                    m->m_len = slirp_fmt0(m->m_data, M_ROOM(m),
+                                          "%d", ntohs(so->so_fport));
 		return 1;
 
 	 case EMU_IRC:
 		/*
 		 * Need to emulate DCC CHAT, DCC SEND and DCC MOVE
 		 */
+		m_inc(m, m->m_len + 1);
 		*(m->m_data+m->m_len) = 0; /* NULL terminate the string for strstr */
 		if ((bptr = (char *)strstr(m->m_data, "DCC")) == NULL)
 			 return 1;
@@ -772,10 +784,10 @@ tcp_emu(struct socket *so, struct mbuf *m)
 				return 1;
 			}
 			m->m_len = bptr - m->m_data; /* Adjust length */
-                        m->m_len += snprintf(bptr, m->m_size,
-                                             "DCC CHAT chat %lu %u%c\n",
-                                             (unsigned long)ntohl(so->so_faddr.s_addr),
-                                             ntohs(so->so_fport), 1);
+                        m->m_len += slirp_fmt(bptr, M_FREEROOM(m),
+                                              "DCC CHAT chat %lu %u%c\n",
+                                              (unsigned long)ntohl(so->so_faddr.s_addr),
+                                              ntohs(so->so_fport), 1);
 		} else if (sscanf(bptr, "DCC SEND %256s %u %u %u", buff, &laddr, &lport, &n1) == 4) {
 			if ((so = tcp_listen(slirp, INADDR_ANY, 0,
 			                     htonl(laddr), htons(lport),
@@ -783,10 +795,10 @@ tcp_emu(struct socket *so, struct mbuf *m)
 				return 1;
 			}
 			m->m_len = bptr - m->m_data; /* Adjust length */
-                        m->m_len += snprintf(bptr, m->m_size,
-                                             "DCC SEND %s %lu %u %u%c\n", buff,
-                                             (unsigned long)ntohl(so->so_faddr.s_addr),
-                                             ntohs(so->so_fport), n1, 1);
+                        m->m_len += slirp_fmt(bptr, M_FREEROOM(m),
+                                              "DCC SEND %s %lu %u %u%c\n", buff,
+                                              (unsigned long)ntohl(so->so_faddr.s_addr),
+                                              ntohs(so->so_fport), n1, 1);
 		} else if (sscanf(bptr, "DCC MOVE %256s %u %u %u", buff, &laddr, &lport, &n1) == 4) {
 			if ((so = tcp_listen(slirp, INADDR_ANY, 0,
 			                     htonl(laddr), htons(lport),
@@ -794,10 +806,10 @@ tcp_emu(struct socket *so, struct mbuf *m)
 				return 1;
 			}
 			m->m_len = bptr - m->m_data; /* Adjust length */
-                        m->m_len += snprintf(bptr, m->m_size,
-                                             "DCC MOVE %s %lu %u %u%c\n", buff,
-                                             (unsigned long)ntohl(so->so_faddr.s_addr),
-                                             ntohs(so->so_fport), n1, 1);
+                        m->m_len += slirp_fmt(bptr, M_FREEROOM(m),
+                                              "DCC MOVE %s %lu %u %u%c\n", buff,
+                                              (unsigned long)ntohl(so->so_faddr.s_addr),
+                                              ntohs(so->so_fport), n1, 1);
 		}
 		return 1;
 
@@ -881,6 +893,9 @@ tcp_emu(struct socket *so, struct mbuf *m)
 				break;
 
 			 case 5:
+				if (bptr == m->m_data + m->m_len - 1)
+					return 1; /* We need two bytes */
+
 				/*
 				 * The difference between versions 1.0 and
 				 * 2.0 is here. For future versions of
@@ -896,6 +911,10 @@ tcp_emu(struct socket *so, struct mbuf *m)
 				/* This is the field containing the port
 				 * number that RA-player is listening to.
 				 */
+
+				if (bptr == m->m_data + m->m_len - 1)
+					return 1; /* We need two bytes */
+
 				lport = (((u_char*)bptr)[0] << 8)
 				+ ((u_char *)bptr)[1];
 				if (lport < 6970)
@@ -971,4 +990,66 @@ int tcp_ctl(struct socket *so)
                  "Error: No application configured.\r\n");
     sb->sb_wptr += sb->sb_cc;
     return 0;
+}
+
+static int slirp_vsnprintf(char *str, size_t size,
+                           const char *format, va_list args)
+{
+    int rv = vsnprintf(str, size, format, args);
+
+    if (rv < 0) {
+        g_error("vsnprintf() failed: %s", g_strerror(errno));
+    }
+
+    return rv;
+}
+
+/*
+ * A snprintf()-like function that:
+ * - returns the number of bytes written (excluding optional \0-ending)
+ * - dies on error
+ * - warn on truncation
+ */
+static int slirp_fmt(char *str, size_t size, const char *format, ...)
+{
+    va_list args;
+    int rv;
+
+    va_start(args, format);
+    rv = slirp_vsnprintf(str, size, format, args);
+    va_end(args);
+
+    if (rv > size) {
+        g_critical("vsnprintf() truncation");
+    }
+
+    return MIN(rv, size);
+}
+
+/*
+ * A snprintf()-like function that:
+ * - always \0-end (unless size == 0)
+ * - returns the number of bytes actually written, including \0 ending
+ * - dies on error
+ * - warn on truncation
+ */
+static int slirp_fmt0(char *str, size_t size, const char *format, ...)
+{
+    va_list args;
+    int rv;
+
+    va_start(args, format);
+    rv = slirp_vsnprintf(str, size, format, args);
+    va_end(args);
+
+    if (rv >= size) {
+        g_critical("vsnprintf() truncation");
+        if (size > 0)
+            str[size - 1] = '\0';
+        rv = size;
+    } else {
+        rv += 1; /* include \0 */
+    }
+
+    return rv;
 }

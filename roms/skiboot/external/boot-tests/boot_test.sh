@@ -51,7 +51,7 @@ function linux_boot {
 	    msg "IPMI sol deactivate failed; IPMI may have stalled, may just be IPMI. Good luck."
 	fi
 
-	LINUXBOOT_LOG=$(mktemp --tmpdir builder-2.XXXXXX);
+	LINUXBOOT_LOG=$(mktemp --tmpdir boot-test-$target.XXXXXX);
 	cat <<EOF | expect > $LINUXBOOT_LOG
 set timeout 300
 spawn $IPMI_COMMAND sol activate
@@ -70,10 +70,14 @@ EOF
 	        msg "Waiting for linux has timed out"
 		msg "Boot log follows:"
 		cat $LINUXBOOT_LOG
-		rm -f $LINUXBOOT_LOG
+		if [ $keep_log_failure -eq 0 ]; then
+		    rm -f $LINUXBOOT_LOG
+		fi
 		return 1
 	else
-	        rm -f $LINUXBOOT_LOG
+	        if [ $keep_log_success -eq 0 ]; then
+	            rm -f $LINUXBOOT_LOG
+	        fi
 	        return 0
 	fi
 }
@@ -85,26 +89,21 @@ function boot_test {
 	    flash $@;
 	fi
 
-	msg "Booting $target..."
-	boot_firmware;
-	msg "firmware looks good, waiting for linux";
+	if [ $nobooting -ne 1 ] ; then
+	    msg "Booting $target..."
+	    boot_firmware;
+	    msg "firmware looks good, waiting for linux";
 
-	linux_boot;
-	if [ $? -ne 0 ] ; then
+	    linux_boot;
+	    if [ $? -ne 0 ] ; then
 		error "Couldn't reach petitboot on $target";
+	    fi
+	    msg "$target has booted";
 	fi
-	msg "$target has booted";
 	unset SSHPASS;
 }
 
 function sanity_test {
-    $SSHCMD true;
-    if [ $? -ne 0 ]; then
-	echo "$target: Failed to SSH to $target..."
-        echo "$target: Command was: $SSHCMD true"
-	error "Try connecting manually to diagnose the issue."
-    fi
-
     $IPMI_COMMAND chassis power status > /dev/null;
     if [ $? -ne 0 ]; then
 	echo "$target: Failed to connect to $target with IPMI..."
@@ -126,12 +125,13 @@ There are three usage modes.
 1) boot_test.sh -h
      Print this help
 
-2) boot_test.sh [-vdp] -t target -B -b (fsp|bmc)
+2) boot_test.sh [-vdp] -t target -B -b (fsp|bmc|smc|openbmc)
      Boot test the target without flashing. Specify the type of machine
-     (FSP or BMC) with the -b option.
+     (FSP, BMC, SMC, OpenBMC) with the -b option.
 
-3) boot_test.sh [-vdp] -b bmc -t target -P pnor
-   boot_test.sh [-vdp] -b bmc -t target [-1 PAYLOAD] [-2 BOOTKERNEL]
+3) boot_test.sh [-vdp] -b bmc -t target -P pnor [-N]
+   boot_test.sh [-vdp] -b bmc -t target [-1 PAYLOAD] [-2 BOOTKERNEL] [-N]
+   boot_test.sh [-vdp] -b bmc -t target [-F eyecatcher:lid] [-N]
    boot_test.sh [-vdp] -b fsp -t target [-1 lid1] [-2 lid2] [-3 lid3]
 
      Flash the given firmware before boot testing.
@@ -139,7 +139,8 @@ There are three usage modes.
      For a BMC target, -P specifies a full PNOR.
 
      For a BMC target, -1/-2 specify the PAYLOAD and BOOTKERNEL PNOR partitions
-     respectively. Only the given partitions will be flashed.
+     respectively; -e specifies the partition name for -3.
+     Only the given partitions will be flashed.
 
      For an FSP target, -1/-2/-3 specify lids. Any combination of lids is
      acceptable.
@@ -156,6 +157,12 @@ Common Options:
      successful booting into Petitboot will not be detected with this option.
 
   -b BMC type (bmc or fsp).
+
+  -k keep logs on failure.
+
+  -K keep logs on success or failure.
+
+  -N No booting.
 EOF
     exit 1;
 }
@@ -172,15 +179,20 @@ done
 # Parse options
 V=0;
 bootonly=0;
+nobooting=0;
 powerdown=0;
 firmware_supplied=0;
 target=""
 method=""
 PNOR=""
+arbitrary_lid[0]=""
+arbitrary_lid[1]=""
 LID[0]=""
 LID[1]=""
 LID[2]=""
-while getopts "hvdpB1:2:3:P:t:b:" OPT; do
+keep_log_success=0
+keep_log_failure=0
+while getopts "kKhvdpB1:2:3:P:t:b:F:N" OPT; do
     case "$OPT" in
 	v)
 	    V=1;
@@ -191,10 +203,23 @@ while getopts "hvdpB1:2:3:P:t:b:" OPT; do
 	d)
 	    set -vx;
 	    ;;
+	k)
+	    keep_log_failure=1;
+	    ;;
+	K)
+	    keep_log_failure=1;
+	    keep_log_success=1;
+	    ;;
 	B)
 	    bootonly=1;
 	    if [ $firmware_supplied -eq 1 ]; then
 		usage
+	    fi
+	    ;;
+	N)
+	    nobooting=1;
+	    if [ $firmware_supplied -eq 0 ] ; then
+		    error "Firmware not supplied."
 	    fi
 	    ;;
 	p)
@@ -216,6 +241,14 @@ while getopts "hvdpB1:2:3:P:t:b:" OPT; do
 		error "Couldn't stat $OPTARG";
 	    fi
 	    PNOR="$OPTARG"
+	    ;;
+	F)
+	    firmware_supplied=1;
+	    arbitrary_lid[0]=`echo "$OPTARG" | cut -s -f1 -d:`;
+	    arbitrary_lid[1]=`echo "$OPTARG" | cut -s -f2 -d:`;
+	    if [ -z "${arbitrary_lid[0]}" -o -z "${arbitrary_lid[1]}" ] ; then
+		error "-F must be in the format eyecatcher:lid, e.g. GARD:gard.bin";
+	    fi
 	    ;;
 	t)
 	    target=$OPTARG;

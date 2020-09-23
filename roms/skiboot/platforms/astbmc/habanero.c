@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2016 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,11 +36,6 @@ static const struct slot_table_entry habanero_plx_slots[] = {
 	{
 		.etype = st_pluggable_slot,
 		.location = ST_LOC_DEVFN(1,0),
-		.name = "Network Mezz",
-	},
-	{
-		.etype = st_pluggable_slot,
-		.location = ST_LOC_DEVFN(2,0),
 		.name = "Network Mezz",
 	},
 	{
@@ -141,9 +136,11 @@ static bool habanero_probe(void)
 
 DECLARE_PLATFORM(habanero) = {
 	.name			= "Habanero",
+	.bmc			= &astbmc_ami,
 	.probe			= habanero_probe,
 	.init			= astbmc_init,
 	.pci_get_slot_info	= slot_table_get_slot_info,
+	.pci_probe_complete	= check_all_slot_table,
 	.external_irq		= astbmc_ext_irq_serirq_cpld,
 	.cec_power_down         = astbmc_ipmi_power_down,
 	.cec_reboot             = astbmc_ipmi_reboot,

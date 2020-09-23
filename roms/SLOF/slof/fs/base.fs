@@ -13,6 +13,22 @@
 \ Hash for faster lookup
 #include <find-hash.fs>
 
+\ WARNING: the wid>xxx and name>xxx definitions below are for the documentation
+\ purposes only; NAME>LINK LINK> NAME> should be used instead; no code outside
+\ of the engine has any business accessing flags, count, chars directly.
+
+\ STRUCT
+\  cell FIELD wid>next
+\  cell FIELD wid>names \ points to the first word in the list (name>next below)
+\ END-STRUCT
+
+\ STRUCT
+\  cell FIELD name>next
+\  /c   FIELD name>flags
+\  /c   FIELD name>count
+\  0    FIELD name>chars
+\ END-STRUCT
+
 : >name ( xt -- nfa ) \ note: still has the "immediate" field!
    BEGIN char- dup c@ UNTIL ( @lastchar )
    dup dup aligned - cell+ char- ( @lastchar lenmodcell )
@@ -90,6 +106,11 @@ CONSTANT <2constant>
 
 : str= ( str1 len1 str2 len2 -- equal? )
   rot over <> IF 3drop false ELSE comp 0= THEN ;
+
+: from-cstring ( addr - len )
+  dup dup BEGIN c@ 0 <> WHILE 1 + dup REPEAT
+  swap -
+;
 
 : test-string ( param len -- true | false )
    0 ?DO

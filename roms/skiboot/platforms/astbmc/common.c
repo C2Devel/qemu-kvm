@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2016 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,6 +38,11 @@
 #define BT_IO_BASE	0xe4
 #define BT_IO_COUNT	3
 #define BT_LPC_IRQ	10
+
+/* MBOX config */
+#define MBOX_IO_BASE 0x1000
+#define MBOX_IO_COUNT 6
+#define MBOX_LPC_IRQ 9
 
 void astbmc_ext_irq_serirq_cpld(unsigned int chip_id)
 {
@@ -129,6 +134,9 @@ void astbmc_init(void)
 	astbmc_fru_init();
 	ipmi_sensor_init();
 
+	/* Preload PNOR VERSION section */
+	flash_fw_version_preload();
+
 	/* As soon as IPMI is up, inform BMC we are in "S0" */
 	ipmi_set_power_state(IPMI_PWR_SYS_S0_WORKING, IPMI_PWR_NOCHANGE);
 
@@ -138,8 +146,10 @@ void astbmc_init(void)
 	ipmi_set_fw_progress_sensor(IPMI_FW_MOTHERBOARD_INIT);
 
 	/* Setup UART console for use by Linux via OPAL API */
-	if (!dummy_console_enabled())
-		uart_setup_opal_console();
+	set_opal_console(&uart_opal_con);
+
+	/* Add ibm,firmware-versions node */
+	flash_dt_add_fw_version();
 }
 
 int64_t astbmc_ipmi_power_down(uint64_t request)
@@ -190,6 +200,36 @@ static void astbmc_fixup_dt_bt(struct dt_node *lpc)
 
 	dt_add_property_cells(bt, "interrupts", BT_LPC_IRQ);
 	dt_add_property_cells(bt, "interrupt-parent", lpc->phandle);
+}
+
+static void astbmc_fixup_dt_mbox(struct dt_node *lpc)
+{
+	struct dt_node *mbox;
+	char namebuf[32];
+
+	/* All P9 machines have this and no earlier machines do */
+	if (proc_gen != proc_gen_p9)
+		return;
+
+	/* First check if the mbox interface is already there */
+	dt_for_each_child(lpc, mbox) {
+		if (dt_node_is_compatible(mbox, "mbox"))
+			return;
+	}
+
+	snprintf(namebuf, sizeof(namebuf), "mbox@i%x", MBOX_IO_BASE);
+	mbox = dt_new(lpc, namebuf);
+
+	dt_add_property_cells(mbox, "reg",
+			      1, /* IO space */
+			      MBOX_IO_BASE, MBOX_IO_COUNT);
+	dt_add_property_strings(mbox, "compatible", "mbox");
+
+	/* Mark it as reserved to avoid Linux trying to claim it */
+	dt_add_property_strings(mbox, "status", "reserved");
+
+	dt_add_property_cells(mbox, "interrupts", MBOX_LPC_IRQ);
+	dt_add_property_cells(mbox, "interrupt-parent", lpc->phandle);
 }
 
 static void astbmc_fixup_dt_uart(struct dt_node *lpc)
@@ -279,6 +319,12 @@ static void astbmc_fixup_dt(void)
 		if (dt_has_node_property(n, "#address-cells", NULL))
 			break;
 	}
+	dt_for_each_compatible(dt_root, n, "ibm,power9-lpc") {
+		if (!primary_lpc || dt_has_node_property(n, "primary", NULL))
+			primary_lpc = n;
+		if (dt_has_node_property(n, "#address-cells", NULL))
+			break;
+	}
 
 	if (!primary_lpc)
 		return;
@@ -288,6 +334,9 @@ static void astbmc_fixup_dt(void)
 
 	/* BT is not in HB either */
 	astbmc_fixup_dt_bt(primary_lpc);
+
+	/* MBOX is not in HB */
+	astbmc_fixup_dt_mbox(primary_lpc);
 
 	/* The pel logging code needs a system-id property to work so
 	   make sure we have one. */
@@ -300,6 +349,10 @@ static void astbmc_fixup_psi_bar(void)
 {
 	struct proc_chip *chip = next_chip(NULL);
 	uint64_t psibar;
+
+	/* This is P8 specific */
+	if (proc_gen != proc_gen_p8)
+		return;
 
 	/* Read PSI BAR */
 	if (xscom_read(chip->id, 0x201090A, &psibar)) {
@@ -352,8 +405,23 @@ void astbmc_early_init(void)
 	/* Similarly, some BMCs don't configure the BT interrupt properly */
 	ast_setup_ibt(BT_IO_BASE, BT_LPC_IRQ);
 
+	ast_setup_sio_mbox(MBOX_IO_BASE, MBOX_LPC_IRQ);
+
 	/* Setup UART and use it as console */
 	uart_init();
 
+	mbox_init();
+
 	prd_init();
 }
+
+const struct bmc_platform astbmc_ami = {
+	.name = "AMI",
+	.ipmi_oem_partial_add_esel   = IPMI_CODE(0x32, 0xf0),
+	.ipmi_oem_pnor_access_status = IPMI_CODE(0x3a, 0x07),
+};
+
+const struct bmc_platform astbmc_openbmc = {
+	.name = "OpenBMC",
+	.ipmi_oem_partial_add_esel   = IPMI_CODE(0x32, 0xf0),
+};

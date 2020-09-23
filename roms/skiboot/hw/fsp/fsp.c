@@ -40,7 +40,13 @@
 #include <ccan/list/list.h>
 
 DEFINE_LOG_ENTRY(OPAL_RC_FSP_POLL_TIMEOUT, OPAL_PLATFORM_ERR_EVT, OPAL_FSP,
-		 OPAL_PLATFORM_FIRMWARE, OPAL_ERROR_PANIC, OPAL_NA);
+		 OPAL_PLATFORM_FIRMWARE, OPAL_RECOVERED_ERR_GENERAL, OPAL_NA);
+
+DEFINE_LOG_ENTRY(OPAL_RC_FSP_MBOX_ERR, OPAL_PLATFORM_ERR_EVT, OPAL_FSP,
+		 OPAL_PLATFORM_FIRMWARE, OPAL_RECOVERED_ERR_GENERAL, OPAL_NA);
+
+DEFINE_LOG_ENTRY(OPAL_RC_FSP_DISR_HIR_MASK, OPAL_PLATFORM_ERR_EVT, OPAL_FSP,
+		 OPAL_PLATFORM_FIRMWARE, OPAL_RECOVERED_ERR_GENERAL, OPAL_NA);
 
 #define FSP_TRACE_MSG
 #define FSP_TRACE_EVENT
@@ -276,9 +282,8 @@ void fsp_cancelmsg(struct fsp_msg *msg)
 {
 	bool need_unlock = false;
 	struct fsp_cmdclass* cmdclass = fsp_get_cmdclass(msg);
-	struct fsp *fsp = fsp_get_active();
 
-	if (fsp->state != fsp_mbx_rr) {
+	if (!fsp_in_rr()) {
 		prerror("FSP: Message cancel allowed only when"
 						"FSP is in reset\n");
 		return;
@@ -409,6 +414,22 @@ static bool fsp_in_reset(struct fsp *fsp)
 	}
 }
 
+bool fsp_in_rr(void)
+{
+	struct fsp *fsp = fsp_get_active();
+	struct fsp_iopath *iop;
+
+	if (fsp->active_iopath < 0)
+		return true;
+
+	iop = &fsp->iopath[fsp->active_iopath];
+
+	if (fsp_in_reset(fsp) || fsp_in_hir(fsp) || !(psi_check_link_active(iop->psi)))
+		return true;
+
+	return false;
+}
+
 static bool fsp_hir_state_timeout(void)
 {
 	u64 now = mftb();
@@ -529,9 +550,12 @@ static void __fsp_trigger_reset(void)
 		fsp_prep_for_reset(fsp);
 }
 
-void fsp_trigger_reset(void)
+static uint32_t fsp_hir_reason_plid;
+
+void fsp_trigger_reset(uint32_t plid)
 {
 	lock(&fsp_lock);
+	fsp_hir_reason_plid = plid;
 	__fsp_trigger_reset();
 	unlock(&fsp_lock);
 }
@@ -667,9 +691,11 @@ static void fsp_handle_errors(struct fsp *fsp)
 	 * quite rare.
 	 */
 	if (fsp->state == fsp_mbx_err) {
-		prerror("FSP #%d: Triggering HIR on mbx_err\n",
-				fsp->index);
-		fsp_trigger_reset();
+		uint32_t plid;
+		plid = log_simple_error(&e_info(OPAL_RC_FSP_MBOX_ERR),
+					"FSP #%d: Triggering HIR on mbx_err\n",
+					fsp->index);
+		fsp_trigger_reset(plid);
 		return;
 	}
 
@@ -694,23 +720,14 @@ static void fsp_handle_errors(struct fsp *fsp)
 		if (fsp->state == fsp_mbx_rr)
 			return;
 
-		if (fsp_dpo_pending) {
-			/*
-			 * If we are about to process a reset when DPO
-			 * is pending, its possible that the host has
-			 * gone down, and OPAL is on its way down and
-			 * hence will not see the subsequent PSI interrupt.
-			 * So, just give up the link here.
-			 */
-			prlog(PR_NOTICE, "FSP #%d: FSP reset with DPO pending."
-					" Giving up PSI link\n",
-					fsp->index);
-			psi_disable_link(psi);
-		} else {
-			prlog(PR_NOTICE, "FSP #%d: FSP in Reset."
-				" Waiting for PSI interrupt\n",
-				fsp->index);
-		}
+		/*
+		 * Its possible that the host has gone down, and OPAL is on
+		 * its way down and hence will not see the subsequent PSI
+		 * interrupt. So, just give up the link here.
+		 */
+		psi_disable_link(psi);
+		prlog(PR_NOTICE, "FSP #%d: FSP in reset."
+		      " Giving up PSI link\n", fsp->index);
 		fsp_start_rr(fsp);
 	}
 
@@ -720,16 +737,20 @@ static void fsp_handle_errors(struct fsp *fsp)
 	 * to trigger a HIR so it can try to recover via the DRCR route.
 	 */
 	if (disr & FSP_DISR_HIR_TRIGGER_MASK) {
+		const char *reason = "Unknown FSP_DISR_HIR_TRIGGER";
+		uint32_t plid;
 		fsp_trace_event(fsp, TRACE_FSP_EVT_SOFT_RR, disr, 0, 0, 0);
 
 		if (disr & FSP_DISR_FSP_UNIT_CHECK)
-			prlog(PR_DEBUG, "FSP: DISR Unit Check set\n");
+			reason = "DISR Unit Check set";
 		else if (disr & FSP_DISR_FSP_RUNTIME_TERM)
-			prlog(PR_DEBUG, "FSP: DISR Runtime Terminate set\n");
+			reason = "DISR Runtime Terminate set";
 		else if (disr & FSP_DISR_FSP_FLASH_TERM)
-			prlog(PR_DEBUG, "FSP: DISR Flash Terminate set\n");
-		prlog(PR_NOTICE, "FSP: Triggering host initiated reset"
-		      " sequence\n");
+			reason = "DISR Flash Terminate set";
+
+		plid = log_simple_error(&e_info(OPAL_RC_FSP_DISR_HIR_MASK),
+					"FSP: %s. Triggering host initiated "
+					"reset.", reason);
 
 		/* Clear all interrupt conditions */
 		fsp_wreg(fsp, FSP_HDIR_REG, FSP_DBIRQ_ALL);
@@ -737,7 +758,7 @@ static void fsp_handle_errors(struct fsp *fsp)
 		/* Make sure this happened */
 		fsp_rreg(fsp, FSP_HDIR_REG);
 
-		fsp_trigger_reset();
+		fsp_trigger_reset(plid);
 		return;
 	}
 
@@ -1302,6 +1323,21 @@ static bool fsp_local_command(u32 cmd_sub_mod, struct fsp_msg *msg)
 			}
 		}
 		return true;
+	case FSP_CMD_GET_HIR_PLID:
+		/* Get Platform Log Id with reason for Host Initiated Reset */
+		prlog(PR_DEBUG, "FSP: Sending PLID 0x%x as HIR reason\n",
+		      fsp_hir_reason_plid);
+		resp = fsp_mkmsg(FSP_RSP_GET_HIR_PLID, 1, fsp_hir_reason_plid);
+		if (!resp)
+			prerror("FSP: Failed to allocate GET_HIR_PLID response\n");
+		else {
+			if (fsp_queue_msg(resp, fsp_freemsg)) {
+				fsp_freemsg(resp);
+				prerror("FSP: Failed to queue GET_HIR_PLID resp\n");
+			}
+		}
+		fsp_hir_reason_plid = 0;
+		return true;
 	}
 	return false;
 }
@@ -1324,7 +1360,7 @@ static void fsp_handle_command(struct fsp_msg *msg)
 	cmd_sub_mod =  (msg->word0 & 0xff) << 16;
 	cmd_sub_mod |= (msg->word1 & 0xff) << 8;
 	cmd_sub_mod |= (msg->word1 >> 8) & 0xff;
-	
+
 	/* Some commands are handled locally */
 	if (fsp_local_command(cmd_sub_mod, msg))
 		goto free;
@@ -1689,6 +1725,7 @@ void fsp_interrupt(void)
 	unlock(&fsp_lock);
 }
 
+
 int fsp_sync_msg(struct fsp_msg *msg, bool autofree)
 {
 	int rc;
@@ -1698,6 +1735,11 @@ int fsp_sync_msg(struct fsp_msg *msg, bool autofree)
 		goto bail;
 
 	while(fsp_msg_busy(msg)) {
+		if (fsp_in_rr()) {
+			fsp_cancelmsg(msg);
+			rc = -1;
+			goto bail;
+		}
 		cpu_relax();
 		opal_run_pollers();
 	}
@@ -1897,8 +1939,6 @@ static void fsp_update_links_states(struct fsp *fsp)
 	for (i = 0; i < fsp->iopath_count; i++) {
 		fiop = &fsp->iopath[i];
 		if (!fiop->psi)
-			continue;
-		if (!fiop->psi->working)
 			fiop->state = fsp_path_bad;
 		else if (fiop->psi->active) {
 			fsp->active_iopath = i;
@@ -1977,6 +2017,41 @@ static void fsp_opal_poll(void *data __unused)
 		__fsp_poll(false);
 		unlock(&fsp_lock);
 	}
+}
+
+int fsp_fatal_msg(struct fsp_msg *msg)
+{
+	int rc = 0;
+
+	rc = fsp_queue_msg(msg, NULL);
+	if (rc)
+		return rc;
+
+	while(fsp_msg_busy(msg)) {
+		if (fsp_in_rr()) {
+			fsp_cancelmsg(msg);
+			return -1;
+		}
+
+		cpu_relax();
+		fsp_opal_poll(NULL);
+	}
+
+	switch(msg->state) {
+	case fsp_msg_done:
+		rc = 0;
+		break;
+	case fsp_msg_timeout:
+		rc = -1; /* XXX to improve */
+		break;
+	default:
+		rc = -1; /* Should not happen... (assert ?) */
+	}
+
+	if (msg->resp)
+		rc = (msg->resp->word1 >> 8) & 0xff;
+
+	return rc;
 }
 
 static bool fsp_init_one(const char *compat)
@@ -2093,19 +2168,24 @@ static void fsp_timeout_poll(void *data __unused)
 			w1 = req->word1;
 			mstate = req->state;
 			prlog(PR_WARNING, "FSP: Response from FSP timed out,"
-			      " word0 = %x, word1 = %x state: %d\n",
-			      w0, w1, mstate);
+			      " cmd = %x subcmd = %x mod = %x state: %d\n",
+			      w0 & 0xff, w1 & 0xff, (w1 >> 8) & 0xff, mstate);
 			fsp_reg_dump();
 			fsp_cmdclass_resp_bitmask &= ~(1ull << index);
 			cmdclass->timesent = 0;
-			if (req->resp)
+			if (req->resp) {
 				req->resp->state = fsp_msg_timeout;
+				req->resp->word1 = (FSP_STATUS_BUSY << 8) |
+					(req->resp->word1 & 0xff);
+			}
 			fsp_complete_msg(req);
 			__fsp_trigger_reset();
 			unlock(&fsp_lock);
-			log_simple_error(&e_info(OPAL_RC_FSP_POLL_TIMEOUT),
-					 "FSP: Response from FSP timed out, word0 = %x,"
-					 "word1 = %x state: %d\n", w0, w1, mstate);
+			fsp_hir_reason_plid = log_simple_error(
+				&e_info(OPAL_RC_FSP_POLL_TIMEOUT),
+				"FSP: Response from FSP timed out,"
+				" cmd = %x subcmd = %x mod = %x state: %d\n",
+				w0 & 0xff, w1 & 0xff, (w1 >> 8) & 0xff, mstate);
 		}
 	next_bit:
 		cmdclass_resp_bitmask = cmdclass_resp_bitmask >> 1;
@@ -2267,6 +2347,9 @@ int fsp_fetch_data_queue(uint8_t flags, uint16_t id, uint32_t sub_id,
 #define CAPP_IDX_MURANO_DD20 0x200ef
 #define CAPP_IDX_MURANO_DD21 0x201ef
 #define CAPP_IDX_NAPLES_DD10 0x100d3
+#define CAPP_IDX_NIMBUS_DD10 0x100d1
+#define CAPP_IDX_NIMBUS_DD20 0x200d1
+#define CAPP_IDX_NIMBUS_DD21 0x201d1
 
 static struct {
 	enum resource_id	id;
@@ -2280,6 +2363,9 @@ static struct {
 	{ RESOURCE_ID_CAPP,	CAPP_IDX_VENICE_DD10,	0x80a02003 },
 	{ RESOURCE_ID_CAPP,	CAPP_IDX_VENICE_DD20,	0x80a02004 },
 	{ RESOURCE_ID_CAPP,	CAPP_IDX_NAPLES_DD10,	0x80a02005 },
+	{ RESOURCE_ID_CAPP,	CAPP_IDX_NIMBUS_DD10,	0x80a02006 },
+	{ RESOURCE_ID_CAPP,	CAPP_IDX_NIMBUS_DD20,	0x80a02007 },
+	{ RESOURCE_ID_CAPP,	CAPP_IDX_NIMBUS_DD21,	0x80a02007 },
 };
 
 static void fsp_start_fetching_next_lid(void);

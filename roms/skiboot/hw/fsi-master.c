@@ -1,10 +1,10 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- * 	http://www.apache.org/licenses/LICENSE-2.0
+ *	http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -89,7 +89,7 @@
 /* FSI Slave registers */
 #define FSI_SLAVE_REGS		0x000800	/**< FSI Slave Register */
 #define FSI_SMODE		(FSI_SLAVE_REGS | 0x00)
-#define FSI_SLBUS         	(FSI_SLAVE_REGS | 0x30)
+#define FSI_SLBUS		(FSI_SLAVE_REGS | 0x30)
 #define FSI_SLRES		(FSI_SLAVE_REGS | 0x34)
 
 #define FSI2PIB_ENGINE		0x001000	/**< FSI2PIB Engine (SCOM) */
@@ -313,17 +313,17 @@ static int64_t mfsi_dump_ctrl_regs(struct mfsi *mfsi)
 		MFSI_REG_MAEB,
 		MFSI_REG_MSCSB0,
 	};
-	static const char * dump_regs_names[] = {
+	static const char *dump_regs_names[] = {
 		"MFSI_REG_MATRB0",
 		"MFSI_REG_MDTRB0",
 		"MFSI_REG_MESRB0",
 		"MFSI_REG_MAESP0",
 		"MFSI_REG_MAEB  ",
 		"MFSI_REG_MSCSB0",
-        };
+	};
 	for (i = 0; i < ARRAY_SIZE(dump_regs); i++) {
 		uint32_t val;
-	
+
 		opb_stat = mfsi_opb_read(mfsi, mfsi->reg_base + dump_regs[i], &val);
 		if (opb_stat) {
 			/* Error on dump, give up */
@@ -335,7 +335,7 @@ static int64_t mfsi_dump_ctrl_regs(struct mfsi *mfsi)
 	}
 	for (i = 0; i < 8; i++) {
 		uint32_t val;
-	
+
 		opb_stat = mfsi_opb_read(mfsi, mfsi->reg_base + MFSI_REG_MSTAP(i), &val);
 		if (opb_stat) {
 			/* Error on dump, give up */
@@ -368,7 +368,7 @@ static int64_t mfsi_master_cleanup(struct mfsi *mfsi, uint32_t port)
 
 	/* Perform error reset on Centaur fsi slave: */
 	/*  write 0x4000000 to addr=834 */
-  	opb_stat = mfsi_opb_write(mfsi, port_base + FSI_SLRES, 0x04000000);
+	opb_stat = mfsi_opb_write(mfsi, port_base + FSI_SLRES, 0x04000000);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx writing reset to FSI slave\n",
@@ -378,12 +378,12 @@ static int64_t mfsi_master_cleanup(struct mfsi *mfsi, uint32_t port)
 
 	/* Further step is to issue a PIB reset to the FSI2PIB engine
 	 * in busy state, i.e. write arbitrary data to 101c
-         * (putcfam 1007) register of the previously failed FSI2PIB
-         * engine on Centaur.
+	 * (putcfam 1007) register of the previously failed FSI2PIB
+	 * engine on Centaur.
 	 *
 	 * XXX BenH: Should that be done by the upper FSI XSCOM layer ?
 	 */
-  	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_STATUS, 0xFFFFFFFF);
+	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_STATUS, 0xFFFFFFFF);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx clearing FSI2PIB_STATUS\n",
@@ -394,14 +394,14 @@ static int64_t mfsi_master_cleanup(struct mfsi *mfsi, uint32_t port)
 	/* Need to save/restore the true/comp masks or the FSP (PRD ?) will
 	 * get annoyed
 	 */
-     	opb_stat = mfsi_opb_read(mfsi, port_base + FSI2PIB_COMPMASK, &compmask);
+	opb_stat = mfsi_opb_read(mfsi, port_base + FSI2PIB_COMPMASK, &compmask);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx reading FSI2PIB_COMPMASK\n",
 			 opb_stat);
 		return OPAL_HARDWARE;
 	}
-     	opb_stat = mfsi_opb_read(mfsi, port_base + FSI2PIB_TRUEMASK, &truemask);
+	opb_stat = mfsi_opb_read(mfsi, port_base + FSI2PIB_TRUEMASK, &truemask);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx reading FSI2PIB_TRUEMASK\n",
@@ -410,9 +410,9 @@ static int64_t mfsi_master_cleanup(struct mfsi *mfsi, uint32_t port)
 	}
 
 	/* Then, write arbitrary data to 1018  (putcfam 1006) to
-         * reset any pending FSI2PIB errors.
+	 * reset any pending FSI2PIB errors.
 	 */
-  	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_RESET, 0xFFFFFFFF);
+	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_RESET, 0xFFFFFFFF);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx writing FSI2PIB_RESET\n",
@@ -421,14 +421,14 @@ static int64_t mfsi_master_cleanup(struct mfsi *mfsi, uint32_t port)
 	}
 
 	/* Restore the true/comp masks */
-  	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_COMPMASK, compmask);
+	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_COMPMASK, compmask);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx writing FSI2PIB_COMPMASK\n",
 			 opb_stat);
 		return OPAL_HARDWARE;
 	}
-  	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_TRUEMASK, truemask);
+	opb_stat = mfsi_opb_write(mfsi, port_base + FSI2PIB_TRUEMASK, truemask);
 	if (opb_stat) {
 		mfsi_log(PR_ERR, mfsi,
 			 " OPB stat 0x%016llx writing FSI2PIB_TRUEMASK\n",
@@ -456,11 +456,11 @@ static int64_t mfsi_analyse_fsi_error(struct mfsi *mfsi)
 	mfsi_log(PR_ERR, mfsi, " MESRB0=%08x\n", mesrb0);
 
 	/* bits 8:15 are internal parity errors in the master */
-	if (mesrb0 & 0x00FF0000) {	
+	if (mesrb0 & 0x00FF0000) {
 		mfsi_log(PR_ERR, mfsi, " Master parity error !\n");
 	} else {
 		/* bits 0:3 are a specific error code */
-		switch ((mesrb0 & 0xF0000000) >> 28 ) {
+		switch ((mesrb0 & 0xF0000000) >> 28) {
 		case 0x1: /* OPB error	*/
 		case 0x2: /* Invalid state of OPB state machine */
 			/* error is inside the OPB logic */
@@ -511,7 +511,7 @@ static int64_t mfsi_handle_error(struct mfsi *mfsi, uint32_t port,
 
 	mfsi_log(PR_ERR, mfsi, "Access error on port %d, stat=%012llx\n",
 		 port, opb_stat);
-	
+
 	/* First handle stat codes we synthetized */
 	if (opb_stat & OPB_ERR_XSCOM_ERR)
 		return OPAL_HARDWARE;
@@ -544,7 +544,7 @@ static int64_t mfsi_handle_error(struct mfsi *mfsi, uint32_t port,
 	 * which means an out of bounds control reg
 	 */
 	if ((opb_stat & OPB_STAT_ERRACK) &&
-	    ((fsi_addr & ~0x2ffu) == mfsi->reg_base)) {		
+	    ((fsi_addr & ~0x2ffu) == mfsi->reg_base)) {
 		mfsi_log(PR_ERR, mfsi, " Error appears to be out of bounds reg %08x\n",
 			 fsi_addr);
 		found_root_cause = true;
@@ -630,7 +630,7 @@ static void mfsi_add(struct proc_chip *chip, struct mfsi *mfsi, uint32_t unit)
 	mfsi->unit = unit;
 
 	/* We hard code everything for now */
-	switch(unit) {
+	switch (unit) {
 	case MFSI_cMFSI0:
 		mfsi->xscom_base = PIB2OPB_MFSI0_ADDR;
 		mfsi->ports_base = cMFSI_OPB_PORTS_BASE;
@@ -677,6 +677,7 @@ void mfsi_init(void)
 
 	for_each_chip(chip) {
 		chip->fsi_masters = zalloc(sizeof(struct mfsi) * 3);
+		assert(chip->fsi_masters);
 		mfsi_add(chip, &chip->fsi_masters[MFSI_cMFSI0], MFSI_cMFSI0);
 		mfsi_add(chip, &chip->fsi_masters[MFSI_hMFSI0], MFSI_hMFSI0);
 		mfsi_add(chip, &chip->fsi_masters[MFSI_cMFSI1], MFSI_cMFSI1);

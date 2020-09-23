@@ -23,7 +23,7 @@ ETEXI
 
 STEXI
 @item info version
-@findex version
+@findex info version
 Show the version of QEMU.
 ETEXI
 
@@ -37,7 +37,7 @@ ETEXI
 
 STEXI
 @item info network
-@findex network
+@findex info network
 Show the network state.
 ETEXI
 
@@ -51,7 +51,7 @@ ETEXI
 
 STEXI
 @item info chardev
-@findex chardev
+@findex info chardev
 Show the character devices.
 ETEXI
 
@@ -66,7 +66,7 @@ ETEXI
 
 STEXI
 @item info block
-@findex block
+@findex info block
 Show info of one block device or all block devices.
 ETEXI
 
@@ -80,7 +80,7 @@ ETEXI
 
 STEXI
 @item info blockstats
-@findex blockstats
+@findex info blockstats
 Show block device statistics.
 ETEXI
 
@@ -96,7 +96,7 @@ ETEXI
 
 STEXI
 @item info block-jobs
-@findex block-jobs
+@findex info block-jobs
 Show progress of ongoing block device operations.
 ETEXI
 
@@ -112,23 +112,24 @@ ETEXI
 
 STEXI
 @item info registers
-@findex registers
+@findex info registers
 Show the cpu registers.
 ETEXI
 
 #if defined(TARGET_I386)
     {
         .name       = "lapic",
-        .args_type  = "",
-        .params     = "",
-        .help       = "show local apic state",
+        .args_type  = "apic-id:i?",
+        .params     = "[apic-id]",
+        .help       = "show local apic state (apic-id: local apic to read, default is which of current CPU)",
+
         .cmd        = hmp_info_local_apic,
     },
 #endif
 
 STEXI
 @item info lapic
-@findex lapic
+@findex info lapic
 Show local APIC state
 ETEXI
 
@@ -144,7 +145,7 @@ ETEXI
 
 STEXI
 @item info ioapic
-@findex ioapic
+@findex info ioapic
 Show io APIC state
 ETEXI
 
@@ -158,7 +159,7 @@ ETEXI
 
 STEXI
 @item info cpus
-@findex cpus
+@findex info cpus
 Show infos for each CPU.
 ETEXI
 
@@ -172,7 +173,7 @@ ETEXI
 
 STEXI
 @item info history
-@findex history
+@findex info history
 Show the command line history.
 ETEXI
 
@@ -186,7 +187,7 @@ ETEXI
 
 STEXI
 @item info irq
-@findex irq
+@findex info irq
 Show the interrupts statistics (if available).
 ETEXI
 
@@ -200,7 +201,7 @@ ETEXI
 
 STEXI
 @item info pic
-@findex pic
+@findex info pic
 Show i8259 (PIC) state.
 ETEXI
 
@@ -214,12 +215,12 @@ ETEXI
 
 STEXI
 @item info pci
-@findex pci
+@findex info pci
 Show PCI information.
 ETEXI
 
 #if defined(TARGET_I386) || defined(TARGET_SH4) || defined(TARGET_SPARC) || \
-    defined(TARGET_PPC) || defined(TARGET_XTENSA)
+    defined(TARGET_PPC) || defined(TARGET_XTENSA) || defined(TARGET_M68K)
     {
         .name       = "tlb",
         .args_type  = "",
@@ -231,7 +232,7 @@ ETEXI
 
 STEXI
 @item info tlb
-@findex tlb
+@findex info tlb
 Show virtual to physical memory mappings.
 ETEXI
 
@@ -247,7 +248,7 @@ ETEXI
 
 STEXI
 @item info mem
-@findex mem
+@findex info mem
 Show the active virtual memory mappings.
 ETEXI
 
@@ -262,7 +263,7 @@ ETEXI
 
 STEXI
 @item info mtree
-@findex mtree
+@findex info mtree
 Show memory tree.
 ETEXI
 
@@ -278,7 +279,7 @@ ETEXI
 
 STEXI
 @item info jit
-@findex jit
+@findex info jit
 Show dynamic compiler info.
 ETEXI
 
@@ -294,7 +295,7 @@ ETEXI
 
 STEXI
 @item info opcount
-@findex opcount
+@findex info opcount
 Show dynamic compiler opcode counters
 ETEXI
 
@@ -308,7 +309,7 @@ ETEXI
 
 STEXI
 @item info kvm
-@findex kvm
+@findex info kvm
 Show KVM information.
 ETEXI
 
@@ -322,7 +323,7 @@ ETEXI
 
 STEXI
 @item info numa
-@findex numa
+@findex info numa
 Show NUMA information.
 ETEXI
 
@@ -336,7 +337,7 @@ ETEXI
 
 STEXI
 @item info usb
-@findex usb
+@findex info usb
 Show guest USB devices.
 ETEXI
 
@@ -350,7 +351,7 @@ ETEXI
 
 STEXI
 @item info usbhost
-@findex usbhost
+@findex info usbhost
 Show host USB devices.
 ETEXI
 
@@ -364,7 +365,7 @@ ETEXI
 
 STEXI
 @item info profile
-@findex profile
+@findex info profile
 Show profiling information.
 ETEXI
 
@@ -378,7 +379,7 @@ ETEXI
 
 STEXI
 @item info capture
-@findex capture
+@findex info capture
 Show capture information.
 ETEXI
 
@@ -392,7 +393,7 @@ ETEXI
 
 STEXI
 @item info snapshots
-@findex snapshots
+@findex info snapshots
 Show the currently saved VM snapshots.
 ETEXI
 
@@ -406,7 +407,7 @@ ETEXI
 
 STEXI
 @item info status
-@findex status
+@findex info status
 Show the current VM status (running|paused).
 ETEXI
 
@@ -420,7 +421,7 @@ ETEXI
 
 STEXI
 @item info mice
-@findex mice
+@findex info mice
 Show which guest mouse is receiving events.
 ETEXI
 
@@ -434,7 +435,7 @@ ETEXI
 
 STEXI
 @item info vnc
-@findex vnc
+@findex info vnc
 Show the vnc server status.
 ETEXI
 
@@ -450,7 +451,7 @@ ETEXI
 
 STEXI
 @item info spice
-@findex spice
+@findex info spice
 Show the spice server status.
 ETEXI
 
@@ -464,7 +465,7 @@ ETEXI
 
 STEXI
 @item info name
-@findex name
+@findex info name
 Show the current VM name.
 ETEXI
 
@@ -478,7 +479,7 @@ ETEXI
 
 STEXI
 @item info uuid
-@findex uuid
+@findex info uuid
 Show the current VM UUID.
 ETEXI
 
@@ -492,7 +493,7 @@ ETEXI
 
 STEXI
 @item info cpustats
-@findex cpustats
+@findex info cpustats
 Show CPU statistics.
 ETEXI
 
@@ -508,7 +509,7 @@ ETEXI
 
 STEXI
 @item info usernet
-@findex usernet
+@findex info usernet
 Show user network stack connection states.
 ETEXI
 
@@ -522,7 +523,7 @@ ETEXI
 
 STEXI
 @item info migrate
-@findex migrate
+@findex info migrate
 Show migration status.
 ETEXI
 
@@ -536,7 +537,7 @@ ETEXI
 
 STEXI
 @item info migrate_capabilities
-@findex migrate_capabilities
+@findex info migrate_capabilities
 Show current migration capabilities.
 ETEXI
 
@@ -550,7 +551,7 @@ ETEXI
 
 STEXI
 @item info migrate_parameters
-@findex migrate_parameters
+@findex info migrate_parameters
 Show current migration parameters.
 ETEXI
 
@@ -564,7 +565,7 @@ ETEXI
 
 STEXI
 @item info migrate_cache_size
-@findex migrate_cache_size
+@findex info migrate_cache_size
 Show current migration xbzrle cache size.
 ETEXI
 
@@ -578,7 +579,7 @@ ETEXI
 
 STEXI
 @item info balloon
-@findex balloon
+@findex info balloon
 Show balloon information.
 ETEXI
 
@@ -592,7 +593,7 @@ ETEXI
 
 STEXI
 @item info qtree
-@findex qtree
+@findex info qtree
 Show device tree.
 ETEXI
 
@@ -606,7 +607,7 @@ ETEXI
 
 STEXI
 @item info qdm
-@findex qdm
+@findex info qdm
 Show qdev device model list.
 ETEXI
 
@@ -620,7 +621,7 @@ ETEXI
 
 STEXI
 @item info qom-tree
-@findex qom-tree
+@findex info qom-tree
 Show QOM composition tree.
 ETEXI
 
@@ -634,7 +635,7 @@ ETEXI
 
 STEXI
 @item info roms
-@findex roms
+@findex info roms
 Show roms.
 ETEXI
 
@@ -650,7 +651,7 @@ ETEXI
 
 STEXI
 @item info trace-events
-@findex trace-events
+@findex info trace-events
 Show available trace-events & their state.
 ETEXI
 
@@ -664,7 +665,7 @@ ETEXI
 
 STEXI
 @item info tpm
-@findex tpm
+@findex info tpm
 Show the TPM device.
 ETEXI
 
@@ -678,7 +679,7 @@ ETEXI
 
 STEXI
 @item info memdev
-@findex memdev
+@findex info memdev
 Show memory backends
 ETEXI
 
@@ -692,7 +693,7 @@ ETEXI
 
 STEXI
 @item info memory-devices
-@findex memory-devices
+@findex info memory-devices
 Show memory devices.
 ETEXI
 
@@ -706,7 +707,7 @@ ETEXI
 
 STEXI
 @item info iothreads
-@findex iothreads
+@findex info iothreads
 Show iothread's identifiers.
 ETEXI
 
@@ -720,7 +721,7 @@ ETEXI
 
 STEXI
 @item info rocker @var{name}
-@findex rocker
+@findex info rocker
 Show rocker switch.
 ETEXI
 
@@ -733,8 +734,8 @@ ETEXI
     },
 
 STEXI
-@item info rocker_ports @var{name}-ports
-@findex ocker-ports
+@item info rocker-ports @var{name}-ports
+@findex info rocker-ports
 Show rocker ports.
 ETEXI
 
@@ -747,8 +748,8 @@ ETEXI
     },
 
 STEXI
-@item info rocker_of_dpa_flows @var{name} [@var{tbl_id}]
-@findex rocker-of-dpa-flows
+@item info rocker-of-dpa-flows @var{name} [@var{tbl_id}]
+@findex info rocker-of-dpa-flows
 Show rocker OF-DPA flow tables.
 ETEXI
 
@@ -762,7 +763,7 @@ ETEXI
 
 STEXI
 @item info rocker-of-dpa-groups @var{name} [@var{type}]
-@findex rocker-of-dpa-groups
+@findex info rocker-of-dpa-groups
 Show rocker OF-DPA groups.
 ETEXI
 
@@ -778,7 +779,7 @@ ETEXI
 
 STEXI
 @item info skeys @var{address}
-@findex skeys
+@findex info skeys
 Display the value of a storage key (s390 only)
 ETEXI
 
@@ -794,7 +795,7 @@ ETEXI
 
 STEXI
 @item info cmma @var{address}
-@findex cmma
+@findex info cmma
 Display the values of the CMMA storage attributes for a range of pages (s390 only)
 ETEXI
 
@@ -808,7 +809,7 @@ ETEXI
 
 STEXI
 @item info dump
-@findex dump
+@findex info dump
 Display the latest dump status.
 ETEXI
 
@@ -822,7 +823,7 @@ ETEXI
 
 STEXI
 @item info ramblock
-@findex ramblock
+@findex info ramblock
 Dump all the ramblocks of the system.
 ETEXI
 
@@ -836,14 +837,8 @@ ETEXI
 
 STEXI
 @item info hotpluggable-cpus
-@findex hotpluggable-cpus
+@findex info hotpluggable-cpus
 Show information about hotpluggable CPUs
-ETEXI
-
-STEXI
-@item info vm-generation-id
-@findex vm-generation-id
-Show Virtual Machine Generation ID
 ETEXI
 
     {
@@ -853,6 +848,44 @@ ETEXI
         .help       = "Show Virtual Machine Generation ID",
         .cmd = hmp_info_vm_generation_id,
     },
+
+STEXI
+@item info vm-generation-id
+@findex info vm-generation-id
+Show Virtual Machine Generation ID
+ETEXI
+
+    {
+        .name       = "memory_size_summary",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show the amount of initially allocated and "
+                      "present hotpluggable (if enabled) memory in bytes.",
+        .cmd        = hmp_info_memory_size_summary,
+    },
+
+STEXI
+@item info memory_size_summary
+@findex info memory_size_summary
+Display the amount of initially allocated and present hotpluggable (if
+enabled) memory in bytes.
+ETEXI
+
+#if defined(TARGET_I386)
+    {
+        .name       = "sev",
+        .args_type  = "",
+        .params     = "",
+        .help       = "show SEV information",
+        .cmd        = hmp_info_sev,
+    },
+#endif
+
+STEXI
+@item info sev
+@findex info sev
+Show SEV information.
+ETEXI
 
 STEXI
 @end table

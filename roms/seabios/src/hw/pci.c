@@ -12,7 +12,6 @@
 #include "x86.h" // outl
 
 #define PORT_PCI_CMD           0x0cf8
-#define PORT_PCI_REBOOT        0x0cf9
 #define PORT_PCI_DATA          0x0cfc
 
 void pci_config_writel(u16 bdf, u32 addr, u32 val)
@@ -57,6 +56,30 @@ pci_config_maskw(u16 bdf, u32 addr, u16 off, u16 on)
     u16 val = pci_config_readw(bdf, addr);
     val = (val & ~off) | on;
     pci_config_writew(bdf, addr, val);
+}
+
+u8 pci_find_capability(u16 bdf, u8 cap_id, u8 cap)
+{
+    int i;
+    u16 status = pci_config_readw(bdf, PCI_STATUS);
+
+    if (!(status & PCI_STATUS_CAP_LIST))
+        return 0;
+
+    if (cap == 0) {
+        /* find first */
+        cap = pci_config_readb(bdf, PCI_CAPABILITY_LIST);
+    } else {
+        /* find next */
+        cap = pci_config_readb(bdf, cap + PCI_CAP_LIST_NEXT);
+    }
+    for (i = 0; cap && i <= 0xff; i++) {
+        if (pci_config_readb(bdf, cap + PCI_CAP_LIST_ID) == cap_id)
+            return cap;
+        cap = pci_config_readb(bdf, cap + PCI_CAP_LIST_NEXT);
+    }
+
+    return 0;
 }
 
 // Helper function for foreachbdf() macro - return next device

@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -68,6 +68,7 @@ struct spira_ntuples {
 	struct spira_ntuple	pcia;			/* 0x2e0 */
 	struct spira_ntuple	proc_chip;		/* 0x300 */
 	struct spira_ntuple	hs_data;		/* 0x320 */
+	struct spira_ntuple	ipmi_sensor;		/* 0x360 */
 };
 
 struct spira {
@@ -81,7 +82,7 @@ struct spira {
 	 *
 	 * According to FSP engineers, this is an okay thing to do.
 	 */
-	u8			reserved[0xc0];
+	u8			reserved[0xa0];
 } __packed __align(0x100);
 
 extern struct spira spira;
@@ -103,6 +104,7 @@ struct spirah_ntuples {
 	struct spira_ntuple	mdump_src;	/* 0x0a0 */
 	struct spira_ntuple	mdump_dst;	/* 0x0c0 */
 	struct spira_ntuple	mdump_res;	/* 0x0e0 */
+	struct spira_ntuple	proc_dump_area;	/* 0x100 */
 };
 
 struct spirah {
@@ -110,7 +112,7 @@ struct spirah {
 	struct HDIF_idata_ptr	ntuples_ptr;
 	__be64			pad;
 	struct spirah_ntuples	ntuples;
-	u8			reserved[0x100];
+	u8			reserved[0xE0];
 } __packed __align(0x100);
 
 extern struct spirah spirah;
@@ -119,7 +121,8 @@ extern struct spirah spirah;
 #define SPIRAS_HDIF_SIG		"SPIRAS"
 
 /* First version on 810 release */
-#define SPIRAS_VERSION		0x40
+#define SPIRAS_VERSION_P8	0x40
+#define SPIRAS_VERSION_P9	0x50
 
 /* N-tuples in SPIRAS */
 #define SPIRAS_NTUPLES_COUNT	0x10
@@ -141,15 +144,17 @@ struct spiras_ntuples {
 	struct spira_ntuple	pcia;			/* 0x1c0 */
 	struct spira_ntuple	proc_chip;		/* 0x1e0 */
 	struct spira_ntuple	hs_data;		/* 0x200 */
-	struct spira_ntuple	ipmi_sensor;		/* 0x220 */
-} __packed __align(0x100);
+	struct spira_ntuple	hbrt_data;		/* 0x220 */
+	struct spira_ntuple	ipmi_sensor;		/* 0x240 */
+	struct spira_ntuple	node_data;		/* 0x260 */
+};
 
 struct spiras {
 	struct HDIF_common_hdr	hdr;
 	struct HDIF_idata_ptr	ntuples_ptr;
 	__be64			pad;
 	struct spiras_ntuples	ntuples;
-	u8			reserved[0x1c0];
+	u8			reserved[0x180];
 } __packed __align(0x100);
 
 extern struct spiras *spiras;
@@ -201,6 +206,8 @@ struct proc_init_data {
 	struct {
 		__be64	nia;
 		__be64	msr;
+		__be64	nia_charm_time;
+		__be64	msr_charm_time;
 	} regs;
 } __packed __align(0x10);
 
@@ -211,7 +218,7 @@ struct proc_init_data {
 struct spira_fru_id {
 	__be16		slca_index;
 	__be16		rsrc_id;	/* formerly VPD port number */
-};
+} __packed;
 
 /*
  * The FRU operational status structure is used in several
@@ -222,7 +229,7 @@ struct spira_fru_op_status {
 #define FRU_OP_STATUS_FLAG_USED		0x02 /* If 0 -> not used (redundant) */
 #define FRU_OP_STATUS_FLAG_FUNCTIONAL	0x01 /* If 0 -> non-functional */
 	uint8_t	reserved[3];
-};
+} __packed;
 
 /*
  * Move VPD related stuff to another file ...
@@ -256,7 +263,8 @@ struct spss_sp_impl {
 #define SPSS_SP_IMPL_FLAGS_PRIMARY	0x2000
 	u8	chip_version;
 	u8	reserved;
-};
+	u8	sp_family[64];
+} __packed;
 
 /* Idata index 3 is deprecated */
 
@@ -271,6 +279,7 @@ struct spss_iopath {
 	__be16	iopath_type;
 #define SPSS_IOPATH_TYPE_IOHUB_PHB	0x0001
 #define SPSS_IOPATH_TYPE_PSI		0x0002
+#define SPSS_IOPATH_TYPE_LPC		0x0003
 	union {
 		struct {
 			__be16	iohub_chip_inst;
@@ -291,6 +300,40 @@ struct spss_iopath {
 			__be32	reserved2;
 			__be64	gxhb_base;
 		} __packed psi;
+
+		struct { /* only populated after version 0x30 */
+			__be16	link_status;
+#define LPC_STATUS_STUFFED 0x0000
+#define LPC_STATUS_ACTIVE  0x0001
+			uint8_t ml2_version;
+			uint8_t reserved[3];
+			__be32	chip_id;
+
+			__be32	io_bar;
+			__be32	memory_bar;
+			__be32	firmware_bar;
+			__be32	internal_bar;
+
+			__be32	reserved2;
+
+			__be64	uart_base;
+			__be32	uart_size;
+			__be32	uart_clk;  /* UART baud clock in Hz */
+			__be32	uart_baud; /* UART baud rate */
+
+			uint8_t uart_int_number;
+			uint8_t uart_int_type;
+#define			UART_INT_LVL_LOW	0x1
+#define			UART_INT_RISING		0x2
+#define			UART_INT_LVL_HIGH	0x3
+			uint8_t reserved3[2];
+
+			__be64	bt_base;
+			__be32	bt_size;
+			uint8_t	bt_sms_int_num;
+			uint8_t	bt_bmc_response_int_num;
+			uint8_t	reserved4[2];
+		} __packed lpc;
 	};
 } __packed;
 
@@ -311,6 +354,7 @@ struct iplparams_sysparams {
 	__be32		abc_bus_speed;
 	__be32		wxyz_bus_speed;
 	__be32		sys_eco_mode;
+#define SYS_ATTR_RISK_LEVEL PPC_BIT32(3)
 	__be32		sys_attributes;
 	__be32		mem_scrubbing;
 	__be16		cur_spl_value;
@@ -321,6 +365,17 @@ struct iplparams_sysparams {
 	uint8_t		hw_page_table_size;	/* >= 0x59 */
 	__be16		hv_disp_wheel;		/* >= 0x58 */
 	__be32		nest_freq_mhz;		/* >= 0x5b */
+	uint8_t		split_core_mode;	/* >= 0x5c */
+	uint8_t		reserved[3];
+	uint8_t		sys_vendor[64];		/* >= 0x5f */
+	/* >= 0x60 */
+	__be16		sys_sec_setting;
+	__be16		tpm_config_bit;
+	__be16		tpm_drawer;
+	__be16		reserved2;
+	uint8_t		hw_key_hash[64];
+	uint8_t		sys_family_str[64];	/* vendor,name */
+	uint8_t		sys_type_str[64];	/* vendor,type */
 } __packed;
 
 /* Idata index 1: IPL parameters */
@@ -349,8 +404,12 @@ struct iplparams_iplparams {
 	uint8_t		huge_page_size;
 #define IPLPARAMS_HUGE_PG_SIZE_16G	0
 	uint8_t		num_vlan_switches;
-	__be64		reserved2;
-};
+	__be32		reserved2;
+	__be32		enlarge_io;	/* >= 0x5a */
+	uint8_t		core_config;
+#define IPLPARAMS_CORE_NORMAL	0x00
+#define IPLPARAMS_CORE_FUSE	0x01
+} __packed;
 
 /* Idata index 4: Platform Dump Descriptor */
 #define IPLPARAMS_PLATFORM_DUMP		4
@@ -367,7 +426,7 @@ struct iplparams_dump {
 	__be32	act_hw_dump_sz;
 	__be32	max_sp_dump_sz;
 	__be32	plid;
-};
+} __packed;
 
 /* Idata index 8: serial ports */
 #define IPLPARMS_IDATA_SERIAL	8
@@ -424,14 +483,14 @@ struct msvpd_ms_addr_config {
 	__be64	 max_possible_ms_address;
 	__be32	 deprecated;
 	__be64	 mirrorable_memory_starting_address;
-} __attribute__((packed));
+} __packed;
 
 /* Idata index 1: Total configured mainstore */
 #define MSVPD_IDATA_TOTAL_CONFIG_MS	1
 
 struct msvpd_total_config_ms {
 	__be64	 total_in_mb;
-};
+} __packed;
 
 /* Idata index 2: Page mover and sync structure */
 #define MSVPD_IDATA_PMOVER_SYNCHRO	2
@@ -452,12 +511,30 @@ struct msvpd_pmover_bsr_synchro {
 	__be64		pmover_addr;
 	__be64		bsr_addr;
 	__be64		xscom_addr;
-
-};
+} __packed;
 
 /* Idata index 3: Memory Trace Array */
+#define MSVPD_IDATA_TRACE_AREAS		3
+struct msvpd_trace {
+	__be64 start, end;
+	char reserved[16];
+};
 
 /* Idata index 4: UE Address Array */
+
+/* Idata index 5: Hostboot reserved memory address range */
+#define MSVPD_IDATA_HB_RESERVED_MEM	5
+struct msvpd_hb_reserved_mem {
+	__be32		type_instance;
+	__be64		start_addr;
+	__be64		end_addr;
+	__be32		label_size;
+	uint8_t		label[64];
+	uint8_t		rw_perms;
+#define HB_RESERVE_READABLE 0x80
+#define HB_RESERVE_WRITEABLE 0x40
+	uint8_t		reserved[7];
+} __packed;
 
 /* Child index 0: MS area child structure */
 #define MSVPD_CHILD_MS_AREAS		0
@@ -487,6 +564,7 @@ struct msvpd_pmover_bsr_synchro {
  */
 #define CECHUB_FRU_HDIF_SIG	"IO HUB"
 #define IOKID_FRU_HDIF_SIG	"IO KID"
+#define IOSLOT_FRU_HDIF_SIG	"IOSLOT"
 
 /* Idata index 0: FRU ID data
  *
@@ -547,6 +625,8 @@ struct cechub_io_hub {
 #define CECHUB_HUB_FAB_BR0_PDT_PHB1	0x40
 #define CECHUB_HUB_FAB_BR0_PDT_PHB2	0x20
 #define CECHUB_HUB_FAB_BR0_PDT_PHB3	0x10
+#define CECHUB_HUB_FAB_BR0_PDT_PHB4	0x08
+#define CECHUB_HUB_FAB_BR0_PDT_PHB5	0x04
 	uint8_t		fab_br1_pdt;	/* p5ioc2 & p7ioc PCI-E */
 #define CECHUB_HUB_FAB_BR1_PDT_PHB0	0x80
 #define CECHUB_HUB_FAB_BR1_PDT_PHB1	0x40
@@ -555,10 +635,14 @@ struct cechub_io_hub {
 #define CECHUB_HUB_FAB_BR1_PDT_PHB4	0x08 /* p7ioc only */
 #define CECHUB_HUB_FAB_BR1_PDT_PHB5	0x04 /* p7ioc only */
 	__be16		iohub_id;	/* the type of hub */
-#define CECHUB_HUB_P7IOC	0x60e7	/* from VPL3 */
-#define CECHUB_HUB_MURANO	0x20ef	/* Murano from spec */
-#define CECHUB_HUB_MURANO_SEGU	0x0001	/* Murano+Seguso from spec */
-#define CECHUB_HUB_VENICE_WYATT	0x0010	/* Venice+Wyatt from spec */
+#define CECHUB_HUB_P7IOC		0x60e7	/* from VPL3 */
+#define CECHUB_HUB_MURANO		0x20ef	/* Murano from spec */
+#define CECHUB_HUB_MURANO_SEGU		0x0001	/* Murano+Seguso from spec */
+#define CECHUB_HUB_VENICE_WYATT		0x0010	/* Venice+Wyatt from spec */
+#define CECHUB_HUB_NIMBUS_SFORAZ	0x0020	/* Nimbus+sforaz from spec */
+#define CECHUB_HUB_NIMBUS_MONZA		0x0021	/* Nimbus+monza from spec */
+#define CECHUB_HUB_NIMBUS_LAGRANGE	0x0022	/* Nimbus+lagrange from spec */
+#define CECHUB_HUB_CUMULUS_DUOMO	0x0031	/* cumulus+duomo from spec */
 	__be32		ec_level;
 	__be32		aff_dom2;	/* HDAT < v9.x only */
 	__be32		aff_dom3;	/* HDAT < v9.x only */
@@ -595,10 +679,18 @@ struct cechub_io_hub {
 			__be16		gx_bus_speed;	/* Version 0x58 */
 		};
 
-		/* HDAT >= v9.x, HDIF version 0x6A or later */
+		/* HDAT >= v9.x, HDIF version 0x6A adds phb_lane_eq with four
+		 *               words per PHB (4 PHBs).
+		 *
+		 * HDAT >= 10.x, HDIF version 0x7A adds space for another two
+		 *               two PHBs (6 total) and the gen4 EQ values.
+		 */
 		struct {
-			/* 4 values per PHB, 4 PHBs */
-			__be64		phb_lane_eq[4][4];
+			/* Gen 3 PHB eq values, 6 PHBs */
+			__be64		phb_lane_eq[6][4];
+
+			/* Gen 4 PHB eq values */
+			__be64		phb4_lane_eq[6][4];
 		};
 	};
 } __packed;
@@ -608,6 +700,93 @@ struct cechub_io_hub {
 
 /* Child index 0: IO Daugther Card */
 #define CECHUB_CHILD_IO_KIDS		0
+
+/* Child index 1: PCIe Slot Mapping Information */
+#define CECHUB_CHILD_IOSLOTS		1
+
+#define IOSLOT_IDATA_SLOTMAP 0
+
+struct slot_map_entry {
+	__be16 entry_id;
+	__be16 parent_id;
+	uint8_t phb_index; /* only valid for ROOT and SWITCH_UP */
+
+	uint8_t type;
+#define SLOT_TYPE_ROOT_COMPLEX 0x0
+#define SLOT_TYPE_SWITCH_UP    0x1
+#define SLOT_TYPE_SWITCH_DOWN  0x2
+#define SLOT_TYPE_BUILTIN      0x3
+
+	uint8_t lane_swapped;
+	uint8_t reserved;
+	__be16	lane_mask;
+	__be16  lane_reverse;
+
+	/* what can I do with this? reference something under/vpd/ ? */
+	__be16 slca_idx;
+
+	__be16 mrw_slot_id;
+
+	__be32 features;
+#define SLOT_FEAT_SLOT 0x1
+
+	uint8_t up_port;
+	uint8_t down_port; /* the switch port this device is attached to */
+
+	__be32 vendor_id;
+	__be32 device_id;
+	__be32 sub_vendor_id;
+	__be32 sub_device_id;
+	char name[8];
+} __packed;
+
+#define IOSLOT_IDATA_DETAILS 1
+
+struct slot_map_details {
+	__be16 entry;
+
+	/* Phyp junk, ignore */
+	uint8_t mgc_load_source;
+	uint8_t hddw_order;
+	__be16 mmio_size_32; /* In MB */
+	__be16 mmio_size_64;
+	__be16 dma_size_32;
+	__be16 dma_size_64;
+
+	uint8_t power_ctrl_type; /* slot power control source */
+#define SLOT_PWR_NONE 0x0
+#define SLOT_PWR_I2C  0x1
+
+	uint8_t presence_det_type; /* slot presence detect source */
+#define SLOT_PRESENCE_NONE 0x0
+#define SLOT_PRESENCE_PCI  0x1
+#define SLOT_PRESENCE_I2C  0x2
+
+	uint8_t perst_ctl_type; /* slot PERST source */
+#define SLOT_PERST_NONE      0x0
+#define SLOT_PERST_PHB_OR_SW 0x1
+#define SLOT_PERST_SW_GPIO   0x2
+	uint8_t perst_gpio;
+
+	__be16 max_power; /* in W? */
+
+	__be32 slot_caps;
+#define SLOT_CAP_LSI      0x01 /* phyp junk? */
+#define SLOT_CAP_CAPI     0x02
+#define SLOT_CAP_CCARD    0x04
+#define SLOT_CAP_HOTPLUG  0x08
+#define SLOT_CAP_SRIOV    0x10 /* phyp junk */
+#define SLOT_CAP_ELLOCO   0x20 /* why is this seperate from the nvlink cap? */
+#define SLOT_CAP_NVLINK   0x30
+
+	__be16 reserved1;
+
+	/* I2C Link IDs */
+	__be32 i2c_power_ctl;
+	__be32 i2c_pgood;
+	__be32 i2c_cable_card; /* opencapi presence detect? */
+	__be32 i2c_mex_fpga;
+};
 
 /*
  * IO KID is a dauther card structure
@@ -827,7 +1006,7 @@ struct sppaca_cpu_cache {
 	__be32 l2_cache_assoc_sets;
 	__be32 l35_dcache_size_kb;
 	__be32 l35_cache_line_size;
-};
+} __packed;
 
 /* Idata index 6 : CPU Attributes */
 #define SPPACA_IDATA_CPU_ATTR	6
@@ -931,6 +1110,23 @@ struct sppcrd_chip_info {
 	__be32 reserved;
 	__be32 dbob_id;
 	__be32 occ_state;
+	/* Version 0xC - none of these are used */
+	__be32 processor_fru_id;
+	__be32 chip_ec_level;
+	__be32 hw_module_id;
+	__be32 hw_card_id;
+	__be32 internal_drawer_nid;
+	__be32 ccm_nid;
+	/* Version 0xD */
+	__be32 capp0_func_state;
+	/* Version 0xE */
+	__be32 capp1_func_state;
+	/* *possibly* from Version 0x20 - check spec */
+	__be32 stop_levels;
+	/* From latest version (possibly 0x21 and later) */
+	__be32 sw_xstop_fir_scom;
+	uint8_t sw_xstop_fir_bitpos;
+	uint8_t	reserved_1[3];
 } __packed;
 
 /* Idata index 1 : Chip TOD */
@@ -952,6 +1148,50 @@ struct sppcrd_chip_tod {
 /* Idata index 4 : Module VPD */
 #define SPPCRD_IDATA_MODULE_VPD	4
 
+/* Idata index 5 : Chip attached I2C devices */
+#define SPPCRD_IDATA_HOST_I2C	5
+
+/* Idata index 5 : Chip attached I2C devices */
+#define SPPCRD_IDATA_PNOR	6
+
+/* Idata index 6 : OpenCAPI/NVlink info */
+#define SPPCRD_IDATA_SMP_LINK	7
+struct sppcrd_smp_link {
+	__be32 link_id;
+	__be32 usage;
+#define SMP_LINK_USE_NONE 	0
+#define SMP_LINK_USE_DEVICE	1
+#define SMP_LINK_USE_INTERPOSER 2
+#define SMP_LINK_USE_DRAWER	3
+#define SMP_LINK_USE_D2D	4 /* GPU to GPU */
+	__be32 brick_id;
+	__be32 lane_mask;
+
+	/* bonded pci slots (mostly a NVLink thing) */
+	__be16 pci_slot_idx;
+	__be16 pci_sideband_slot_idx;
+
+	__be16 slca_idx; /* SLCA index of the *external* port */
+	__be16 reserved;
+
+	/* nvlink/ocapi detection devices */
+	__be32 i2c_link_cable;
+	__be32 i2c_presence;
+	__be32 i2c_micro;
+	uint8_t link_speed;
+	uint8_t occ_flag_bit;
+	__be16 gpu_slca;
+} __packed;
+
+/* Idata index 8 : chip EC Level array */
+#define SPPCRD_IDATA_EC_LEVEL	8
+
+struct sppcrd_ecid {
+	__be32	chip_id;
+	__be32	ec_level;
+	__be64	low;	/* Processor ECID bit 0-63 */
+	__be64	high;	/* Processor ECID bit 64-127 */
+} __packed;
 
 /*
  * Host Services Data.
@@ -960,6 +1200,27 @@ struct sppcrd_chip_tod {
 
 /* Idata index 0 : System attribute data */
 #define HSERV_IDATA_SYS_ATTR	0
+
+/* IPMI sensors mapping data */
+#define IPMI_SENSORS_HDIF_SIG	"FRUSE "
+
+/* Idata index 0 : Sensor mapping data */
+#define IPMI_SENSORS_IDATA_SENSORS	0
+
+struct ipmi_sensors_data {
+	__be32	slca_index;
+	uint8_t	type;
+	uint8_t	id;
+	__be16	reserved;
+} __packed;
+
+struct ipmi_sensors {
+	__be32	count;
+	struct ipmi_sensors_data data[];
+} __packed;
+
+/* Idata index 1 : LED - sensors ID mapping data */
+#define IPMI_SENSORS_IDATA_LED		1
 
 static inline const char *cpu_state(u32 flags)
 {

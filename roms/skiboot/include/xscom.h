@@ -143,6 +143,12 @@
 #define XSCOM_ADDR_P9_EC_SLAVE(core, addr) \
 	XSCOM_ADDR_P9_EC(core, (addr) | 0xf0000)
 
+/* Power 9 EC slave per-core power mgt slave registers */
+#define EC_PPM_SPECIAL_WKUP_OTR		0x010A
+#define EC_PPM_SPECIAL_WKUP_FSP		0x010B
+#define EC_PPM_SPECIAL_WKUP_OCC		0x010C
+#define EC_PPM_SPECIAL_WKUP_HYP		0x010D
+
 /************* XXXX Move these P8 only registers elswhere !!! ****************/
 
 /* Per core power mgt registers */
@@ -192,6 +198,7 @@
 #define XSCOM_DATA_IND_COMPLETE		PPC_BIT(32)
 #define XSCOM_DATA_IND_ERR		PPC_BITMASK(33,35)
 #define XSCOM_DATA_IND_DATA		PPC_BITMASK(48,63)
+#define XSCOM_DATA_IND_FORM1_DATA	PPC_BITMASK(12,63)
 
 /* HB folks say: try 10 time for now */
 #define XSCOM_IND_MAX_RETRIES		10
@@ -208,9 +215,22 @@
  * Error codes TBD, 0 = success
  */
 
+/* Use only in select places where multiple SCOMs are time/latency sensitive */
+extern void _xscom_lock(void);
+extern int _xscom_read(uint32_t partid, uint64_t pcb_addr, uint64_t *val, bool take_lock);
+extern int _xscom_write(uint32_t partid, uint64_t pcb_addr, uint64_t val, bool take_lock);
+extern void _xscom_unlock(void);
+
+
 /* Targeted SCOM access */
-extern int xscom_read(uint32_t partid, uint64_t pcb_addr, uint64_t *val);
-extern int xscom_write(uint32_t partid, uint64_t pcb_addr, uint64_t val);
+static inline int xscom_read(uint32_t partid, uint64_t pcb_addr, uint64_t *val)
+{
+	return _xscom_read(partid, pcb_addr, val, true);
+}
+static inline int xscom_write(uint32_t partid, uint64_t pcb_addr, uint64_t val) {
+	return _xscom_write(partid, pcb_addr, val, true);
+}
+extern int xscom_write_mask(uint32_t partid, uint64_t pcb_addr, uint64_t val, uint64_t mask);
 
 /* This chip SCOM access */
 extern int xscom_readme(uint64_t pcb_addr, uint64_t *val);

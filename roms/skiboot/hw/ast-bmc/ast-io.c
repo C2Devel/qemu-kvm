@@ -88,6 +88,7 @@
 #include <skiboot.h>
 #include <lpc.h>
 #include <lock.h>
+#include <device.h>
 
 #include "ast.h"
 
@@ -388,6 +389,11 @@ void ast_io_init(void)
 	ast_setup_sio_irq_polarity();
 }
 
+bool ast_is_mbox_pnor(void)
+{
+	return dt_find_compatible_node(dt_root, NULL, "mbox");
+}
+
 bool ast_is_ahb_lpc_pnor(void)
 {
 	uint8_t boot_version;
@@ -469,3 +475,22 @@ void ast_disable_sio_uart1(void)
 
 	bmc_sio_put(true);
 }
+
+void ast_setup_sio_mbox(uint16_t io_base, uint8_t irq)
+{
+	bmc_sio_get(BMC_SIO_DEV_MBOX);
+
+	/* Disable for configuration */
+	bmc_sio_outb(0x00, 0x30);
+
+	bmc_sio_outb(io_base >> 8, 0x60);
+	bmc_sio_outb(io_base & 0xff, 0x61);
+	bmc_sio_outb(irq, 0x70);
+	bmc_sio_outb(0x01, 0x71); /* level low */
+
+	/* Enable MailBox */
+	bmc_sio_outb(0x01, 0x30);
+
+	bmc_sio_put(true);
+}
+

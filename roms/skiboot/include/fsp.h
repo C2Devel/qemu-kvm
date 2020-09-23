@@ -350,6 +350,7 @@
 #define FSP_CMD_HYP_MDST_TABLE	0x1ce2600 /* HV->FSP: Sapphire MDST table */
 #define FSP_CMD_TPO_READ	0x1ce4201 /* FSP->HV */
 #define FSP_CMD_TPO_WRITE	0x1ce4301 /* HV->FSP */
+#define FSP_CMD_TPO_DISABLE	0x1ce4400 /* HV->FSP */
 #define FSP_CMD_STATUS_REQ	0x1ce4800 /* HV->FSP: Request normal panel status */
 #define FSP_CMD_STATUS_EX1_REQ	0x1ce4802 /* HV->FSP: Request extended 1 panel status */
 #define FSP_CMD_STATUS_EX2_REQ	0x1ce4803 /* HV->FSP: Request extended 2 panel status */
@@ -368,6 +369,10 @@
 #define FSP_CMD_DEEP_REBOOT	0x1ce4e04 /* HV->FSP: Deep IPL */
 #define FSP_CMD_INIT_DPO	0x0ce5b00 /* FSP->HV: Initialize Delayed Power Off */
 #define FSP_RSP_INIT_DPO	0x0cedb00 /* HV->FSP: Response for DPO init command */
+#define FSP_CMD_GET_HIR_PLID	0x0ce0900 /* FSP->HV: Get Platform Log ID with
+					   * reason for Host Initiated Reset.
+					   */
+#define FSP_RSP_GET_HIR_PLID	0x0ce8900 /* HV->FSP: Reply with PLID */
 #define FSP_CMD_PANELSTATUS	0x0ce5c00 /* FSP->HV */
 #define FSP_CMD_PANELSTATUS_EX1	0x0ce5c02 /* FSP->HV */
 #define FSP_CMD_PANELSTATUS_EX2	0x0ce5c03 /* FSP->HV */
@@ -697,6 +702,13 @@ extern void fsp_cancelmsg(struct fsp_msg *msg);
 extern int fsp_queue_msg(struct fsp_msg *msg,
 			 void (*comp)(struct fsp_msg *msg)) __warn_unused_result;
 
+/* Send a fatal message to FSP
+ *
+ * This will *not* run pollers.
+ * Use only when attempting to get the word out about how we died.
+ */
+extern int fsp_fatal_msg(struct fsp_msg *msg);
+
 /* Synchronously send a command. If there's a response, the status is
  * returned as a positive number. A negative result means an error
  * sending the message.
@@ -801,8 +813,9 @@ extern void fsp_ipmi_init(void);
 
 /* Reset/Reload */
 extern void fsp_reinit_fsp(void);
-extern void fsp_trigger_reset(void);
+extern void fsp_trigger_reset(uint32_t plid);
 extern void fsp_reset_links(void);
+extern bool fsp_in_rr(void);
 
 /* FSP memory errors */
 extern void fsp_memory_err_init(void);
@@ -824,7 +837,6 @@ extern void fsp_epow_init(void);
 
 /* DPO */
 extern void fsp_dpo_init(void);
-extern bool fsp_dpo_pending;
 
 /* Chiptod */
 extern void fsp_chiptod_init(void);

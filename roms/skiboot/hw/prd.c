@@ -22,18 +22,23 @@
 #include <opal-msg.h>
 #include <fsp.h>
 #include <mem_region.h>
+#include <prd-fw-msg.h>
 
 enum events {
 	EVENT_ATTN	= 1 << 0,
 	EVENT_OCC_ERROR	= 1 << 1,
 	EVENT_OCC_RESET	= 1 << 2,
+	EVENT_SBE_PASSTHROUGH = 1 << 3,
 };
 
 static uint8_t events[MAX_CHIPS];
 static uint64_t ipoll_status[MAX_CHIPS];
-static struct opal_prd_msg prd_msg;
+static uint8_t _prd_msg_buf[sizeof(struct opal_prd_msg) +
+			    sizeof(struct prd_fw_msg)];
+static struct opal_prd_msg *prd_msg = (struct opal_prd_msg *)&_prd_msg_buf;
 static bool prd_msg_inuse, prd_active;
-struct dt_node *prd_node;
+static struct dt_node *prd_node;
+static bool prd_enabled = false;
 
 /* Locking:
  *
@@ -48,37 +53,28 @@ struct dt_node *prd_node;
 static struct lock events_lock = LOCK_UNLOCKED;
 static struct lock ipoll_lock = LOCK_UNLOCKED;
 
+static uint64_t prd_ipoll_mask_reg;
+static uint64_t prd_ipoll_status_reg;
+static uint64_t prd_ipoll_mask;
+
 /* PRD registers */
-#define PRD_IPOLL_REG_MASK	0x01020013
-#define PRD_IPOLL_REG_STATUS	0x01020014
-#define PRD_IPOLL_XSTOP		PPC_BIT(0) /* Xstop for host/core/millicode */
-#define PRD_IPOLL_RECOV		PPC_BIT(1) /* Recoverable */
-#define PRD_IPOLL_SPEC_ATTN	PPC_BIT(2) /* Special attention */
-#define PRD_IPOLL_HOST_ATTN	PPC_BIT(3) /* Host attention */
-#define PRD_IPOLL_MASK		PPC_BITMASK(0, 3)
+#define PRD_P8_IPOLL_REG_MASK		0x01020013
+#define PRD_P8_IPOLL_REG_STATUS		0x01020014
+#define PRD_P8_IPOLL_XSTOP		PPC_BIT(0) /* Xstop for host/core/millicode */
+#define PRD_P8_IPOLL_RECOV		PPC_BIT(1) /* Recoverable */
+#define PRD_P8_IPOLL_SPEC_ATTN		PPC_BIT(2) /* Special attention */
+#define PRD_P8_IPOLL_HOST_ATTN		PPC_BIT(3) /* Host attention */
+#define PRD_P8_IPOLL_MASK		PPC_BITMASK(0, 3)
 
-static int queue_prd_msg_hbrt(struct opal_prd_msg *msg,
-		void (*consumed)(void *data))
-{
-	uint64_t *buf;
-
-	BUILD_ASSERT(sizeof(*msg) / sizeof(uint64_t) == 4);
-
-	buf = (uint64_t *)msg;
-
-	return _opal_queue_msg(OPAL_MSG_PRD, msg, consumed, 4, buf);
-}
-
-static int queue_prd_msg_nop(struct opal_prd_msg *msg,
-		void (*consumed)(void *data))
-{
-	(void)msg;
-	(void)consumed;
-	return OPAL_UNSUPPORTED;
-}
-
-static int (*queue_prd_msg)(struct opal_prd_msg *msg,
-		void (*consumed)(void *data)) = queue_prd_msg_nop;
+#define PRD_P9_IPOLL_REG_MASK		0x000F0033
+#define PRD_P9_IPOLL_REG_STATUS		0x000F0034
+#define PRD_P9_IPOLL_XSTOP		PPC_BIT(0) /* Xstop for host/core/millicode */
+#define PRD_P9_IPOLL_RECOV		PPC_BIT(1) /* Recoverable */
+#define PRD_P9_IPOLL_SPEC_ATTN		PPC_BIT(2) /* Special attention */
+#define PRD_P9_IPOLL_UNIT_CS		PPC_BIT(3) /* Unit Xstop */
+#define PRD_P9_IPOLL_HOST_ATTN		PPC_BIT(4) /* Host attention */
+#define PRD_P9_IPOLL_MASK_INTR		PPC_BIT(5) /* Host interrupt */
+#define PRD_P9_IPOLL_MASK		PPC_BITMASK(0, 5)
 
 static void send_next_pending_event(void);
 
@@ -112,6 +108,12 @@ static void prd_msg_consumed(void *data)
 		proc = msg->occ_reset.chip;
 		event = EVENT_OCC_RESET;
 		break;
+	case OPAL_PRD_MSG_TYPE_FIRMWARE_RESPONSE:
+		break;
+	case OPAL_PRD_MSG_TYPE_SBE_PASSTHROUGH:
+		proc = msg->sbe_passthrough.chip;
+		event = EVENT_SBE_PASSTHROUGH;
+		break;
 	default:
 		prlog(PR_ERR, "PRD: invalid msg consumed, type: 0x%x\n",
 				msg->hdr.type);
@@ -130,7 +132,7 @@ static int populate_ipoll_msg(struct opal_prd_msg *msg, uint32_t proc)
 	int rc;
 
 	lock(&ipoll_lock);
-	rc = xscom_read(proc, PRD_IPOLL_REG_MASK, &ipoll_mask);
+	rc = xscom_read(proc, prd_ipoll_mask_reg, &ipoll_mask);
 	unlock(&ipoll_lock);
 
 	if (rc) {
@@ -170,22 +172,31 @@ static void send_next_pending_event(void)
 		return;
 
 	prd_msg_inuse = true;
-	prd_msg.token = 0;
-	prd_msg.hdr.size = sizeof(prd_msg);
+	prd_msg->token = 0;
+	prd_msg->hdr.size = sizeof(*prd_msg);
 
 	if (event & EVENT_ATTN) {
-		prd_msg.hdr.type = OPAL_PRD_MSG_TYPE_ATTN;
-		populate_ipoll_msg(&prd_msg, proc);
+		prd_msg->hdr.type = OPAL_PRD_MSG_TYPE_ATTN;
+		populate_ipoll_msg(prd_msg, proc);
 	} else if (event & EVENT_OCC_ERROR) {
-		prd_msg.hdr.type = OPAL_PRD_MSG_TYPE_OCC_ERROR;
-		prd_msg.occ_error.chip = proc;
+		prd_msg->hdr.type = OPAL_PRD_MSG_TYPE_OCC_ERROR;
+		prd_msg->occ_error.chip = proc;
 	} else if (event & EVENT_OCC_RESET) {
-		prd_msg.hdr.type = OPAL_PRD_MSG_TYPE_OCC_RESET;
-		prd_msg.occ_reset.chip = proc;
+		prd_msg->hdr.type = OPAL_PRD_MSG_TYPE_OCC_RESET;
+		prd_msg->occ_reset.chip = proc;
 		occ_msg_queue_occ_reset();
+	} else if (event & EVENT_SBE_PASSTHROUGH) {
+		prd_msg->hdr.type = OPAL_PRD_MSG_TYPE_SBE_PASSTHROUGH;
+		prd_msg->sbe_passthrough.chip = proc;
 	}
 
-	queue_prd_msg(&prd_msg, prd_msg_consumed);
+	/*
+	 * We always need to handle PSI interrupts, but if the is PRD is
+	 * disabled then we shouldn't propagate PRD events to the host.
+	 */
+	if (prd_enabled)
+		_opal_queue_msg(OPAL_MSG_PRD, prd_msg, prd_msg_consumed, 4,
+				(uint64_t *)prd_msg);
 }
 
 static void __prd_event(uint32_t proc, uint8_t event)
@@ -207,7 +218,7 @@ static int __ipoll_update_mask(uint32_t proc, bool set, uint64_t bits)
 	uint64_t mask;
 	int rc;
 
-	rc = xscom_read(proc, PRD_IPOLL_REG_MASK, &mask);
+	rc = xscom_read(proc, prd_ipoll_mask_reg, &mask);
 	if (rc)
 		return rc;
 
@@ -216,7 +227,7 @@ static int __ipoll_update_mask(uint32_t proc, bool set, uint64_t bits)
 	else
 		mask &= ~bits;
 
-	return xscom_write(proc, PRD_IPOLL_REG_MASK, mask);
+	return xscom_write(proc, prd_ipoll_mask_reg, mask);
 }
 
 static int ipoll_record_and_mask_pending(uint32_t proc)
@@ -225,8 +236,8 @@ static int ipoll_record_and_mask_pending(uint32_t proc)
 	int rc;
 
 	lock(&ipoll_lock);
-	rc = xscom_read(proc, PRD_IPOLL_REG_STATUS, &status);
-	status &= PRD_IPOLL_MASK;
+	rc = xscom_read(proc, prd_ipoll_status_reg, &status);
+	status &= prd_ipoll_mask;
 	if (!rc)
 		__ipoll_update_mask(proc, true, status);
 	unlock(&ipoll_lock);
@@ -263,6 +274,11 @@ void prd_occ_reset(uint32_t proc)
 	prd_event(proc, EVENT_OCC_RESET);
 }
 
+void prd_sbe_passthrough(uint32_t proc)
+{
+	prd_event(proc, EVENT_SBE_PASSTHROUGH);
+}
+
 /* incoming message handlers */
 static int prd_msg_handle_attn_ack(struct opal_prd_msg *msg)
 {
@@ -270,7 +286,7 @@ static int prd_msg_handle_attn_ack(struct opal_prd_msg *msg)
 
 	lock(&ipoll_lock);
 	rc = __ipoll_update_mask(msg->attn_ack.proc, false,
-			msg->attn_ack.ipoll_ack & PRD_IPOLL_MASK);
+			msg->attn_ack.ipoll_ack & prd_ipoll_mask);
 	unlock(&ipoll_lock);
 
 	if (rc)
@@ -286,7 +302,7 @@ static int prd_msg_handle_init(struct opal_prd_msg *msg)
 	lock(&ipoll_lock);
 	for_each_chip(chip) {
 		__ipoll_update_mask(chip->id, false,
-			msg->init.ipoll & PRD_IPOLL_MASK);
+			msg->init.ipoll & prd_ipoll_mask);
 	}
 	unlock(&ipoll_lock);
 
@@ -311,11 +327,67 @@ static int prd_msg_handle_fini(void)
 
 	lock(&ipoll_lock);
 	for_each_chip(chip) {
-		__ipoll_update_mask(chip->id, true, PRD_IPOLL_MASK);
+		__ipoll_update_mask(chip->id, true, prd_ipoll_mask);
 	}
 	unlock(&ipoll_lock);
 
 	return OPAL_SUCCESS;
+}
+
+static int prd_msg_handle_firmware_req(struct opal_prd_msg *msg)
+{
+	unsigned long fw_req_len, fw_resp_len;
+	struct prd_fw_msg *fw_req, *fw_resp;
+	int rc;
+
+	fw_req_len = be64_to_cpu(msg->fw_req.req_len);
+	fw_resp_len = be64_to_cpu(msg->fw_req.resp_len);
+	fw_req = (struct prd_fw_msg *)msg->fw_req.data;
+
+	/* do we have a full firmware message? */
+	if (fw_req_len < sizeof(struct prd_fw_msg))
+		return -EINVAL;
+
+	/* does the total (outer) PRD message len provide enough data for the
+	 * claimed (inner) FW message?
+	 */
+	if (msg->hdr.size < fw_req_len +
+			offsetof(struct opal_prd_msg, fw_req.data))
+		return -EINVAL;
+
+	/* is there enough response buffer for a base response? Type-specific
+	 * responses may be larger, but anything less than BASE_SIZE is
+	 * invalid. */
+	if (fw_resp_len < PRD_FW_MSG_BASE_SIZE)
+		return -EINVAL;
+
+	/* prepare a response message. */
+	lock(&events_lock);
+	prd_msg_inuse = true;
+	prd_msg->token = 0;
+	prd_msg->hdr.type = OPAL_PRD_MSG_TYPE_FIRMWARE_RESPONSE;
+	fw_resp = (void *)prd_msg->fw_resp.data;
+
+	switch (be64_to_cpu(fw_req->type)) {
+	case PRD_FW_MSG_TYPE_REQ_NOP:
+		fw_resp->type = cpu_to_be64(PRD_FW_MSG_TYPE_RESP_NOP);
+		prd_msg->fw_resp.len = cpu_to_be64(PRD_FW_MSG_BASE_SIZE);
+		prd_msg->hdr.size = cpu_to_be16(sizeof(*prd_msg));
+		rc = 0;
+		break;
+	default:
+		rc = -ENOSYS;
+	}
+
+	if (!rc)
+		rc = _opal_queue_msg(OPAL_MSG_PRD, prd_msg, prd_msg_consumed, 4,
+				(uint64_t *) prd_msg);
+	else
+		prd_msg_inuse = false;
+
+	unlock(&events_lock);
+
+	return rc;
 }
 
 /* Entry from the host above */
@@ -330,7 +402,7 @@ static int64_t opal_prd_msg(struct opal_prd_msg *msg)
 			msg->hdr.type == OPAL_PRD_MSG_TYPE_FINI)
 		return prd_msg_handle_fini();
 
-	if (msg->hdr.size != sizeof(*msg))
+	if (msg->hdr.size < sizeof(*msg))
 		return OPAL_PARAMETER;
 
 	switch (msg->hdr.type) {
@@ -343,6 +415,9 @@ static int64_t opal_prd_msg(struct opal_prd_msg *msg)
 	case OPAL_PRD_MSG_TYPE_OCC_RESET_NOTIFY:
 		rc = occ_msg_queue_occ_reset();
 		break;
+	case OPAL_PRD_MSG_TYPE_FIRMWARE_REQUEST:
+		rc = prd_msg_handle_firmware_req(msg);
+		break;
 	default:
 		rc = OPAL_UNSUPPORTED;
 	}
@@ -350,24 +425,39 @@ static int64_t opal_prd_msg(struct opal_prd_msg *msg)
 	return rc;
 }
 
+
+/*
+ * Initialise the Opal backend for the PRD daemon. This must be called from
+ * platform probe or init function.
+ */
 void prd_init(void)
 {
 	struct proc_chip *chip;
 
+	switch (proc_gen) {
+	case proc_gen_p8:
+		prd_ipoll_mask_reg = PRD_P8_IPOLL_REG_MASK;
+		prd_ipoll_status_reg = PRD_P8_IPOLL_REG_STATUS;
+		prd_ipoll_mask = PRD_P8_IPOLL_MASK;
+		break;
+	case proc_gen_p9:
+		prd_ipoll_mask_reg = PRD_P9_IPOLL_REG_MASK;
+		prd_ipoll_status_reg = PRD_P9_IPOLL_REG_STATUS;
+		prd_ipoll_mask = PRD_P9_IPOLL_MASK;
+		break;
+	default:
+		assert(0);
+	}
+
 	/* mask everything */
 	lock(&ipoll_lock);
 	for_each_chip(chip) {
-		__ipoll_update_mask(chip->id, true, PRD_IPOLL_MASK);
+		__ipoll_update_mask(chip->id, true, prd_ipoll_mask);
 	}
 	unlock(&ipoll_lock);
 
-	if (fsp_present()) {
-		/* todo: FSP implementation */
-		queue_prd_msg = queue_prd_msg_nop;
-	} else {
-		queue_prd_msg = queue_prd_msg_hbrt;
-		opal_register(OPAL_PRD_MSG, opal_prd_msg, 1);
-	}
+	prd_enabled = true;
+	opal_register(OPAL_PRD_MSG, opal_prd_msg, 1);
 
 	prd_node = dt_new(opal_node, "diagnostics");
 	dt_add_property_strings(prd_node, "compatible", "ibm,opal-prd");
@@ -384,7 +474,7 @@ void prd_register_reserved_memory(void)
 	for (region = mem_region_next(NULL); region;
 			region = mem_region_next(region)) {
 
-		if (region->type != REGION_HW_RESERVED)
+		if (region->type != REGION_FW_RESERVED)
 			continue;
 
 		if (!region->node)

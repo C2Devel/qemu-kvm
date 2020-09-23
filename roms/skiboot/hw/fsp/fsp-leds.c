@@ -1570,6 +1570,9 @@ void create_led_device_nodes(void)
 	if (!pled)
 		return;
 
+	/* Check if already populated (fast-reboot) */
+	if (dt_has_node_property(pled, "compatible", NULL))
+		return;
 	dt_add_property_strings(pled, "compatible", DT_PROPERTY_LED_COMPATIBLE);
 
 	led_mode = dt_prop_get(pled, DT_PROPERTY_LED_MODE);
@@ -1582,7 +1585,7 @@ void create_led_device_nodes(void)
 	list_for_each_safe(&cec_ledq, led, next, link) {
 		/* Duplicate LED location code */
 		if (dt_find_by_path(pled, led->loc_code)) {
-			prlog(PR_WARNING, "duplicate location code %s",
+			prlog(PR_WARNING, "duplicate location code %s\n",
 			      led->loc_code);
 			continue;
 		}

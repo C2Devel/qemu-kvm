@@ -72,9 +72,6 @@
  */
 //#define FORCE_DUMMY_CONSOLE 1
 
-/* Enable this to do fast resets. Currently unreliable... */
-//#define ENABLE_FAST_RESET	1
-
 /* Enable this to make fast reboot clear memory */
 //#define FAST_REBOOT_CLEARS_MEMORY	1
 
@@ -85,11 +82,6 @@
  * API for the kernel to activate or deactivate that functionality
  */
 #define DISABLE_CON_PENDING_EVT	1
-
-/* Configure this to provide some additional kernel command line
- * arguments to the bootloader
- */
-//#define KERNEL_COMMAND_LINE	"debug"
 
 #endif /* __CONFIG_H */
 

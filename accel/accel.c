@@ -26,7 +26,6 @@
 #include "qemu/osdep.h"
 #include "sysemu/accel.h"
 #include "hw/boards.h"
-#include "qemu-common.h"
 #include "sysemu/arch_init.h"
 #include "sysemu/sysemu.h"
 #include "sysemu/kvm.h"
@@ -34,6 +33,7 @@
 #include "hw/xen/xen.h"
 #include "qom/object.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 
 static const TypeInfo accel_type = {
     .name = TYPE_ACCEL,
@@ -64,6 +64,8 @@ static int accel_init_machine(AccelClass *acc, MachineState *ms)
         ms->accelerator = NULL;
         *(acc->allowed) = false;
         object_unref(OBJECT(accel));
+    } else {
+        accel_register_compat_props(ms->accelerator);
     }
     return ret;
 }
@@ -123,7 +125,7 @@ void configure_accelerator(MachineState *ms)
 void accel_register_compat_props(AccelState *accel)
 {
     AccelClass *class = ACCEL_GET_CLASS(accel);
-    register_compat_props_array(class->global_props);
+    register_accel_compat_props(class->global_props);
 }
 
 static void register_accel_types(void)

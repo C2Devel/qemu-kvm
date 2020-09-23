@@ -18,8 +18,8 @@
 #endif
 
 #include "qapi/error.h"
-#include "qemu-common.h"
 #include "qemu/error-report.h"
+#include "qemu/option.h"
 #include "qemu/bswap.h"
 #include "sysemu/device_tree.h"
 #include "sysemu/sysemu.h"
@@ -82,6 +82,10 @@ void *load_device_tree(const char *filename_path, int *sizep)
     if (dt_size < 0) {
         error_report("Unable to get size of device tree file '%s'",
                      filename_path);
+        goto fail;
+    }
+    if (dt_size > INT_MAX / 2 - 10000) {
+        error_report("Device tree file '%s' is too large", filename_path);
         goto fail;
     }
 

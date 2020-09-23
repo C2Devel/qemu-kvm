@@ -6,16 +6,16 @@
  *            Xiao Feng Ren <renxiaof@linux.vnet.ibm.com>
  *            Pierre Morel <pmorel@linux.vnet.ibm.com>
  *
- * This work is licensed under the terms of the GNU GPL, version 2 or(at
- * your option) any version. See the COPYING file in the top-level
+ * This work is licensed under the terms of the GNU GPL, version 2 or (at
+ * your option) any later version. See the COPYING file in the top-level
  * directory.
  */
 
+#include "qemu/osdep.h"
 #include <linux/vfio.h>
 #include <linux/vfio_ccw.h>
 #include <sys/ioctl.h>
 
-#include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/sysbus.h"
 #include "hw/vfio/vfio.h"
@@ -47,9 +47,9 @@ struct VFIODeviceOps vfio_ccw_ops = {
     .vfio_compute_needs_reset = vfio_ccw_compute_needs_reset,
 };
 
-static int vfio_ccw_handle_request(ORB *orb, SCSW *scsw, void *data)
+static IOInstEnding vfio_ccw_handle_request(SubchDev *sch)
 {
-    S390CCWDevice *cdev = data;
+    S390CCWDevice *cdev = sch->driver_data;
     VFIOCCWDevice *vcdev = DO_UPCAST(VFIOCCWDevice, cdev, cdev);
     struct ccw_io_region *region = vcdev->io_region;
     int ret;
@@ -60,8 +60,8 @@ static int vfio_ccw_handle_request(ORB *orb, SCSW *scsw, void *data)
 
     memset(region, 0, sizeof(*region));
 
-    memcpy(region->orb_area, orb, sizeof(ORB));
-    memcpy(region->scsw_area, scsw, sizeof(SCSW));
+    memcpy(region->orb_area, &sch->orb, sizeof(ORB));
+    memcpy(region->scsw_area, &sch->curr_status.scsw, sizeof(SCSW));
 
 again:
     ret = pwrite(vcdev->vdev.fd, region,
@@ -71,10 +71,24 @@ again:
             goto again;
         }
         error_report("vfio-ccw: wirte I/O region failed with errno=%d", errno);
-        return -errno;
+        ret = -errno;
+    } else {
+        ret = region->ret_code;
     }
-
-    return region->ret_code;
+    switch (ret) {
+    case 0:
+        return IOINST_CC_EXPECTED;
+    case -EBUSY:
+        return IOINST_CC_BUSY;
+    case -ENODEV:
+    case -EACCES:
+        return IOINST_CC_NOT_OPERATIONAL;
+    case -EFAULT:
+    default:
+        sch_gen_unit_exception(sch);
+        css_inject_io_interrupt(sch);
+        return IOINST_CC_EXPECTED;
+    }
 }
 
 static void vfio_ccw_reset(DeviceState *dev)
@@ -343,11 +357,22 @@ static void vfio_ccw_realize(DeviceState *dev, Error **errp)
         if (strcmp(vbasedev->name, vcdev->vdev.name) == 0) {
             error_setg(&err, "vfio: subchannel %s has already been attached",
                        vcdev->vdev.name);
+            g_free(vcdev->vdev.name);
             goto out_device_err;
         }
     }
 
+    /*
+     * All vfio-ccw devices are believed to operate in a way compatible with
+     * memory ballooning, ie. pages pinned in the host are in the current
+     * working set of the guest driver and therefore never overlap with pages
+     * available to the guest balloon driver.  This needs to be set before
+     * vfio_get_device() for vfio common to handle the balloon inhibitor.
+     */
+    vcdev->vdev.balloon_allowed = true;
+
     if (vfio_get_device(group, cdev->mdevid, &vcdev->vdev, &err)) {
+        g_free(vcdev->vdev.name);
         goto out_device_err;
     }
 
@@ -413,6 +438,7 @@ static void vfio_ccw_class_init(ObjectClass *klass, void *data)
     dc->props = vfio_ccw_properties;
     dc->vmsd = &vfio_ccw_vmstate;
     dc->desc = "VFIO-based subchannel assignment";
+    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
     dc->realize = vfio_ccw_realize;
     dc->unrealize = vfio_ccw_unrealize;
     dc->reset = vfio_ccw_reset;

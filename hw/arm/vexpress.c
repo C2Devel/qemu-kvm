@@ -29,6 +29,7 @@
 #include "hw/arm/arm.h"
 #include "hw/arm/primecell.h"
 #include "hw/devices.h"
+#include "hw/i2c/i2c.h"
 #include "net/net.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
@@ -40,6 +41,8 @@
 #include "qemu/error-report.h"
 #include <libfdt.h>
 #include "hw/char/pl011.h"
+#include "hw/cpu/a9mpcore.h"
+#include "hw/cpu/a15mpcore.h"
 
 #define VEXPRESS_BOARD_ID 0x8e0
 #define VEXPRESS_FLASH_SIZE (64 * 1024 * 1024)
@@ -184,7 +187,7 @@ typedef struct {
 
 typedef void DBoardInitFn(const VexpressMachineState *machine,
                           ram_addr_t ram_size,
-                          const char *cpu_model,
+                          const char *cpu_type,
                           qemu_irq *pic);
 
 struct VEDBoardInfo {
@@ -200,22 +203,16 @@ struct VEDBoardInfo {
     DBoardInitFn *init;
 };
 
-static void init_cpus(const char *cpu_model, const char *privdev,
+static void init_cpus(const char *cpu_type, const char *privdev,
                       hwaddr periphbase, qemu_irq *pic, bool secure)
 {
-    ObjectClass *cpu_oc = cpu_class_by_name(TYPE_ARM_CPU, cpu_model);
     DeviceState *dev;
     SysBusDevice *busdev;
     int n;
 
-    if (!cpu_oc) {
-        fprintf(stderr, "Unable to find CPU definition\n");
-        exit(1);
-    }
-
     /* Create the actual CPUs */
     for (n = 0; n < smp_cpus; n++) {
-        Object *cpuobj = object_new(object_class_get_name(cpu_oc));
+        Object *cpuobj = object_new(cpu_type);
 
         if (!secure) {
             object_property_set_bool(cpuobj, false, "has_el3", NULL);
@@ -260,7 +257,7 @@ static void init_cpus(const char *cpu_model, const char *privdev,
 
 static void a9_daughterboard_init(const VexpressMachineState *vms,
                                   ram_addr_t ram_size,
-                                  const char *cpu_model,
+                                  const char *cpu_type,
                                   qemu_irq *pic)
 {
     MemoryRegion *sysmem = get_system_memory();
@@ -268,13 +265,9 @@ static void a9_daughterboard_init(const VexpressMachineState *vms,
     MemoryRegion *lowram = g_new(MemoryRegion, 1);
     ram_addr_t low_ram_size;
 
-    if (!cpu_model) {
-        cpu_model = "cortex-a9";
-    }
-
     if (ram_size > 0x40000000) {
         /* 1GB is the maximum the address space permits */
-        fprintf(stderr, "vexpress-a9: cannot model more than 1GB RAM\n");
+        error_report("vexpress-a9: cannot model more than 1GB RAM");
         exit(1);
     }
 
@@ -293,7 +286,7 @@ static void a9_daughterboard_init(const VexpressMachineState *vms,
     memory_region_add_subregion(sysmem, 0x60000000, ram);
 
     /* 0x1e000000 A9MPCore (SCU) private memory region */
-    init_cpus(cpu_model, "a9mpcore_priv", 0x1e000000, pic, vms->secure);
+    init_cpus(cpu_type, TYPE_A9MPCORE_PRIV, 0x1e000000, pic, vms->secure);
 
     /* Daughterboard peripherals : 0x10020000 .. 0x20000000 */
 
@@ -349,16 +342,12 @@ static VEDBoardInfo a9_daughterboard = {
 
 static void a15_daughterboard_init(const VexpressMachineState *vms,
                                    ram_addr_t ram_size,
-                                   const char *cpu_model,
+                                   const char *cpu_type,
                                    qemu_irq *pic)
 {
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     MemoryRegion *sram = g_new(MemoryRegion, 1);
-
-    if (!cpu_model) {
-        cpu_model = "cortex-a15";
-    }
 
     {
         /* We have to use a separate 64 bit variable here to avoid the gcc
@@ -367,7 +356,7 @@ static void a15_daughterboard_init(const VexpressMachineState *vms,
          */
         uint64_t rsz = ram_size;
         if (rsz > (30ULL * 1024 * 1024 * 1024)) {
-            fprintf(stderr, "vexpress-a15: cannot model more than 30GB RAM\n");
+            error_report("vexpress-a15: cannot model more than 30GB RAM");
             exit(1);
         }
     }
@@ -378,7 +367,7 @@ static void a15_daughterboard_init(const VexpressMachineState *vms,
     memory_region_add_subregion(sysmem, 0x80000000, ram);
 
     /* 0x2c000000 A15MPCore private memory region (GIC) */
-    init_cpus(cpu_model, "a15mpcore_priv", 0x2c000000, pic, vms->secure);
+    init_cpus(cpu_type, TYPE_A15MPCORE_PRIV, 0x2c000000, pic, vms->secure);
 
     /* A15 daughterboard peripherals: */
 
@@ -491,8 +480,8 @@ static void vexpress_modify_dtb(const struct arm_boot_info *info, void *fdt)
         /* Not fatal, we just won't provide virtio. This will
          * happen with older device tree blobs.
          */
-        fprintf(stderr, "QEMU: warning: couldn't find interrupt controller in "
-                "dtb; will not include virtio-mmio devices in the dtb.\n");
+        warn_report("couldn't find interrupt controller in "
+                    "dtb; will not include virtio-mmio devices in the dtb");
     } else {
         int i;
         const hwaddr *map = daughterboard->motherboard_map;
@@ -512,10 +501,10 @@ static void vexpress_modify_dtb(const struct arm_boot_info *info, void *fdt)
 /* Open code a private version of pflash registration since we
  * need to set non-default device width for VExpress platform.
  */
-static pflash_t *ve_pflash_cfi01_register(hwaddr base, const char *name,
-                                          DriveInfo *di)
+static PFlashCFI01 *ve_pflash_cfi01_register(hwaddr base, const char *name,
+                                             DriveInfo *di)
 {
-    DeviceState *dev = qdev_create(NULL, "cfi.pflash01");
+    DeviceState *dev = qdev_create(NULL, TYPE_PFLASH_CFI01);
 
     if (di) {
         qdev_prop_set_drive(dev, "drive", blk_by_legacy_dinfo(di),
@@ -536,7 +525,7 @@ static pflash_t *ve_pflash_cfi01_register(hwaddr base, const char *name,
     qdev_init_nofail(dev);
 
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
-    return OBJECT_CHECK(pflash_t, (dev), "cfi.pflash01");
+    return PFLASH_CFI01(dev);
 }
 
 static void vexpress_common_init(MachineState *machine)
@@ -548,7 +537,8 @@ static void vexpress_common_init(MachineState *machine)
     qemu_irq pic[64];
     uint32_t sys_id;
     DriveInfo *dinfo;
-    pflash_t *pflash0;
+    PFlashCFI01 *pflash0;
+    I2CBus *i2c;
     ram_addr_t vram_size, sram_size;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *vram = g_new(MemoryRegion, 1);
@@ -558,7 +548,7 @@ static void vexpress_common_init(MachineState *machine)
     const hwaddr *map = daughterboard->motherboard_map;
     int i;
 
-    daughterboard->init(vms, machine->ram_size, machine->cpu_model, pic);
+    daughterboard->init(vms, machine->ram_size, machine->cpu_type, pic);
 
     /*
      * If a bios file was provided, attempt to map it into memory
@@ -640,7 +630,9 @@ static void vexpress_common_init(MachineState *machine)
     sysbus_create_simple("sp804", map[VE_TIMER01], pic[2]);
     sysbus_create_simple("sp804", map[VE_TIMER23], pic[3]);
 
-    /* VE_SERIALDVI: not modelled */
+    dev = sysbus_create_simple("versatile_i2c", map[VE_SERIALDVI], NULL);
+    i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
+    i2c_create_slave(i2c, "sii9022", 0x39);
 
     sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
 
@@ -652,7 +644,7 @@ static void vexpress_common_init(MachineState *machine)
     pflash0 = ve_pflash_cfi01_register(map[VE_NORFLASH0], "vexpress.flash0",
                                        dinfo);
     if (!pflash0) {
-        fprintf(stderr, "vexpress: error registering flash 0.\n");
+        error_report("vexpress: error registering flash 0");
         exit(1);
     }
 
@@ -667,7 +659,7 @@ static void vexpress_common_init(MachineState *machine)
     dinfo = drive_get_next(IF_PFLASH);
     if (!ve_pflash_cfi01_register(map[VE_NORFLASH1], "vexpress.flash1",
                                   dinfo)) {
-        fprintf(stderr, "vexpress: error registering flash 1.\n");
+        error_report("vexpress: error registering flash 1");
         exit(1);
     }
 
@@ -750,6 +742,7 @@ static void vexpress_class_init(ObjectClass *oc, void *data)
     mc->desc = "ARM Versatile Express";
     mc->init = vexpress_common_init;
     mc->max_cpus = 4;
+    mc->ignore_memory_transaction_failures = true;
 }
 
 static void vexpress_a9_class_init(ObjectClass *oc, void *data)
@@ -758,6 +751,7 @@ static void vexpress_a9_class_init(ObjectClass *oc, void *data)
     VexpressMachineClass *vmc = VEXPRESS_MACHINE_CLASS(oc);
 
     mc->desc = "ARM Versatile Express for Cortex-A9";
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a9");
 
     vmc->daughterboard = &a9_daughterboard;
 }
@@ -768,6 +762,7 @@ static void vexpress_a15_class_init(ObjectClass *oc, void *data)
     VexpressMachineClass *vmc = VEXPRESS_MACHINE_CLASS(oc);
 
     mc->desc = "ARM Versatile Express for Cortex-A15";
+    mc->default_cpu_type = ARM_CPU_TYPE_NAME("cortex-a15");
 
     vmc->daughterboard = &a15_daughterboard;
 }

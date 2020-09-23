@@ -659,7 +659,7 @@ static int64_t p7ioc_err_inject_finalize(struct p7ioc_phb *p, uint64_t addr,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_err_inject_mem32(struct p7ioc_phb *p, uint32_t pe_no,
+static int64_t p7ioc_err_inject_mem32(struct p7ioc_phb *p, uint64_t pe_number,
 				      uint64_t addr, uint64_t mask,
 				      bool is_write)
 {
@@ -670,7 +670,7 @@ static int64_t p7ioc_err_inject_mem32(struct p7ioc_phb *p, uint32_t pe_no,
 	a = 0x0ull;
 	prefer = 0x0ull;
 	for (index = 0; index < 128; index++) {
-		if (GETFIELD(IODA_XXDT_PE, p->m32d_cache[index]) != pe_no)
+		if (GETFIELD(IODA_XXDT_PE, p->m32d_cache[index]) != pe_number)
 			continue;
 
 		base = p->m32_base + M32_PCI_START +
@@ -706,7 +706,7 @@ static int64_t p7ioc_err_inject_mem32(struct p7ioc_phb *p, uint32_t pe_no,
 	return p7ioc_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t p7ioc_err_inject_io32(struct p7ioc_phb *p, uint32_t pe_no,
+static int64_t p7ioc_err_inject_io32(struct p7ioc_phb *p, uint64_t pe_number,
 				     uint64_t addr, uint64_t mask,
 				     bool is_write)
 {
@@ -717,7 +717,7 @@ static int64_t p7ioc_err_inject_io32(struct p7ioc_phb *p, uint32_t pe_no,
 	a = 0x0ull;
 	prefer = 0x0ull;
 	for (index = 0; index < 128; index++) {
-		if (GETFIELD(IODA_XXDT_PE, p->iod_cache[index]) != pe_no)
+		if (GETFIELD(IODA_XXDT_PE, p->iod_cache[index]) != pe_number)
                         continue;
 
 		base = p->io_base + (PHB_IO_SIZE / 128) * index;
@@ -751,7 +751,7 @@ static int64_t p7ioc_err_inject_io32(struct p7ioc_phb *p, uint32_t pe_no,
 	return p7ioc_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t p7ioc_err_inject_cfg(struct p7ioc_phb *p, uint32_t pe_no,
+static int64_t p7ioc_err_inject_cfg(struct p7ioc_phb *p, uint64_t pe_number,
 				    uint64_t addr, uint64_t mask,
 				    bool is_write)
 {
@@ -762,8 +762,8 @@ static int64_t p7ioc_err_inject_cfg(struct p7ioc_phb *p, uint32_t pe_no,
 	/* Looking into PELTM to see if the PCI bus# is owned
 	 * by the PE#. Otherwise, we have to figure one out.
 	 */
-	base = GETFIELD(IODA_PELTM_BUS, p->peltm_cache[pe_no]);
-	v_bits = GETFIELD(IODA_PELTM_BUS_VALID, p->peltm_cache[pe_no]);
+	base = GETFIELD(IODA_PELTM_BUS, p->peltm_cache[pe_number]);
+	v_bits = GETFIELD(IODA_PELTM_BUS_VALID, p->peltm_cache[pe_number]);
 	switch (v_bits) {
 	case IODA_BUS_VALID_3_BITS:
 	case IODA_BUS_VALID_4_BITS:
@@ -771,7 +771,7 @@ static int64_t p7ioc_err_inject_cfg(struct p7ioc_phb *p, uint32_t pe_no,
 	case IODA_BUS_VALID_6_BITS:
 	case IODA_BUS_VALID_7_BITS:
 	case IODA_BUS_VALID_ALL:
-		base = GETFIELD(IODA_PELTM_BUS, p->peltm_cache[pe_no]);
+		base = GETFIELD(IODA_PELTM_BUS, p->peltm_cache[pe_number]);
 		base &= (0xff - (((1 << (7 - v_bits)) - 1)));
 		a = SETFIELD(PHB_PAPR_ERR_INJ_MASK_CFG, 0x0ul, base);
 		m = PHB_PAPR_ERR_INJ_MASK_CFG;
@@ -792,7 +792,7 @@ static int64_t p7ioc_err_inject_cfg(struct p7ioc_phb *p, uint32_t pe_no,
 	return p7ioc_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t p7ioc_err_inject_dma(struct p7ioc_phb *p, uint32_t pe_no,
+static int64_t p7ioc_err_inject_dma(struct p7ioc_phb *p, uint64_t pe_number,
 				    uint64_t addr, uint64_t mask,
 				    bool is_write)
 {
@@ -801,7 +801,8 @@ static int64_t p7ioc_err_inject_dma(struct p7ioc_phb *p, uint32_t pe_no,
 
 	/* For DMA, we just pick address from TVT */
 	for (index = 0; index < 128; index++) {
-		if (GETFIELD(IODA_TVT1_PE_NUM, p->tve_hi_cache[index]) != pe_no)
+		if (GETFIELD(IODA_TVT1_PE_NUM, p->tve_hi_cache[index]) !=
+		    pe_number)
 			continue;
 
 		addr = SETFIELD(PHB_PAPR_ERR_INJ_MASK_DMA, 0ul, index);
@@ -816,12 +817,12 @@ static int64_t p7ioc_err_inject_dma(struct p7ioc_phb *p, uint32_t pe_no,
 	return p7ioc_err_inject_finalize(p, addr, mask, ctrl, is_write);
 }
 
-static int64_t p7ioc_err_inject(struct phb *phb, uint32_t pe_no,
+static int64_t p7ioc_err_inject(struct phb *phb, uint64_t pe_number,
 				uint32_t type, uint32_t func,
 				uint64_t addr, uint64_t mask)
 {
 	struct p7ioc_phb *p = phb_to_p7ioc_phb(phb);
-	int64_t (*handler)(struct p7ioc_phb *p, uint32_t pe_no,
+	int64_t (*handler)(struct p7ioc_phb *p, uint64_t pe_number,
 			   uint64_t addr, uint64_t mask, bool is_write);
 	bool is_write;
 
@@ -830,14 +831,14 @@ static int64_t p7ioc_err_inject(struct phb *phb, uint32_t pe_no,
 		return OPAL_UNSUPPORTED;
 
 	/* We can't inject error to the reserved PE#127 */
-	if (pe_no > 126)
+	if (pe_number > 126)
 		return OPAL_PARAMETER;
 
 	/* Clear the leftover from last time */
 	out_be64(p->regs + PHB_PAPR_ERR_INJ_CTL, 0x0ul);
 
 	/* Check if PE number is valid one in PELTM cache */
-	if (p->peltm_cache[pe_no] == 0x0001f80000000000ull)
+	if (p->peltm_cache[pe_number] == 0x0001f80000000000ull)
 		return OPAL_PARAMETER;
 
 	/* Clear the leftover from last time */
@@ -892,7 +893,7 @@ static int64_t p7ioc_err_inject(struct phb *phb, uint32_t pe_no,
 		return OPAL_PARAMETER;
 	}
 
-	return handler(p, pe_no, addr, mask, is_write);
+	return handler(p, pe_number, addr, mask, is_write);
 }
 
 static int64_t p7ioc_get_diag_data(struct phb *phb, void *diag_buffer,
@@ -1025,7 +1026,7 @@ static int64_t p7ioc_phb_mmio_enable(struct phb *phb,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_map_pe_mmio_window(struct phb *phb, uint16_t pe_number,
+static int64_t p7ioc_map_pe_mmio_window(struct phb *phb, uint64_t pe_number,
 					uint16_t window_type,
 					uint16_t window_num,
 					uint16_t segment_num)
@@ -1143,7 +1144,7 @@ static int64_t p7ioc_set_peltv(struct phb *phb, uint32_t parent_pe,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_map_pe_dma_window(struct phb *phb, uint16_t pe_number,
+static int64_t p7ioc_map_pe_dma_window(struct phb *phb, uint64_t pe_number,
 				       uint16_t window_id, uint16_t tce_levels,
 				       uint64_t tce_table_addr,
 				       uint64_t tce_table_size,
@@ -1225,7 +1226,7 @@ static int64_t p7ioc_map_pe_dma_window(struct phb *phb, uint16_t pe_number,
 }
 
 static int64_t p7ioc_map_pe_dma_window_real(struct phb *phb __unused,
-					    uint16_t pe_number __unused,
+					    uint64_t pe_number __unused,
 					    uint16_t dma_window_num __unused,
 					    uint64_t pci_start_addr __unused,
 					    uint64_t pci_mem_size __unused)
@@ -1235,7 +1236,7 @@ static int64_t p7ioc_map_pe_dma_window_real(struct phb *phb __unused,
 }
 
 static int64_t p7ioc_set_mve(struct phb *phb, uint32_t mve_number,
-			     uint32_t pe_number)
+			     uint64_t pe_number)
 {
 	struct p7ioc_phb *p = phb_to_p7ioc_phb(phb);
 	uint64_t pelt, mve = 0;
@@ -1295,7 +1296,7 @@ static int64_t p7ioc_set_mve_enable(struct phb *phb, uint32_t mve_number,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_set_xive_pe(struct phb *phb, uint32_t pe_number,
+static int64_t p7ioc_set_xive_pe(struct phb *phb, uint64_t pe_number,
 				 uint32_t xive_num)
 {
 	struct p7ioc_phb *p = phb_to_p7ioc_phb(phb);
@@ -1331,7 +1332,7 @@ static int64_t p7ioc_get_xive_source(struct phb *phb, uint32_t xive_num,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_get_msi_32(struct phb *phb __unused, uint32_t mve_number,
+static int64_t p7ioc_get_msi_32(struct phb *phb __unused, uint64_t mve_number,
 				uint32_t xive_num, uint8_t msi_range,
 				uint32_t *msi_address, uint32_t *message_data)
 {
@@ -1344,7 +1345,7 @@ static int64_t p7ioc_get_msi_32(struct phb *phb __unused, uint32_t mve_number,
 	return OPAL_SUCCESS;
 }
 
-static int64_t p7ioc_get_msi_64(struct phb *phb __unused, uint32_t mve_number,
+static int64_t p7ioc_get_msi_64(struct phb *phb __unused, uint64_t mve_number,
 				uint32_t xive_num, uint8_t msi_range,
 				uint64_t *msi_address, uint32_t *message_data)
 {
@@ -1507,26 +1508,13 @@ static int p7ioc_device_init(struct phb *phb,
 			     struct pci_device *dev,
 			     void *data __unused)
 {
-	int ecap = 0;
-	int aercap = 0;
-
-	/* Figure out AER capability */
-	if (pci_has_cap(dev, PCI_CFG_CAP_ID_EXP, false)) {
-		ecap = pci_cap(dev, PCI_CFG_CAP_ID_EXP, false);
-
-		if (!pci_has_cap(dev, PCIECAP_ID_AER, true)) {
-			aercap = pci_find_ecap(phb, dev->bdfn,
-					       PCIECAP_ID_AER, NULL);
-			if (aercap > 0)
-				pci_set_cap(dev, PCIECAP_ID_AER, aercap, true);
-		} else {
-			aercap = pci_cap(dev, PCIECAP_ID_AER, true);
-		}
-	}
+	int ecap, aercap;
 
 	/* Common initialization for the device */
 	pci_device_init(phb, dev);
 
+        ecap = pci_cap(dev, PCI_CFG_CAP_ID_EXP, false);
+        aercap = pci_cap(dev, PCIECAP_ID_AER, true);
 	if (dev->dev_type == PCIE_TYPE_ROOT_PORT)
 		p7ioc_root_port_init(phb, dev, ecap, aercap);
 	else if (dev->dev_type == PCIE_TYPE_SWITCH_UPPORT ||
@@ -1856,7 +1844,7 @@ static int64_t p7ioc_ioda_reset(struct phb *phb, bool purge)
 
 		if ((pesta & IODA_PESTA_MMIO_FROZEN) ||
 		    (pestb & IODA_PESTB_DMA_STOPPED))
-			PHBDBG(p, "Frozen PE#%d (%s - %s)\n",
+			PHBDBG(p, "Frozen PE#%x (%s - %s)\n",
 			       i, (pestb & IODA_PESTB_DMA_STOPPED) ? "DMA" : "",
 			       (pesta & IODA_PESTA_MMIO_FROZEN) ? "MMIO" : "");
 	}
@@ -2227,11 +2215,6 @@ static int64_t p7ioc_freset(struct pci_slot *slot)
 		reg64 = in_be64(p->regs + PHB_RESET);
 		reg64 |= 0x2000000000000000ul;
 		out_be64(p->regs + PHB_RESET, reg64);
-		if (slot->ops.pfreset) {
-			pci_slot_set_state(slot,
-					   P7IOC_SLOT_PFRESET_START);
-			return slot->ops.pfreset(slot);
-		}
 
 		pci_slot_set_state(slot, P7IOC_SLOT_LINK_START);
 		return slot->ops.poll_link(slot);
@@ -2320,7 +2303,6 @@ static struct pci_slot *p7ioc_phb_slot_create(struct phb *phb)
 	slot->ops.poll_link            = p7ioc_poll_link;
 	slot->ops.hreset               = p7ioc_hreset;
 	slot->ops.freset               = p7ioc_freset;
-	slot->ops.pfreset              = NULL;
 	slot->ops.creset               = p7ioc_creset;
 
 	return slot;
@@ -2336,6 +2318,7 @@ static const struct phb_ops p7ioc_phb_ops = {
 	.choose_bus		= p7ioc_choose_bus,
 	.get_reserved_pe_number	= p7ioc_get_reserved_pe_number,
 	.device_init		= p7ioc_device_init,
+	.device_remove		= NULL,
 	.pci_reinit		= p7ioc_pci_reinit,
 	.eeh_freeze_status	= p7ioc_eeh_freeze_status,
 	.eeh_freeze_clear	= p7ioc_eeh_freeze_clear,
@@ -2532,6 +2515,17 @@ static void p7ioc_phb_err_interrupt(struct irq_source *is, uint32_t isn)
 	phb_unlock(&p->phb);
 }
 
+static uint64_t p7ioc_lsi_attributes(struct irq_source *is __unused,
+				     uint32_t isn)
+{
+	uint32_t irq = (isn & 0x7);
+
+	if (irq == PHB_LSI_PCIE_ERROR)
+		return IRQ_ATTR_TARGET_OPAL | IRQ_ATTR_TARGET_RARE;
+	return IRQ_ATTR_TARGET_LINUX;
+}
+
+
 /* MSIs (OS owned) */
 static const struct irq_source_ops p7ioc_msi_irq_ops = {
 	.get_xive = p7ioc_msi_get_xive,
@@ -2542,12 +2536,7 @@ static const struct irq_source_ops p7ioc_msi_irq_ops = {
 static const struct irq_source_ops p7ioc_lsi_irq_ops = {
 	.get_xive = p7ioc_lsi_get_xive,
 	.set_xive = p7ioc_lsi_set_xive,
-};
-
-/* PHB Errors (Ski owned) */
-static const struct irq_source_ops p7ioc_phb_err_irq_ops = {
-	.get_xive = p7ioc_lsi_get_xive,
-	.set_xive = p7ioc_lsi_set_xive,
+	.attributes = p7ioc_lsi_attributes,
 	.interrupt = p7ioc_phb_err_interrupt,
 };
 
@@ -2597,10 +2586,8 @@ static void p7ioc_pcie_add_node(struct p7ioc_phb *p)
 
 	/* XXX FIXME: add opal-memwin32, dmawins, etc... */
 	m64b = cleanup_addr(p->m64_base);
-	dt_add_property_cells(np, "ibm,opal-m64-window",
-			      hi32(m64b), lo32(m64b),
-			      hi32(m64b), lo32(m64b),
-			      hi32(PHB_M64_SIZE), lo32(PHB_M64_SIZE));
+	dt_add_property_u64s(np, "ibm,opal-m64-window",
+			      m64b, m64b, PHB_M64_SIZE);
 	dt_add_property_cells(np, "ibm,opal-msi-ports", 256);
 	dt_add_property_cells(np, "ibm,opal-num-pes", 128);
 	dt_add_property_cells(np, "ibm,opal-reserved-pe", 127);
@@ -2609,6 +2596,15 @@ static void p7ioc_pcie_add_node(struct p7ioc_phb *p)
 	tkill = reg[0] + PHB_TCE_KILL;
 	dt_add_property_cells(np, "ibm,opal-tce-kill",
 			      hi32(tkill), lo32(tkill));
+
+	/*
+	 * Linux may use this property to allocate the diag data buffer, which
+	 * can be used for either of these structs.  Pass the largest to ensure
+	 * they can both fit in this buffer.
+	 */
+	dt_add_property_cells(np, "ibm,phb-diag-data-size",
+			      MAX(sizeof(struct OpalIoP7IOCPhbErrorData),
+				  sizeof(struct OpalIoP7IOCErrorData)));
 
 	/* Add associativity properties */
 	add_chip_dev_associativity(np);
@@ -2670,11 +2666,7 @@ void p7ioc_phb_setup(struct p7ioc *ioc, uint8_t index)
 
 	/* Register OS interrupt sources */
 	register_irq_source(&p7ioc_msi_irq_ops, p, p->buid_msi << 4, 256);
-	register_irq_source(&p7ioc_lsi_irq_ops, p, p->buid_lsi << 4, 4);
-
-	/* Register internal interrupt source (LSI 7) */
-	register_irq_source(&p7ioc_phb_err_irq_ops, p,
-			    (p->buid_lsi << 4) + PHB_LSI_PCIE_ERROR, 1);
+	register_irq_source(&p7ioc_lsi_irq_ops, p, p->buid_lsi << 4, 8);
 
 	/* Initialize IODA table caches */
 	p7ioc_phb_init_ioda_cache(p);
@@ -2685,7 +2677,7 @@ void p7ioc_phb_setup(struct p7ioc *ioc, uint8_t index)
 	pci_register_phb(&p->phb, OPAL_DYNAMIC_PHB_ID);
 	slot = p7ioc_phb_slot_create(&p->phb);
 	if (!slot)
-		prlog(PR_NOTICE, "P7IOC: Cannot create PHB#%d slot\n",
+		prlog(PR_NOTICE, "P7IOC: Cannot create PHB#%x slot\n",
 		      p->phb.opal_id);
 
 	/* Platform additional setup */
@@ -2960,7 +2952,7 @@ int64_t p7ioc_phb_init(struct p7ioc_phb *p)
 {
 	uint64_t val;
 
-	PHBDBG(p, "Initializing PHB %d...\n", p->index);
+	PHBDBG(p, "Initializing PHB %x...\n", p->index);
 
 	p->state = P7IOC_PHB_STATE_INITIALIZING;
 
@@ -3263,5 +3255,6 @@ void p7ioc_phb_reset(struct phb *phb)
 	/* Restore the CI error mask */
 	out_be64(ioc->regs + P7IOC_CIn_LEM_ERR_MASK_AND(ci_idx), 0);
 }
+
 
 

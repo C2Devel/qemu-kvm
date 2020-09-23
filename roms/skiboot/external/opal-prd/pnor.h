@@ -7,7 +7,7 @@
 struct pnor {
 	char			*path;
 	struct ffs_handle	*ffsh;
-	uint32_t		size;
+	uint64_t		size;
 	uint32_t		erasesize;
 	struct blocklevel_device *bl;
 };
@@ -23,5 +23,6 @@ extern int pnor_operation(struct pnor *pnor, const char *name,
 
 extern int pnor_init(struct pnor *pnor);
 extern void pnor_close(struct pnor *pnor);
+extern bool pnor_available(struct pnor *pnor);
 
 #endif /*PNOR_H*/

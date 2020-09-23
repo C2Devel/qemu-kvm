@@ -24,8 +24,8 @@ unsigned long tb_hz = 512000000;
 
 static void time_wait_poll(unsigned long duration)
 {
-	unsigned long remaining = duration;
-	unsigned long end = mftb() + duration;
+	unsigned long now = mftb();
+	unsigned long end = now + duration;
 	unsigned long period = msecs_to_tb(5);
 
 	if (this_cpu()->tb_invalid) {
@@ -33,16 +33,19 @@ static void time_wait_poll(unsigned long duration)
 		return;
 	}
 
-	while (tb_compare(mftb(), end) != TB_AAFTERB) {
+	while (tb_compare(now, end) != TB_AAFTERB) {
+		unsigned long remaining = end - now;
+
 		/* Call pollers periodically but not continually to avoid
 		 * bouncing cachelines due to lock contention. */
 		if (remaining >= period) {
 			opal_run_pollers();
 			time_wait_nopoll(period);
 			remaining -= period;
-		}
+		} else
+			time_wait_nopoll(remaining);
 
-		cpu_relax();
+		now = mftb();
 	}
 }
 
@@ -63,15 +66,12 @@ void time_wait(unsigned long duration)
 
 void time_wait_nopoll(unsigned long duration)
 {
-	unsigned long end = mftb() + duration;
-
 	if (this_cpu()->tb_invalid) {
 		cpu_relax();
 		return;
 	}
 
-	while(tb_compare(mftb(), end) != TB_AAFTERB)
-		cpu_relax();
+	cpu_idle_delay(duration);
 }
 
 void time_wait_ms(unsigned long ms)

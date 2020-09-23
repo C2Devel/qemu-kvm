@@ -88,12 +88,6 @@ static enum {
 
 static bool rtc_tod_cache_dirty = false;
 
-/* TODO We'd probably want to export and use this variable declared in fsp.c,
- * instead of each component individually maintaining the state.. may be for
- * later optimization
- */
-static bool fsp_in_reset = false;
-
 struct opal_tpo_data {
 	uint64_t tpo_async_token;
 	uint32_t *year_month_day;
@@ -134,7 +128,7 @@ static void fsp_tpo_req_complete(struct fsp_msg *read_resp)
 		break;
 	case FSP_STATUS_INVALID_DATA:
 		log_simple_error(&e_info(OPAL_RC_RTC_TOD),
-			"RTC TPO in permanent error state\n");
+			"RTC TPO: Invalid data\n");
 		rc = OPAL_PARAMETER;
 		break;
 	case FSP_STATUS_SUCCESS:
@@ -280,7 +274,7 @@ static int64_t fsp_opal_rtc_read(uint32_t *year_month_day,
 	}
 
 	/* During R/R of FSP, read cached TOD */
-	if (fsp_in_reset) {
+	if (fsp_in_rr()) {
 		if (rtc_tod_state == RTC_TOD_VALID) {
 			rtc_cache_get_datetime(year_month_day,
 					       hour_minute_second_millisecond);
@@ -342,7 +336,6 @@ static int64_t fsp_rtc_send_write_request(uint32_t year_month_day,
 {
 	struct fsp_msg *msg;
 	uint32_t w0, w1, w2;
-	struct tm tm;
 
 	assert(lock_held_by_me(&rtc_lock));
 	assert(rtc_write_request_state == RTC_WRITE_NO_REQUEST);
@@ -362,14 +355,7 @@ static int64_t fsp_rtc_send_write_request(uint32_t year_month_day,
 	}
 	prlog(PR_TRACE, " -> req at %p\n", msg);
 
-	if (fsp_in_reset) {
-		datetime_to_tm(msg->data.words[0],
-			       (u64) msg->data.words[1] << 32,  &tm);
-		rtc_cache_update(&tm);
-		rtc_tod_cache_dirty = true;
-		fsp_freemsg(msg);
-		return OPAL_SUCCESS;
-	} else if (fsp_queue_msg(msg, fsp_rtc_req_complete)) {
+	if (fsp_queue_msg(msg, fsp_rtc_req_complete)) {
 		prlog(PR_TRACE, " -> queueing failed !\n");
 		fsp_freemsg(msg);
 		return OPAL_INTERNAL_ERROR;
@@ -384,10 +370,20 @@ static int64_t fsp_opal_rtc_write(uint32_t year_month_day,
 				  uint64_t hour_minute_second_millisecond)
 {
 	int rc;
+	struct tm tm;
 
 	lock(&rtc_lock);
 	if (rtc_tod_state == RTC_TOD_PERMANENT_ERROR) {
 		rc = OPAL_HARDWARE;
+		goto out;
+	}
+
+	if (fsp_in_rr()) {
+		datetime_to_tm(year_month_day,
+			       hour_minute_second_millisecond, &tm);
+		rtc_cache_update(&tm);
+		rtc_tod_cache_dirty = true;
+		rc = OPAL_SUCCESS;
 		goto out;
 	}
 
@@ -427,9 +423,15 @@ static int64_t fsp_opal_tpo_write(uint64_t async_token, uint32_t y_m_d,
 	/* Create a request and send it.*/
 	attr->tpo_async_token = async_token;
 
-	prlog(PR_TRACE, "Sending TPO write request...\n");
+	/* check if this is a disable tpo request */
+	if (y_m_d == 0 && hr_min == 0) {
+		prlog(PR_TRACE, "Sending TPO disable request...\n");
+		msg = fsp_mkmsg(FSP_CMD_TPO_DISABLE, 0);
+	} else {
+		prlog(PR_TRACE, "Sending TPO write request...\n");
+		msg = fsp_mkmsg(FSP_CMD_TPO_WRITE, 2, y_m_d, hr_min);
+	}
 
-	msg = fsp_mkmsg(FSP_CMD_TPO_WRITE, 2, y_m_d, hr_min);
 	if (!msg) {
 		prerror("TPO: Failed to create message for WRITE to FSP\n");
 		free(attr);
@@ -518,14 +520,10 @@ static bool fsp_rtc_msg_rr(u32 cmd_sub_mod, struct fsp_msg *msg)
 
 	switch (cmd_sub_mod) {
 	case FSP_RESET_START:
-		lock(&rtc_lock);
-		fsp_in_reset = true;
-		unlock(&rtc_lock);
 		rc = true;
 		break;
 	case FSP_RELOAD_COMPLETE:
 		lock(&rtc_lock);
-		fsp_in_reset = false;
 		if (rtc_tod_cache_dirty) {
 			rtc_flush_cached_tod();
 			rtc_tod_cache_dirty = false;

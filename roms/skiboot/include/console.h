@@ -51,21 +51,39 @@ struct con_ops {
 	size_t (*write)(const char *buf, size_t len);
 	size_t (*read)(char *buf, size_t len);
 	bool (*poll_read)(void);
-	int64_t (*flush)(void);
 };
 
-extern struct lock con_lock;
+struct opal_con_ops {
+	const char *name;
 
-extern bool dummy_console_enabled(void);
-extern void force_dummy_console(void);
+	/*
+	 * OPAL console driver specific init function.
+	 */
+	void (*init)(void);
+
+	int64_t (*write)(int64_t term, int64_t *len, const uint8_t *buf);
+	int64_t (*read)(int64_t term, int64_t *len, uint8_t *buf);
+
+	/*
+	 * returns the amount of space available in the console write buffer
+	 */
+	int64_t (*space)(int64_t term_number, int64_t *length);
+
+	/*
+	 * Forces the write buffer to be flushed by the driver
+	 */
+	int64_t (*flush)(int64_t term_number);
+};
+
 extern bool flush_console(void);
-extern bool __flush_console(bool flush_to_drivers);
+
 extern void set_console(struct con_ops *driver);
+extern void set_opal_console(struct opal_con_ops *driver);
+extern void init_opal_console(void);
 
 extern void console_complete_flush(void);
 
-extern int mambo_read(void);
-extern void mambo_write(const char *buf, size_t count);
+extern size_t mambo_console_write(const char *buf, size_t count);
 extern void enable_mambo_console(void);
 
 ssize_t console_write(bool flush_to_drivers, const void *buf, size_t count);
@@ -73,5 +91,15 @@ ssize_t console_write(bool flush_to_drivers, const void *buf, size_t count);
 extern void clear_console(void);
 extern void memcons_add_properties(void);
 extern void dummy_console_add_nodes(void);
+
+struct dt_node *add_opal_console_node(int index, const char *type,
+	uint32_t write_buffer_size);
+
+/* OPAL console drivers */
+extern struct opal_con_ops uart_opal_con;
+extern struct opal_con_ops fsp_opal_con;
+extern struct opal_con_ops dummy_opal_con;
+
+void mprintf(const char *fmt, ...);
 
 #endif /* __CONSOLE_H */

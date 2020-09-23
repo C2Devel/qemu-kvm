@@ -32,17 +32,20 @@
 #define ICP_MFRR		0xc	/* 8-bit access */
 
 static LIST_HEAD(irq_sources);
+static LIST_HEAD(irq_sources2);
 static struct lock irq_lock = LOCK_UNLOCKED;
 
-void __register_irq_source(struct irq_source *is)
+void __register_irq_source(struct irq_source *is, bool secondary)
 {
 	struct irq_source *is1;
+	struct list_head *list = secondary ? &irq_sources2 : &irq_sources;
 
-	prlog(PR_DEBUG, "IRQ: Registering %04x..%04x ops @%p (data %p)\n",
-	      is->start, is->end - 1, is->ops, is->data);
+	prlog(PR_DEBUG, "IRQ: Registering %04x..%04x ops @%p (data %p)%s\n",
+	      is->start, is->end - 1, is->ops, is->data,
+	      secondary ? " [secondary]" : "");
 
 	lock(&irq_lock);
-	list_for_each(&irq_sources, is1, link) {
+	list_for_each(list, is1, link) {
 		if (is->end > is1->start && is->start < is1->end) {
 			prerror("register IRQ source overlap !\n");
 			prerror("  new: %x..%x old: %x..%x\n",
@@ -51,7 +54,7 @@ void __register_irq_source(struct irq_source *is)
 			assert(0);
 		}
 	}
-	list_add_tail(&irq_sources, &is->link);
+	list_add_tail(list, &is->link);
 	unlock(&irq_lock);
 }
 
@@ -67,13 +70,14 @@ void register_irq_source(const struct irq_source_ops *ops, void *data,
 	is->ops = ops;
 	is->data = data;
 
-	__register_irq_source(is);
+	__register_irq_source(is, false);
 }
 
 void unregister_irq_source(uint32_t start, uint32_t count)
 {
 	struct irq_source *is;
 
+	/* Note: We currently only unregister from the primary sources */
 	lock(&irq_lock);
 	list_for_each(&irq_sources, is, link) {
 		if (start >= is->start && start < is->end) {
@@ -97,12 +101,21 @@ void unregister_irq_source(uint32_t start, uint32_t count)
 	assert(0);
 }
 
-static struct irq_source *irq_find_source(uint32_t isn)
+struct irq_source *irq_find_source(uint32_t isn)
 {
 	struct irq_source *is;
 
 	lock(&irq_lock);
+	/*
+	 * XXX This really needs some kind of caching !
+	 */
 	list_for_each(&irq_sources, is, link) {
+		if (isn >= is->start && isn < is->end) {
+			unlock(&irq_lock);
+			return is;
+		}
+	}
+	list_for_each(&irq_sources2, is, link) {
 		if (isn >= is->start && isn < is->end) {
 			unlock(&irq_lock);
 			return is;
@@ -113,27 +126,15 @@ static struct irq_source *irq_find_source(uint32_t isn)
 	return NULL;
 }
 
-void adjust_irq_source(struct irq_source *is, uint32_t new_count)
+void irq_for_each_source(void (*cb)(struct irq_source *, void *), void *data)
 {
-	struct irq_source *is1;
-	uint32_t new_end = is->start + new_count;
-
-	prlog(PR_DEBUG, "IRQ: Adjusting %04x..%04x to %04x..%04x\n",
-	      is->start, is->end - 1, is->start, new_end - 1);
+	struct irq_source *is;
 
 	lock(&irq_lock);
-	list_for_each(&irq_sources, is1, link) {
-		if (is1 == is)
-			continue;
-		if (new_end > is1->start && is->start < is1->end) {
-			prerror("adjust IRQ source overlap !\n");
-			prerror("  new: %x..%x old: %x..%x\n",
-				is->start, new_end - 1,
-				is1->start, is1->end - 1);
-			assert(0);
-		}
-	}
-	is->end = new_end;
+	list_for_each(&irq_sources, is, link)
+		cb(is, data);
+	list_for_each(&irq_sources2, is, link)
+		cb(is, data);
 	unlock(&irq_lock);
 }
 
@@ -174,11 +175,16 @@ uint32_t get_psi_interrupt(uint32_t chip_id)
 struct dt_node *add_ics_node(void)
 {
 	struct dt_node *ics = dt_new_addr(dt_root, "interrupt-controller", 0);
+	bool has_xive;
+
 	if (!ics)
 		return NULL;
 
+	has_xive = proc_gen >= proc_gen_p9;
+
 	dt_add_property_cells(ics, "reg", 0, 0, 0, 0);
-	dt_add_property_strings(ics, "compatible", "IBM,ppc-xics",
+	dt_add_property_strings(ics, "compatible",
+				has_xive ? "ibm,opal-xive-vc" : "IBM,ppc-xics",
 				"IBM,opal-xics");
 	dt_add_property_cells(ics, "#address-cells", 0);
 	dt_add_property_cells(ics, "#interrupt-cells", 2);
@@ -204,18 +210,35 @@ uint32_t get_ics_phandle(void)
 void add_opal_interrupts(void)
 {
 	struct irq_source *is;
-	unsigned int i, count = 0;
+	unsigned int i, ns, tns = 0, count = 0;
 	uint32_t *irqs = NULL, isn;
+	char *names = NULL;
 
 	lock(&irq_lock);
 	list_for_each(&irq_sources, is, link) {
 		/*
-		 * Add a source to opal-interrupts if it has an
-		 * ->interrupt callback
+		 * Don't even consider sources that don't have an interrupts
+		 * callback or don't have an attributes one.
 		 */
-		if (!is->ops->interrupt)
+		if (!is->ops->interrupt || !is->ops->attributes)
 			continue;
 		for (isn = is->start; isn < is->end; isn++) {
+			uint64_t attr = is->ops->attributes(is, isn);
+			char *name;
+
+			if (attr & IRQ_ATTR_TARGET_LINUX)
+				continue;
+			name = is->ops->name ? is->ops->name(is, isn) : NULL;
+			ns = name ? strlen(name) : 0;
+			prlog(PR_DEBUG, "irq %x name: %s (%d/%d)\n",
+			      isn, name ? name : "<null>", ns, tns);
+			names = realloc(names, tns + ns + 1);
+			if (name) {
+				strcpy(names + tns, name);
+				tns += (ns + 1);
+				free(name);
+			} else
+				names[tns++] = 0;
 			i = count++;
 			irqs = realloc(irqs, 4 * count);
 			irqs[i] = isn;
@@ -230,14 +253,16 @@ void add_opal_interrupts(void)
 	 * handling in Linux can cause problems.
 	 */
 	dt_add_property(opal_node, "opal-interrupts", irqs, count * 4);
+	dt_add_property(opal_node, "opal-interrupts-names", names, tns);
 
 	free(irqs);
+	free(names);
 }
 
 /*
  * This is called at init time (and one fast reboot) to sanitize the
  * ICP. We set our priority to 0 to mask all interrupts and make sure
- * no IPI is on the way.
+ * no IPI is on the way. This is also called on wakeup from nap
  */
 void reset_cpu_icp(void)
 {
@@ -245,6 +270,9 @@ void reset_cpu_icp(void)
 
 	if (!icp)
 		return;
+
+	/* Dummy fetch */
+	in_be32(icp + ICP_XIRR);
 
 	/* Clear pending IPIs */
 	out_8(icp + ICP_MFRR, 0xff);
@@ -267,10 +295,10 @@ void icp_send_eoi(uint32_t interrupt)
 	out_be32(icp + ICP_XIRR, interrupt & 0xffffff);
 }
 
-/* This is called before winkle, we clear pending IPIs and set our priority
- * to 1 to mask all but the IPI
+/* This is called before winkle or nap, we clear pending IPIs and
+ * set our priority to 1 to mask all but the IPI.
  */
-void icp_prep_for_rvwinkle(void)
+void icp_prep_for_pm(void)
 {
 	void *icp = this_cpu()->icp_regs;
 
@@ -379,15 +407,23 @@ uint32_t p8_irq_to_phb(uint32_t irq)
 	return p8_irq_to_block(irq) - P8_IRQ_BLOCK_PHB_BASE;
 }
 
-bool irq_source_eoi(uint32_t isn)
+bool __irq_source_eoi(struct irq_source *is, uint32_t isn)
 {
-	struct irq_source *is = irq_find_source(isn);
-
-	if (!is || !is->ops->eoi)
+	if (!is->ops->eoi)
 		return false;
 
 	is->ops->eoi(is, isn);
 	return true;
+}
+
+bool irq_source_eoi(uint32_t isn)
+{
+	struct irq_source *is = irq_find_source(isn);
+
+	if (!is)
+		return false;
+
+	return __irq_source_eoi(is, isn);
 }
 
 static int64_t opal_set_xive(uint32_t isn, uint16_t server, uint8_t priority)
@@ -405,6 +441,9 @@ static int64_t opal_get_xive(uint32_t isn, uint16_t *server, uint8_t *priority)
 {
 	struct irq_source *is = irq_find_source(isn);
 
+	if (!opal_addr_valid(server))
+		return OPAL_PARAMETER;
+
 	if (!is || !is->ops->get_xive)
 		return OPAL_PARAMETER;
 
@@ -416,6 +455,9 @@ static int64_t opal_handle_interrupt(uint32_t isn, __be64 *outstanding_event_mas
 {
 	struct irq_source *is = irq_find_source(isn);
 	int64_t rc = OPAL_SUCCESS;
+
+	if (!opal_addr_valid(outstanding_event_mask))
+		return OPAL_PARAMETER;
 
 	/* No source ? return */
 	if (!is || !is->ops->interrupt) {
@@ -461,5 +503,4 @@ void init_interrupts(void)
 		}
 	}
 }
-
 

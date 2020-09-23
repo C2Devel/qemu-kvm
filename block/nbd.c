@@ -28,15 +28,16 @@
 
 #include "qemu/osdep.h"
 #include "block/nbd-client.h"
+#include "block/qdict.h"
 #include "qapi/error.h"
 #include "qemu/uri.h"
 #include "block/block_int.h"
 #include "qemu/module.h"
-#include "qapi-visit.h"
+#include "qemu/option.h"
+#include "qapi/qapi-visit-sockets.h"
 #include "qapi/qobject-input-visitor.h"
 #include "qapi/qobject-output-visitor.h"
 #include "qapi/qmp/qdict.h"
-#include "qapi/qmp/qjson.h"
 #include "qapi/qmp/qstring.h"
 #include "qemu/cutils.h"
 
@@ -262,7 +263,6 @@ static SocketAddress *nbd_config(BDRVNBDState *s, QDict *options,
 {
     SocketAddress *saddr = NULL;
     QDict *addr = NULL;
-    QObject *crumpled_addr = NULL;
     Visitor *iv = NULL;
     Error *local_err = NULL;
 
@@ -272,20 +272,11 @@ static SocketAddress *nbd_config(BDRVNBDState *s, QDict *options,
         goto done;
     }
 
-    crumpled_addr = qdict_crumple(addr, errp);
-    if (!crumpled_addr) {
+    iv = qobject_input_visitor_new_flat_confused(addr, errp);
+    if (!iv) {
         goto done;
     }
 
-    /*
-     * FIXME .numeric, .to, .ipv4 or .ipv6 don't work with -drive
-     * server.type=inet.  .to doesn't matter, it's ignored anyway.
-     * That's because when @options come from -blockdev or
-     * blockdev_add, members are typed according to the QAPI schema,
-     * but when they come from -drive, they're all QString.  The
-     * visitor expects the former.
-     */
-    iv = qobject_input_visitor_new(crumpled_addr);
     visit_type_SocketAddress(iv, NULL, &saddr, &local_err);
     if (local_err) {
         error_propagate(errp, local_err);
@@ -293,8 +284,7 @@ static SocketAddress *nbd_config(BDRVNBDState *s, QDict *options,
     }
 
 done:
-    QDECREF(addr);
-    qobject_decref(crumpled_addr);
+    qobject_unref(addr);
     visit_free(iv);
     return saddr;
 }
@@ -304,30 +294,6 @@ NBDClientSession *nbd_get_client_session(BlockDriverState *bs)
     BDRVNBDState *s = bs->opaque;
     return &s->client;
 }
-
-static QIOChannelSocket *nbd_establish_connection(SocketAddress *saddr,
-                                                  Error **errp)
-{
-    QIOChannelSocket *sioc;
-    Error *local_err = NULL;
-
-    sioc = qio_channel_socket_new();
-    qio_channel_set_name(QIO_CHANNEL(sioc), "nbd-client");
-
-    qio_channel_socket_connect_sync(sioc,
-                                    saddr,
-                                    &local_err);
-    if (local_err) {
-        object_unref(OBJECT(sioc));
-        error_propagate(errp, local_err);
-        return NULL;
-    }
-
-    qio_channel_set_delay(QIO_CHANNEL(sioc), false);
-
-    return sioc;
-}
-
 
 static QCryptoTLSCreds *nbd_get_tls_creds(const char *id, Error **errp)
 {
@@ -388,6 +354,13 @@ static QemuOptsList nbd_runtime_opts = {
             .type = QEMU_OPT_STRING,
             .help = "ID of the TLS credentials to use",
         },
+        {
+            .name = "x-dirty-bitmap",
+            .type = QEMU_OPT_STRING,
+            .help = "experimental: expose named dirty bitmap in place of "
+                    "block status",
+        },
+        { /* end of list */ }
     },
 };
 
@@ -397,7 +370,6 @@ static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
     BDRVNBDState *s = bs->opaque;
     QemuOpts *opts = NULL;
     Error *local_err = NULL;
-    QIOChannelSocket *sioc = NULL;
     QCryptoTLSCreds *tlscreds = NULL;
     const char *hostname = NULL;
     int ret = -EINVAL;
@@ -437,22 +409,11 @@ static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
         hostname = s->saddr->u.inet.host;
     }
 
-    /* establish TCP connection, return error if it fails
-     * TODO: Configurable retry-until-timeout behaviour.
-     */
-    sioc = nbd_establish_connection(s->saddr, errp);
-    if (!sioc) {
-        ret = -ECONNREFUSED;
-        goto error;
-    }
-
     /* NBD handshake */
-    ret = nbd_client_init(bs, sioc, s->export,
-                          tlscreds, hostname, errp);
+    ret = nbd_client_init(bs, s->saddr, s->export, tlscreds, hostname,
+                          qemu_opt_get(opts, "x-dirty-bitmap"), errp);
+
  error:
-    if (sioc) {
-        object_unref(OBJECT(sioc));
-    }
     if (tlscreds) {
         object_unref(OBJECT(tlscreds));
     }
@@ -473,8 +434,27 @@ static int nbd_co_flush(BlockDriverState *bs)
 static void nbd_refresh_limits(BlockDriverState *bs, Error **errp)
 {
     NBDClientSession *s = nbd_get_client_session(bs);
+    uint32_t min = s->info.min_block;
     uint32_t max = MIN_NON_ZERO(NBD_MAX_BUFFER_SIZE, s->info.max_block);
 
+    /*
+     * If the server did not advertise an alignment:
+     * - a size that is not sector-aligned implies that an alignment
+     *   of 1 can be used to access those tail bytes
+     * - advertisement of block status requires an alignment of 1, so
+     *   that we don't violate block layer constraints that block
+     *   status is always aligned (as we can't control whether the
+     *   server will report sub-sector extents, such as a hole at EOF
+     *   on an unaligned POSIX file)
+     * - otherwise, assume the server is so old that we are safer avoiding
+     *   sub-sector requests
+     */
+    if (!min) {
+        min = (!QEMU_IS_ALIGNED(s->info.size, BDRV_SECTOR_SIZE) ||
+               s->info.base_allocation) ? 1 : BDRV_SECTOR_SIZE;
+    }
+
+    bs->bl.request_alignment = min;
     bs->bl.max_pdiscard = max;
     bs->bl.max_pwrite_zeroes = max;
     bs->bl.max_transfer = max;
@@ -582,6 +562,7 @@ static BlockDriver bdrv_nbd = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_co_block_status       = nbd_client_co_block_status,
 };
 
 static BlockDriver bdrv_nbd_tcp = {
@@ -601,6 +582,7 @@ static BlockDriver bdrv_nbd_tcp = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_co_block_status       = nbd_client_co_block_status,
 };
 
 static BlockDriver bdrv_nbd_unix = {
@@ -620,6 +602,7 @@ static BlockDriver bdrv_nbd_unix = {
     .bdrv_detach_aio_context    = nbd_detach_aio_context,
     .bdrv_attach_aio_context    = nbd_attach_aio_context,
     .bdrv_refresh_filename      = nbd_refresh_filename,
+    .bdrv_co_block_status       = nbd_client_co_block_status,
 };
 
 static void bdrv_nbd_init(void)

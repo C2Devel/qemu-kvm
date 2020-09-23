@@ -2083,7 +2083,7 @@ static void lsi_scsi_reset(DeviceState *dev)
     lsi_soft_reset(s);
 }
 
-static void lsi_pre_save(void *opaque)
+static int lsi_pre_save(void *opaque)
 {
     LSIState *s = opaque;
 
@@ -2092,6 +2092,8 @@ static void lsi_pre_save(void *opaque)
         assert(s->current->dma_len == 0);
     }
     assert(QTAILQ_EMPTY(&s->queue));
+
+    return 0;
 }
 
 static const VMStateDescription vmstate_lsi_scsi = {
@@ -2275,5 +2277,12 @@ void lsi53c895a_create(PCIBus *bus)
 {
     LSIState *s = LSI53C895A(pci_create_simple(bus, -1, "lsi53c895a"));
 
-    scsi_bus_legacy_handle_cmdline(&s->bus, false);
+    scsi_bus_legacy_handle_cmdline(&s->bus);
+}
+
+void lsi53c810_create(PCIBus *bus, int devfn)
+{
+    LSIState *s = LSI53C895A(pci_create_simple(bus, devfn, "lsi53c810"));
+
+    scsi_bus_legacy_handle_cmdline(&s->bus);
 }

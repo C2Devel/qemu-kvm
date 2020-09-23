@@ -39,27 +39,25 @@
  * Refer to pci-slot.h for the default PCI state set
  * when you're going to change below values.
  */
-#define FIRENZE_PCI_SLOT_NORMAL			0x00000000
-#define FIRENZE_PCI_SLOT_LINK			0x00000100
-#define   FIRENZE_PCI_SLOT_LINK_START		0x00000101
-#define FIRENZE_PCI_SLOT_HRESET			0x00000200
-#define   FIRENZE_PCI_SLOT_HRESET_START		0x00000201
-#define FIRENZE_PCI_SLOT_FRESET			0x00000300
-#define FIRENZE_PCI_SLOT_FRESET_START		0x00000301
-#define   FIRENZE_PCI_SLOT_FRESET_WAIT_RSP	0x00000302
-#define   FIRENZE_PCI_SLOT_FRESET_DELAY		0x00000303
-#define   FIRENZE_PCI_SLOT_FRESET_POWER_STATE	0x00000304
-#define   FIRENZE_PCI_SLOT_FRESET_POWER_OFF	0x00000305
-#define   FIRENZE_PCI_SLOT_FRESET_POWER_ON	0x00000306
-#define   FIRENZE_PCI_SLOT_PERST_DEASSERT	0x00000307
-#define   FIRENZE_PCI_SLOT_PERST_DELAY		0x00000308
-#define FIRENZE_PCI_SLOT_PFRESET		0x00000400
-#define   FIRENZE_PCI_SLOT_PFRESET_START	0x00000401
-#define FIRENZE_PCI_SLOT_GPOWER			0x00000600
-#define   FIRENZE_PCI_SLOT_GPOWER_START		0x00000601
-#define FIRENZE_PCI_SLOT_SPOWER			0x00000700
-#define   FIRENZE_PCI_SLOT_SPOWER_START		0x00000701
-#define   FIRENZE_PCI_SLOT_SPOWER_DONE		0x00000702
+#define FIRENZE_PCI_SLOT_NORMAL			PCI_SLOT_STATE_NORMAL
+#define FIRENZE_PCI_SLOT_LINK			PCI_SLOT_STATE_LINK
+#define   FIRENZE_PCI_SLOT_LINK_START		(FIRENZE_PCI_SLOT_LINK + 1)
+#define FIRENZE_PCI_SLOT_HRESET			PCI_SLOT_STATE_HRESET
+#define   FIRENZE_PCI_SLOT_HRESET_START		(FIRENZE_PCI_SLOT_HRESET + 1)
+#define FIRENZE_PCI_SLOT_FRESET			PCI_SLOT_STATE_FRESET
+#define   FIRENZE_PCI_SLOT_FRESET_START		(FIRENZE_PCI_SLOT_FRESET + 1)
+#define   FIRENZE_PCI_SLOT_FRESET_WAIT_RSP	(FIRENZE_PCI_SLOT_FRESET + 2)
+#define   FIRENZE_PCI_SLOT_FRESET_DELAY		(FIRENZE_PCI_SLOT_FRESET + 3)
+#define   FIRENZE_PCI_SLOT_FRESET_POWER_STATE	(FIRENZE_PCI_SLOT_FRESET + 4)
+#define   FIRENZE_PCI_SLOT_FRESET_POWER_OFF	(FIRENZE_PCI_SLOT_FRESET + 5)
+#define   FIRENZE_PCI_SLOT_FRESET_POWER_ON	(FIRENZE_PCI_SLOT_FRESET + 6)
+#define   FIRENZE_PCI_SLOT_PERST_DEASSERT	(FIRENZE_PCI_SLOT_FRESET + 7)
+#define   FIRENZE_PCI_SLOT_PERST_DELAY		(FIRENZE_PCI_SLOT_FRESET + 8)
+#define FIRENZE_PCI_SLOT_GPOWER			PCI_SLOT_STATE_GPOWER
+#define   FIRENZE_PCI_SLOT_GPOWER_START		(FIRENZE_PCI_SLOT_GPOWER + 1)
+#define FIRENZE_PCI_SLOT_SPOWER			PCI_SLOT_STATE_SPOWER
+#define   FIRENZE_PCI_SLOT_SPOWER_START		(FIRENZE_PCI_SLOT_SPOWER + 1)
+#define   FIRENZE_PCI_SLOT_SPOWER_DONE		(FIRENZE_PCI_SLOT_SPOWER + 2)
 
 /* Timeout for power status */
 #define FIRENZE_PCI_SLOT_RETRIES	500
@@ -100,8 +98,12 @@ struct firenze_pci_slot_info {
 	uint8_t		channel;
 	uint8_t		power_status;
 	uint8_t		buddy;
-	uint8_t		fixup;
-	uint8_t		fixup_num;
+};
+
+struct firenze_pci_slot_fixup_info {
+	const char	*label;
+	uint8_t		reg;
+	uint8_t		val;
 };
 
 struct firenze_pci_inv {
@@ -128,30 +130,33 @@ struct firenze_pci_inv_data {
  */
 static struct firenze_pci_inv_data *firenze_inv_data;
 static uint32_t firenze_inv_cnt;
-static uint8_t firenze_pci_slot_fixup_tbl[] = {
-	0x5e, 0xfa,	/* C6 / C7 */
-	0x5a, 0xff,
-	0x5b, 0xff,
-	0x5e, 0xfb,	/* C5 */
-	0x5b, 0xff,
-	0x5e, 0xfb,	/* C3 */
-	0x5b, 0xff
-};
 static struct firenze_pci_slot_info firenze_pci_slots[] = {
-	{ 0x0B,  "C7", 1, 1,    0, 1, 0, 0x35, 1, 0xAA,  0, 0, 3 },
-	{ 0x11, "C14", 0, 1,    0, 0, 0, 0x00, 0, 0xAA,  1, 0, 0 },
-	{ 0x0F, "C11", 1, 1,    0, 1, 0, 0x32, 1, 0xAA,  2, 0, 0 },
-	{ 0x10, "C12", 1, 1,    0, 1, 0, 0x39, 0, 0xAA,  3, 0, 0 },
-	{ 0x0A,  "C6", 1, 1,    0, 1, 0, 0x35, 0, 0xAA,  0, 0, 3 },
-	{ 0x12, "C15", 0, 1,    0, 0, 0, 0x00, 0, 0xAA,  5, 0, 0 },
-	{ 0x01, "USB", 0, 0,    0, 0, 0, 0x00, 0, 0xAA,  6, 0, 0 },
-	{ 0x0C,  "C8", 1, 1,    0, 1, 0, 0x36, 0, 0xAA,  7, 0, 0 },
-	{ 0x0D,  "C9", 1, 1,    0, 1, 0, 0x36, 1, 0xAA,  7, 0, 0 },
-	{ 0x0E, "C10", 1, 1,    0, 1, 0, 0x32, 0, 0xAA,  2, 0, 0 },
-	{ 0x09,  "C5", 1, 1, 0x10, 1, 0, 0x39, 1, 0xAA, 10, 3, 2 },
-	{ 0x08,  "C4", 1, 1, 0x10, 1, 0, 0x39, 0, 0xAA, 10, 0, 0 },
-	{ 0x07,  "C3", 1, 1, 0x10, 1, 0, 0x3A, 1, 0xAA, 12, 5, 2 },
-	{ 0x06,  "C2", 1, 1, 0x10, 1, 0, 0x3A, 0, 0xAA, 12, 0, 0 }
+	{ 0x0B,  "C7", 1, 1,    0, 1, 0, 0x35, 1, 0xAA,  0 },
+	{ 0x11, "C14", 0, 1,    0, 0, 0, 0x00, 0, 0xAA,  1 },
+	{ 0x0F, "C11", 1, 1,    0, 1, 0, 0x32, 1, 0xAA,  2 },
+	{ 0x10, "C12", 1, 1,    0, 1, 0, 0x39, 0, 0xAA,  3 },
+	{ 0x0A,  "C6", 1, 1,    0, 1, 0, 0x35, 0, 0xAA,  0 },
+	{ 0x12, "C15", 0, 1,    0, 0, 0, 0x00, 0, 0xAA,  5 },
+	{ 0x01, "USB", 0, 0,    0, 0, 0, 0x00, 0, 0xAA,  6 },
+	{ 0x0C,  "C8", 1, 1,    0, 1, 0, 0x36, 0, 0xAA,  7 },
+	{ 0x0D,  "C9", 1, 1,    0, 1, 0, 0x36, 1, 0xAA,  7 },
+	{ 0x0E, "C10", 1, 1,    0, 1, 0, 0x32, 0, 0xAA,  2 },
+	{ 0x09,  "C5", 1, 1, 0x10, 1, 0, 0x39, 1, 0xAA, 10 },
+	{ 0x08,  "C4", 1, 1, 0x10, 1, 0, 0x39, 0, 0xAA, 10 },
+	{ 0x07,  "C3", 1, 1, 0x10, 1, 0, 0x3A, 1, 0xAA, 12 },
+	{ 0x06,  "C2", 1, 1, 0x10, 1, 0, 0x3A, 0, 0xAA, 12 }
+};
+static struct firenze_pci_slot_fixup_info firenze_pci_slot_fixup_tbl[] = {
+	{ "C3",  0x5e, 0xfb },
+	{ "C3",  0x5b, 0xff },
+	{ "C5",  0x5e, 0xfb },
+	{ "C5",  0x5b, 0xff },
+	{ "C6",  0x5e, 0xfa },
+	{ "C6",  0x5a, 0xff },
+	{ "C6",  0x5b, 0xff },
+	{ "C7",  0x5e, 0xfa },
+	{ "C7",  0x5a, 0xff },
+	{ "C7",  0x5b, 0xff }
 };
 
 static void firenze_pci_add_inventory(struct phb *phb,
@@ -507,7 +512,8 @@ static int64_t firenze_pci_slot_freset(struct pci_slot *slot)
 					msecs_to_tb(FIRENZE_PCI_SLOT_DELAY));
 		}
 
-		/* Fall through: Power is off, turn it on */
+		/* Power is off, turn it on */
+		/* Fallthrough */
 	case FIRENZE_PCI_SLOT_FRESET_POWER_OFF:
 		/* Update last power status */
 		pval = (uint8_t *)(plat_slot->req->rw_buf);
@@ -650,8 +656,20 @@ static int64_t firenze_pci_slot_set_power_state(struct pci_slot *slot,
 	if (val != PCI_SLOT_POWER_OFF && val != PCI_SLOT_POWER_ON)
 		return OPAL_PARAMETER;
 
-	if (slot->power_state == val)
+	if (!pci_slot_has_flags(slot, PCI_SLOT_FLAG_ENFORCE) &&
+	    slot->power_state == val)
 		return OPAL_SUCCESS;
+
+	/* Update with the requested power state and bail immediately when
+	 * surprise hotplug is supported on the slot. It keeps the power
+	 * supply to the slot on and it guarentees the link state change
+	 * events will be raised properly during surprise hot add/remove.
+	 */
+	if (!pci_slot_has_flags(slot, PCI_SLOT_FLAG_ENFORCE) &&
+	    slot->surprise_pluggable) {
+		slot->power_state = val;
+		return OPAL_SUCCESS;
+	}
 
 	slot->power_state = val;
 	pci_slot_set_state(slot, FIRENZE_PCI_SLOT_SPOWER_START);
@@ -718,20 +736,19 @@ static struct i2c_bus *firenze_pci_find_i2c_bus(uint8_t chip,
 	return NULL;
 }
 
-static int64_t firenze_pci_slot_fixup_one(struct pci_slot *slot,
-					  struct firenze_pci_slot_info *info,
-					  uint8_t *fixup, bool write)
+static int64_t firenze_pci_slot_fixup_one_reg(struct pci_slot *slot,
+			struct firenze_pci_slot_fixup_info *fixup,
+			bool write)
 {
 	struct firenze_pci_slot *plat_slot = slot->data;
 	struct i2c_request *req = plat_slot->req;
 	int32_t retries = FIRENZE_PCI_SLOT_RETRIES;
-	uint8_t rval;
 	int64_t rc = OPAL_SUCCESS;
 
-	req->offset = *fixup;
+	req->offset = fixup->reg;
 	if (write) {
 		req->op = SMBUS_WRITE;
-		*(uint8_t *)(req->rw_buf) = *(fixup + 1);
+		*(uint8_t *)(req->rw_buf) = fixup->val;
 	} else {
 		req->op = SMBUS_READ;
 		*(uint8_t *)(req->rw_buf) = 0;
@@ -751,18 +768,16 @@ static int64_t firenze_pci_slot_fixup_one(struct pci_slot *slot,
 	if (slot->state != FIRENZE_PCI_SLOT_FRESET_DELAY) {
 		rc = OPAL_BUSY;
 		prlog(PR_ERR, "Timeout %s PCI slot [%s] - (%02x, %02x)\n",
-		      write ? "writing" : "reading", info->label,
-		      *fixup, *(fixup + 1));
+		      write ? "writing" : "reading", fixup->label,
+		      fixup->reg, fixup->val);
 		goto out;
 	}
 
-	if (!write) {
-		rval = *(uint8_t *)(req->rw_buf);
-		if (rval != *(fixup + 1)) {
-			rc = OPAL_INTERNAL_ERROR;
-			prlog(PR_ERR, "Error fixing PCI slot [%s] - (%02x, %02x, %02x)\n",
-			      info->label, *fixup, *(fixup + 1), rval);
-		}
+	if (!write && (*(uint8_t *)(req->rw_buf)) != fixup->val) {
+		rc = OPAL_INTERNAL_ERROR;
+		prlog(PR_ERR, "Error fixing PCI slot [%s] - (%02x, %02x, %02x)\n",
+		      fixup->label, fixup->reg, fixup->val,
+		      (*(uint8_t *)(req->rw_buf)));
 	}
 
 out:
@@ -773,9 +788,10 @@ out:
 static void firenze_pci_slot_fixup(struct pci_slot *slot,
 				   struct firenze_pci_slot_info *info)
 {
+	struct firenze_pci_slot_fixup_info *fixup;
 	const uint32_t *p;
 	uint64_t id;
-	uint8_t *fixup, num, i;
+	uint32_t i;
 	int64_t rc;
 
 	p = dt_prop_get_def(dt_root, "ibm,vpd-lx-info", NULL);
@@ -784,16 +800,73 @@ static void firenze_pci_slot_fixup(struct pci_slot *slot,
 	    id != LX_VPD_1S4U_BACKPLANE)
 		return;
 
-	fixup = &firenze_pci_slot_fixup_tbl[info->fixup * 2];
-	num   = info->fixup_num;
-	for (i = 0; i < num; i++, fixup += 2) {
-		rc = firenze_pci_slot_fixup_one(slot, info, fixup, true);
+	fixup = firenze_pci_slot_fixup_tbl;
+	for (i = 0; i < ARRAY_SIZE(firenze_pci_slot_fixup_tbl); i++, fixup++) {
+		if (strcmp(info->label, fixup->label))
+			continue;
+
+		rc = firenze_pci_slot_fixup_one_reg(slot, fixup, true);
 		if (rc)
 			return;
 
-		rc = firenze_pci_slot_fixup_one(slot, info, fixup, false);
+		rc = firenze_pci_slot_fixup_one_reg(slot, fixup, false);
 		if (rc)
 			return;
+	}
+}
+
+static void firenze_pci_setup_power_mgt(struct pci_slot *slot,
+					struct firenze_pci_slot *plat_slot,
+					struct firenze_pci_slot_info *info)
+{
+	plat_slot->i2c_bus = firenze_pci_find_i2c_bus(info->chip_id,
+						      info->master_id,
+						      info->port_id);
+	if (!plat_slot->i2c_bus)
+		return;
+
+	plat_slot->req = i2c_alloc_req(plat_slot->i2c_bus);
+	if (!plat_slot->req)
+		return;
+
+	plat_slot->req->dev_addr	= info->slave_addr;
+	plat_slot->req->offset_bytes	= 1;
+	plat_slot->req->rw_buf		= plat_slot->i2c_rw_buf;
+	plat_slot->req->rw_len		= 1;
+	plat_slot->req->completion	= firenze_i2c_req_done;
+	plat_slot->req->user_data	= slot;
+
+	firenze_pci_slot_fixup(slot, info);
+
+	/*
+	 * For all slots, the register used to change the power state is
+	 * always 0x69. It could have been set to something else in the
+	 * above fixup. Lets fix it to 0x69 here.
+	 *
+	 * The power states of two slots are controlled by one register.
+	 * This means two slots have to share data buffer for power states,
+	 * which are tracked by struct firenze_pci_slot_info::power_status.
+	 * With it, we can avoid affecting slot#B's power state when trying
+	 * to adjust that on slot#A. Also, the initial power states for all
+	 * slots are assumed to be PCI_SLOT_POWER_ON.
+	 */
+	plat_slot->req->offset  = 0x69;
+	plat_slot->power_status = &firenze_pci_slots[info->buddy].power_status;
+	switch (info->channel) {
+	case 0:
+		plat_slot->power_mask = 0x33;
+		plat_slot->power_on   = 0x22;
+		plat_slot->power_off  = 0;
+		break;
+	case 1:
+		plat_slot->power_status = &firenze_pci_slots[info->buddy].power_status;
+		plat_slot->power_mask = 0xcc;
+		plat_slot->power_on   = 0x88;
+		plat_slot->power_off  = 0;
+		break;
+	default:
+		prlog(PR_ERR, "%016llx: Invalid channel %d\n",
+		      slot->id, info->channel);
 	}
 }
 
@@ -803,7 +876,6 @@ static void firenze_pci_slot_init(struct pci_slot *slot)
 	struct firenze_pci_slot *plat_slot = slot->data;
 	struct firenze_pci_slot_info *info = NULL;
 	uint32_t vdid;
-	uint8_t buddy;
 	int i;
 
 	/* Search for PCI slot info */
@@ -818,44 +890,8 @@ static void firenze_pci_slot_init(struct pci_slot *slot)
 		return;
 
 	/* Search I2C bus for external power mgt */
-	buddy = info->buddy;
-	plat_slot->i2c_bus = firenze_pci_find_i2c_bus(info->chip_id,
-						      info->master_id,
-						      info->port_id);
-	if (plat_slot->i2c_bus)
-		plat_slot->req = i2c_alloc_req(plat_slot->i2c_bus);
-	else
-		plat_slot->req = NULL;
-
-	if (plat_slot->req) {
-		plat_slot->req->dev_addr	= info->slave_addr;
-		plat_slot->req->offset_bytes	= 1;
-		plat_slot->req->rw_buf		= plat_slot->i2c_rw_buf;
-		plat_slot->req->rw_len		= 1;
-		plat_slot->req->completion	= firenze_i2c_req_done;
-		plat_slot->req->user_data	= slot;
-		firenze_pci_slot_fixup(slot, info);
-
-		plat_slot->req->offset		= 0x69;
-		switch (info->channel) {
-		case 0:
-			plat_slot->power_status = &firenze_pci_slots[buddy].power_status;
-			plat_slot->power_mask = 0x33;
-			plat_slot->power_on   = 0x22;
-			plat_slot->power_off  = 0x33;
-			break;
-		case 1:
-			plat_slot->power_status = &firenze_pci_slots[buddy].power_status;
-			plat_slot->power_mask = 0xcc;
-			plat_slot->power_on   = 0x88;
-			plat_slot->power_off  = 0xcc;
-			break;
-		default:
-			prlog(PR_DEBUG, "%016llx: Invalid channel %d\n",
-			      slot->id, info->channel);
-			plat_slot->i2c_bus = NULL;
-		}
-	}
+	if (slot->power_ctl)
+		firenze_pci_setup_power_mgt(slot, plat_slot, info);
 
 	/*
 	 * If the slot has external power logic, to override the

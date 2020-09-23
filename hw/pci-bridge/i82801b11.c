@@ -44,8 +44,6 @@
 #include "qemu/osdep.h"
 #include "hw/pci/pci.h"
 #include "hw/i386/ich9.h"
-#include "qapi/error.h"
-
 
 /*****************************************************************************/
 /* ICH9 DMI-to-PCI bridge */
@@ -99,6 +97,7 @@ static void i82801b11_bridge_class_init(ObjectClass *klass, void *data)
     k->realize = i82801b11_bridge_realize;
     k->config_write = pci_bridge_write_config;
     dc->vmsd = &i82801b11_bridge_dev_vmstate;
+    dc->reset = pci_bridge_reset;
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
 }
 

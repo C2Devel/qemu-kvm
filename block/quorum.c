@@ -15,14 +15,15 @@
 
 #include "qemu/osdep.h"
 #include "qemu/cutils.h"
+#include "qemu/option.h"
 #include "block/block_int.h"
-#include "qapi/qmp/qbool.h"
+#include "block/qdict.h"
+#include "qapi/error.h"
+#include "qapi/qapi-events-block.h"
 #include "qapi/qmp/qdict.h"
 #include "qapi/qmp/qerror.h"
-#include "qapi/qmp/qjson.h"
 #include "qapi/qmp/qlist.h"
 #include "qapi/qmp/qstring.h"
-#include "qapi-event.h"
 #include "crypto/hash.h"
 
 #define HASH_LENGTH 32
@@ -115,6 +116,7 @@ struct QuorumAIOCB {
     /* Request metadata */
     uint64_t offset;
     uint64_t bytes;
+    int flags;
 
     QEMUIOVector *qiov;         /* calling IOV */
 
@@ -157,7 +159,8 @@ static bool quorum_64bits_compare(QuorumVoteValue *a, QuorumVoteValue *b)
 static QuorumAIOCB *quorum_aio_get(BlockDriverState *bs,
                                    QEMUIOVector *qiov,
                                    uint64_t offset,
-                                   uint64_t bytes)
+                                   uint64_t bytes,
+                                   int flags)
 {
     BDRVQuorumState *s = bs->opaque;
     QuorumAIOCB *acb = g_new(QuorumAIOCB, 1);
@@ -168,6 +171,7 @@ static QuorumAIOCB *quorum_aio_get(BlockDriverState *bs,
         .bs                 = bs,
         .offset             = offset,
         .bytes              = bytes,
+        .flags              = flags,
         .qiov               = qiov,
         .votes.compare      = quorum_sha256_compare,
         .votes.vote_list    = QLIST_HEAD_INITIALIZER(acb.votes.vote_list),
@@ -271,9 +275,11 @@ static void quorum_rewrite_entry(void *opaque)
     BDRVQuorumState *s = acb->bs->opaque;
 
     /* Ignore any errors, it's just a correction attempt for already
-     * corrupted data. */
+     * corrupted data.
+     * Mask out BDRV_REQ_WRITE_UNCHANGED because this overwrites the
+     * area with different data from the other children. */
     bdrv_co_pwritev(s->children[co->idx], acb->offset, acb->bytes,
-                    acb->qiov, 0);
+                    acb->qiov, acb->flags & ~BDRV_REQ_WRITE_UNCHANGED);
 
     /* Wake up the caller after the last rewrite */
     acb->rewrite_count--;
@@ -673,7 +679,7 @@ static int quorum_co_preadv(BlockDriverState *bs, uint64_t offset,
                             uint64_t bytes, QEMUIOVector *qiov, int flags)
 {
     BDRVQuorumState *s = bs->opaque;
-    QuorumAIOCB *acb = quorum_aio_get(bs, qiov, offset, bytes);
+    QuorumAIOCB *acb = quorum_aio_get(bs, qiov, offset, bytes, flags);
     int ret;
 
     acb->is_read = true;
@@ -699,7 +705,7 @@ static void write_quorum_entry(void *opaque)
 
     sacb->bs = s->children[i]->bs;
     sacb->ret = bdrv_co_pwritev(s->children[i], acb->offset, acb->bytes,
-                                acb->qiov, 0);
+                                acb->qiov, acb->flags);
     if (sacb->ret == 0) {
         acb->success_count++;
     } else {
@@ -719,7 +725,7 @@ static int quorum_co_pwritev(BlockDriverState *bs, uint64_t offset,
                              uint64_t bytes, QEMUIOVector *qiov, int flags)
 {
     BDRVQuorumState *s = bs->opaque;
-    QuorumAIOCB *acb = quorum_aio_get(bs, qiov, offset, bytes);
+    QuorumAIOCB *acb = quorum_aio_get(bs, qiov, offset, bytes, flags);
     int i, ret;
 
     for (i = 0; i < s->num_children; i++) {
@@ -867,30 +873,13 @@ static QemuOptsList quorum_runtime_opts = {
     },
 };
 
-static int parse_read_pattern(const char *opt)
-{
-    int i;
-
-    if (!opt) {
-        /* Set quorum as default */
-        return QUORUM_READ_PATTERN_QUORUM;
-    }
-
-    for (i = 0; i < QUORUM_READ_PATTERN__MAX; i++) {
-        if (!strcmp(opt, QuorumReadPattern_lookup[i])) {
-            return i;
-        }
-    }
-
-    return -EINVAL;
-}
-
 static int quorum_open(BlockDriverState *bs, QDict *options, int flags,
                        Error **errp)
 {
     BDRVQuorumState *s = bs->opaque;
     Error *local_err = NULL;
     QemuOpts *opts = NULL;
+    const char *pattern_str;
     bool *opened;
     int i;
     int ret = 0;
@@ -925,7 +914,13 @@ static int quorum_open(BlockDriverState *bs, QDict *options, int flags,
         goto exit;
     }
 
-    ret = parse_read_pattern(qemu_opt_get(opts, QUORUM_OPT_READ_PATTERN));
+    pattern_str = qemu_opt_get(opts, QUORUM_OPT_READ_PATTERN);
+    if (!pattern_str) {
+        ret = QUORUM_READ_PATTERN_QUORUM;
+    } else {
+        ret = qapi_enum_parse(&QuorumReadPattern_lookup, pattern_str,
+                              -EINVAL, NULL);
+    }
     if (ret < 0) {
         error_setg(&local_err, "Please set read-pattern as fifo or quorum");
         goto exit;
@@ -971,6 +966,8 @@ static int quorum_open(BlockDriverState *bs, QDict *options, int flags,
         opened[i] = true;
     }
     s->next_child_index = s->num_children;
+
+    bs->supported_write_flags = BDRV_REQ_WRITE_UNCHANGED;
 
     g_free(opened);
     goto exit;
@@ -1093,8 +1090,8 @@ static void quorum_refresh_filename(BlockDriverState *bs, QDict *options)
 
     children = qlist_new();
     for (i = 0; i < s->num_children; i++) {
-        QINCREF(s->children[i]->bs->full_open_options);
-        qlist_append(children, s->children[i]->bs->full_open_options);
+        qlist_append(children,
+                     qobject_ref(s->children[i]->bs->full_open_options));
     }
 
     opts = qdict_new();
@@ -1109,11 +1106,10 @@ static void quorum_refresh_filename(BlockDriverState *bs, QDict *options)
 
 static BlockDriver bdrv_quorum = {
     .format_name                        = "quorum",
-    .protocol_name                      = "quorum",
 
     .instance_size                      = sizeof(BDRVQuorumState),
 
-    .bdrv_file_open                     = quorum_open,
+    .bdrv_open                          = quorum_open,
     .bdrv_close                         = quorum_close,
     .bdrv_refresh_filename              = quorum_refresh_filename,
 

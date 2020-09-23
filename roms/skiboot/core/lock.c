@@ -93,7 +93,10 @@ void lock(struct lock *l)
 	for (;;) {
 		if (try_lock(l))
 			break;
-		cpu_relax();
+		smt_lowest();
+		while (l->lock_val)
+			barrier();
+		smt_medium();
 	}
 }
 
@@ -110,6 +113,9 @@ void unlock(struct lock *l)
 	this_cpu()->lock_depth--;
 	l->lock_val = 0;
 
+	/* WARNING: On fast reboot, we can be reset right at that
+	 * point, so the reset_lock in there cannot be in the con path
+	 */
 	if (l->in_con_path) {
 		cpu->con_suspend--;
 		if (cpu->con_suspend == 0 && cpu->con_need_flush)

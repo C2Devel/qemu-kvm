@@ -1,4 +1,4 @@
-/* Copyright 2013-2014 IBM Corp.
+/* Copyright 2013-2017 IBM Corp.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
  */
 
 #include <skiboot.h>
-#include <nvram-format.h>
+#include <nvram.h>
 
 /*
  * NVRAM Format as specified in PAPR
@@ -24,9 +24,11 @@
 struct chrp_nvram_hdr {
 	uint8_t		sig;
 	uint8_t		cksum;
-	uint16_t	len;
+	be16		len;
 	char		name[12];
 };
+
+static struct chrp_nvram_hdr *skiboot_part_hdr;
 
 #define NVRAM_SIG_FW_PRIV	0x51
 #define NVRAM_SIG_SYSTEM	0x70
@@ -73,11 +75,13 @@ int nvram_format(void *nvram_image, uint32_t nvram_size)
 		return -1;
 	h = nvram_image + offset;
 	h->sig = NVRAM_SIG_FW_PRIV;
-	h->len = NVRAM_SIZE_FW_PRIV >> 4;
+	h->len = cpu_to_be16(NVRAM_SIZE_FW_PRIV >> 4);
 	strcpy(h->name, NVRAM_NAME_FW_PRIV);
 	h->cksum = chrp_nv_cksum(h);
-	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x for size 0x%08x"
-			" with cksum 0x%02x\n", NVRAM_NAME_FW_PRIV, offset, h->len, h->cksum);
+	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x"
+	      " for size 0x%08x with cksum 0x%02x\n",
+	      NVRAM_NAME_FW_PRIV, offset,
+	      be16_to_cpu(h->len), h->cksum);
 	offset += NVRAM_SIZE_FW_PRIV;
 
 	/* Create common partition */
@@ -85,11 +89,13 @@ int nvram_format(void *nvram_image, uint32_t nvram_size)
 		return -1;
 	h = nvram_image + offset;
 	h->sig = NVRAM_SIG_SYSTEM;
-	h->len = NVRAM_SIZE_COMMON >> 4;
+	h->len = cpu_to_be16(NVRAM_SIZE_COMMON >> 4);
 	strcpy(h->name, NVRAM_NAME_COMMON);
 	h->cksum = chrp_nv_cksum(h);
-	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x for size 0x%08x"
-			" with cksum 0x%02x\n", NVRAM_NAME_COMMON, offset, h->len, h->cksum);
+	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x"
+	      " for size 0x%08x with cksum 0x%02x\n",
+	      NVRAM_NAME_COMMON, offset,
+	      be16_to_cpu(h->len), h->cksum);
 	offset += NVRAM_SIZE_COMMON;
 
 	/* Create free space partition */
@@ -97,12 +103,13 @@ int nvram_format(void *nvram_image, uint32_t nvram_size)
 		return -1;
 	h = nvram_image + offset;
 	h->sig = NVRAM_SIG_FREE;
-	h->len = (nvram_size - offset) >> 4;
+	h->len = cpu_to_be16((nvram_size - offset) >> 4);
 	/* We have the full 12 bytes here */
 	memcpy(h->name, NVRAM_NAME_FREE, 12);
 	h->cksum = chrp_nv_cksum(h);
-	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x for size 0x%08x"
-			" with cksum 0x%02x\n", NVRAM_NAME_FREE, offset, h->len, h->cksum);
+	prlog(PR_DEBUG, "NVRAM: Created '%s' partition at 0x%08x"
+	      " for size 0x%08x with cksum 0x%02x\n",
+	      NVRAM_NAME_FREE, offset, be16_to_cpu(h->len), h->cksum);
 	return 0;
 }
 
@@ -115,7 +122,8 @@ int nvram_check(void *nvram_image, const uint32_t nvram_size)
 {
 	unsigned int offset = 0;
 	bool found_common = false;
-	bool found_skiboot = false;
+
+	skiboot_part_hdr = NULL;
 
 	while (offset + sizeof(struct chrp_nvram_hdr) < nvram_size) {
 		struct chrp_nvram_hdr *h = nvram_image + offset;
@@ -126,7 +134,7 @@ int nvram_check(void *nvram_image, const uint32_t nvram_size)
 				offset, h->cksum, chrp_nv_cksum(h));
 			goto failed;
 		}
-		if (h->len < 1) {
+		if (be16_to_cpu(h->len) < 1) {
 			prerror("NVRAM: Partition at offset 0x%x"
 				" has incorrect 0 length\n", offset);
 			goto failed;
@@ -138,9 +146,9 @@ int nvram_check(void *nvram_image, const uint32_t nvram_size)
 
 		if (h->sig == NVRAM_SIG_FW_PRIV &&
 		    strcmp(h->name, NVRAM_NAME_FW_PRIV) == 0)
-			found_skiboot = true;
+			skiboot_part_hdr = h;
 
-		offset += h->len << 4;
+		offset += be16_to_cpu(h->len) << 4;
 		if (offset > nvram_size) {
 			prerror("NVRAM: Partition at offset 0x%x"
 				" extends beyond end of nvram !\n", offset);
@@ -148,17 +156,122 @@ int nvram_check(void *nvram_image, const uint32_t nvram_size)
 		}
 	}
 	if (!found_common) {
-		prerror("NVRAM: Common partition not found !\n");
+		prlog_once(PR_ERR, "NVRAM: Common partition not found !\n");
 		goto failed;
 	}
-	if (!found_skiboot) {
-		prerror("NVRAM: Skiboot private partition "
-			"not found !\n");
+
+	if (!skiboot_part_hdr) {
+		prlog_once(PR_ERR, "NVRAM: Skiboot private partition not found !\n");
 		goto failed;
+	} else {
+		/*
+		 * The OF NVRAM format requires config strings to be NUL
+		 * terminated and unused memory to be set to zero. Well behaved
+		 * software should ensure this is done for us, but we should
+		 * always check.
+		 */
+		const char *last_byte = (const char *) skiboot_part_hdr +
+			be16_to_cpu(skiboot_part_hdr->len) * 16 - 1;
+
+		if (*last_byte != 0) {
+			prerror("NVRAM: Skiboot private partition is not NUL terminated");
+			goto failed;
+		}
 	}
 
 	prlog(PR_INFO, "NVRAM: Layout appears sane\n");
 	return 0;
  failed:
 	return -1;
+}
+
+static const char *find_next_key(const char *start, const char *end)
+{
+	/*
+	 * Unused parts of the partition are set to NUL. If we hit two
+	 * NULs in a row then we assume that we have hit the end of the
+	 * partition.
+	 */
+	if (*start == 0)
+		return NULL;
+
+	while (start < end) {
+		if (*start == 0)
+			return start + 1;
+
+		start++;
+	}
+
+	return NULL;
+}
+
+/*
+ * nvram_query() - Searches skiboot NVRAM partition for a key=value pair.
+ *
+ * Returns a pointer to a NUL terminated string that contains the value
+ * associated with the given key.
+ */
+const char *nvram_query(const char *key)
+{
+	const char *part_end, *start;
+	int key_len = strlen(key);
+
+	/*
+	 * The running OS can modify the NVRAM as it pleases so we need to be
+	 * a little paranoid and check that it's ok before we try parse it.
+	 *
+	 * NB: nvram_validate() can update skiboot_part_hdr
+	 */
+	if (!nvram_validate())
+		return NULL;
+
+	part_end = (const char *) skiboot_part_hdr
+		+ be16_to_cpu(skiboot_part_hdr->len) * 16 - 1;
+
+	start = (const char *) skiboot_part_hdr
+		+ sizeof(*skiboot_part_hdr);
+
+	if (!key_len) {
+		prlog(PR_WARNING, "NVRAM: search key is empty!\n");
+		return NULL;
+	}
+
+	if (key_len > 32)
+		prlog(PR_WARNING, "NVRAM: search key '%s' is longer than 32 chars\n", key);
+
+	while (start) {
+		int remaining = part_end - start;
+
+		prlog(PR_TRACE, "NVRAM: '%s' (%lu)\n",
+			start, strlen(start));
+
+		if (key_len + 1 > remaining)
+			return NULL;
+
+		if (!strncmp(key, start, key_len) && start[key_len] == '=') {
+			const char *value = &start[key_len + 1];
+
+			prlog(PR_DEBUG, "NVRAM: Searched for '%s' found '%s'\n",
+				key, value);
+
+			return value;
+		}
+
+		start = find_next_key(start, part_end);
+	}
+
+	prlog(PR_DEBUG, "NVRAM: '%s' not found\n", key);
+
+	return NULL;
+}
+
+
+bool nvram_query_eq(const char *key, const char *value)
+{
+	const char *s = nvram_query(key);
+
+	if (!s)
+		return false;
+
+	return !strcmp(s, value);
 }

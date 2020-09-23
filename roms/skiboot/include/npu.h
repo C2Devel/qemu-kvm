@@ -30,15 +30,6 @@
 #define NPU_BRICK_TL_BAR_SIZE	0x20000
 #define NPU_BRICK_PL_BAR_SIZE	0x200000
 
-/* The config space of NPU device is emulated. We have different
- * bits to represent config register properties: readonly, write-
- * one-to-clear.
- */
-#define NPU_DEV_CFG_NORMAL      0
-#define NPU_DEV_CFG_RDONLY      1
-#define NPU_DEV_CFG_W1CLR       2
-#define NPU_DEV_CFG_MAX         3
-
 /* Bytes of the emulated NPU PCI device config space. We are
  * emulating PCI express device, not legacy one
  */
@@ -75,23 +66,6 @@ struct npu_dev_cap {
 	struct list_node	link;
 };
 
-/* Config space access trap. */
-struct npu_dev_trap {
-	struct npu_dev		*dev;
-	uint32_t		start;
-	uint32_t		end;
-	void			*data;
-	int64_t			(*read)(struct npu_dev_trap *trap,
-					uint32_t offset,
-					uint32_t size,
-					uint32_t *data);
-	int64_t			(*write)(struct npu_dev_trap *trap,
-					 uint32_t offset,
-					 uint32_t size,
-					 uint32_t data);
-	struct list_node	link;
-};
-
 struct npu_dev_bar {
 	uint32_t		flags;
 	uint32_t		xscom;
@@ -113,20 +87,14 @@ struct npu_dev {
 	struct npu_dev_bar	bar;
 	struct phb		*phb;
 
-	/* Device and function numbers are allocated based on GPU
-	 * association */
-	uint32_t		bdfn;
-
 	/* The link@x node */
 	struct dt_node		*dt_node;
 
-	/* The GPU PCI device this NPU device is associated with */
+	/* PCI virtual device and the associated GPU device */
+	struct pci_virt_device	*pvd;
 	struct pci_device	*pd;
-
 	struct npu		*npu;
-	uint8_t			*config[NPU_DEV_CFG_MAX];
 	struct list_head	capabilities;
-	struct list_head	traps;
 
 	/* Which PHY lanes this device is associated with */
 	uint16_t		lane_mask;
@@ -147,7 +115,7 @@ struct npu_dev {
 
 	uint32_t		procedure_status;
 
-	uint8_t			pe_num;
+	uint64_t		pe_number;
 
 	/* Used to associate the NPU device with GPU PCI devices */
 	const char		*slot_label;
@@ -194,17 +162,12 @@ static inline void npu_ioda_sel(struct npu *p, uint32_t table,
 
 void npu_scom_init(struct npu_dev *dev);
 
-int64_t npu_dev_procedure_read(struct npu_dev_trap *trap,
-			       uint32_t offset,
-			       uint32_t size,
-			       uint32_t *data);
-
-int64_t npu_dev_procedure_write(struct npu_dev_trap *trap,
-				uint32_t offset,
-				uint32_t size,
-				uint32_t data);
+int64_t npu_dev_procedure(void *dev, struct pci_cfg_reg_filter *pcrf,
+			  uint32_t offset, uint32_t len, uint32_t *data,
+			  bool write);
 
 void npu_set_fence_state(struct npu *p, bool fence);
+void npu_dev_procedure_reset(struct npu_dev *dev);
 
 #define NPUDBG(p, fmt, a...)	prlog(PR_DEBUG, "NPU%d: " fmt, \
 				      (p)->phb.opal_id, ##a)

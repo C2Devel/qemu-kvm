@@ -12,5 +12,5 @@ obj-$(CONFIG_VHOST_VSOCK) += vhost-vsock.o
 #obj-$(CONFIG_VIRTIO_PCI) += virtio-crypto-pci.o
 endif
 
-common-obj-$(call lnot,$(CONFIG_LINUX)) += vhost-stub.o
+common-obj-$(call lnot,$(call land,$(CONFIG_VIRTIO),$(CONFIG_LINUX))) += vhost-stub.o
 common-obj-$(CONFIG_ALL) += vhost-stub.o

@@ -25,6 +25,7 @@
 #include <p7ioc.h>
 #include <vpd.h>
 #include <inttypes.h>
+#include <string.h>
 
 #include "hdata.h"
 
@@ -46,10 +47,8 @@ static void io_add_common(struct dt_node *hn, const struct cechub_io_hub *hub)
 	 * do too complex ranges property parsing
 	 */
 	dt_add_property(hn, "ranges", NULL, 0);
-	dt_add_property_cells(hn, "ibm,gx-bar-1",
-			      hi32(be64_to_cpu(hub->gx_ctrl_bar1)), lo32(be64_to_cpu(hub->gx_ctrl_bar1)));
-	dt_add_property_cells(hn, "ibm,gx-bar-2",
-			      hi32(be64_to_cpu(hub->gx_ctrl_bar2)), lo32(be64_to_cpu(hub->gx_ctrl_bar2)));
+	dt_add_property_u64(hn, "ibm,gx-bar-1", be64_to_cpu(hub->gx_ctrl_bar1));
+	dt_add_property_u64(hn, "ibm,gx-bar-2", be64_to_cpu(hub->gx_ctrl_bar2));
 
 	/* Add presence detect if valid */
 	if (hub->flags & CECHUB_HUB_FLAG_FAB_BR0_PDT)
@@ -65,6 +64,7 @@ static bool io_get_lx_info(const void *kwvpd, unsigned int kwvpd_sz,
 {
 	const void *lxr;
 	char recname[5];
+	uint32_t lxrbuf[2] = { 0, 0 };
 
 	/* Find LXRn, where n is the index passed in*/
 	strcpy(recname, "LXR0");
@@ -82,16 +82,18 @@ static bool io_get_lx_info(const void *kwvpd, unsigned int kwvpd_sz,
 		return false;
 	}
 
-	prlog(PR_DEBUG, "CEC:     LXRn=%d LXR=%016lx\n", lx_idx,
-	      lxr ? *(unsigned long *)lxr : 0);
+	if (lxr)
+		memcpy(lxrbuf, lxr, sizeof(uint32_t)*2);
+
+	prlog(PR_DEBUG, "CEC:     LXRn=%d LXR=%08x%08x\n", lx_idx, lxrbuf[0], lxrbuf[1]);
 	prlog(PR_DEBUG, "CEC:     LX Info added to %llx\n", (long long)hn);
 
 	/* Add the LX info */
 	if (!dt_has_node_property(hn, "ibm,vpd-lx-info", NULL)) {
 		dt_add_property_cells(hn, "ibm,vpd-lx-info",
 				      lx_idx,
-				      ((uint32_t *)lxr)[0],
-				      ((uint32_t *)lxr)[1]);
+				      lxrbuf[0],
+				      lxrbuf[1]);
 	}
 
 	return true;
@@ -240,16 +242,113 @@ static struct dt_node *io_add_phb3(const struct cechub_io_hub *hub,
 		u64 eq1 = be64_to_cpu(hub->phb_lane_eq[index][1]);
 		u64 eq2 = be64_to_cpu(hub->phb_lane_eq[index][2]);
 		u64 eq3 = be64_to_cpu(hub->phb_lane_eq[index][3]);
-		dt_add_property_cells(pbcq, "ibm,lane-eq",
-				      hi32(eq0), lo32(eq0),
-				      hi32(eq1), lo32(eq1),
-				      hi32(eq2), lo32(eq2),
-				      hi32(eq3), lo32(eq3));
+
+		dt_add_property_u64s(pbcq, "ibm,lane-eq", eq0, eq1, eq2, eq3);
 	}
 
 	/* Currently we only create a PBCQ node, the actual PHB nodes
 	 * will be added by sapphire later on.
 	 */
+	return pbcq;
+}
+
+static struct dt_node *add_pec_stack(const struct cechub_io_hub *hub,
+				     struct dt_node *pbcq, int stack_index,
+				     int phb_index, u8 active_phbs)
+{
+	struct dt_node *stack;
+	u64 eq[8];
+	uint32_t version;
+	u8 *gen4;
+	int i;
+
+	stack = dt_new_addr(pbcq, "stack", stack_index);
+	assert(stack);
+
+	dt_add_property_cells(stack, "reg", stack_index);
+	dt_add_property_cells(stack, "ibm,phb-index", phb_index);
+	dt_add_property_string(stack, "compatible", "ibm,power9-phb-stack");
+
+	/* XXX: This should probably just return if the PHB is disabled
+	 *      rather than adding the extra properties.
+	 */
+
+	if (active_phbs & (0x80 >> phb_index))
+		dt_add_property_string(stack, "status", "okay");
+	else
+		dt_add_property_string(stack, "status", "disabled");
+
+	for (i = 0; i < 4; i++) /* gen 3 eq settings */
+		eq[i] = be64_to_cpu(hub->phb_lane_eq[phb_index][i]);
+
+	/* Lane-eq settings are packed 2 bytes per lane for 16 lanes
+	 * On P9 DD1, 2 bytes per lane are used in the hardware
+	 * On P9 DD2, 1 byte  per lane is  used in the hardware
+	 */
+	version = mfspr(SPR_PVR);
+	if (is_power9n(version) &&
+	    (PVR_VERS_MAJ(version) == 1)) {
+		dt_add_property_u64s(stack, "ibm,lane-eq", eq[0], eq[1],
+				     eq[2], eq[3], eq[4], eq[5], eq[6], eq[7]);
+		return stack;
+	}
+
+	/* Repack 2 byte lane settings into 1 byte */
+	gen4 = (u8 *)&eq[4];
+	for (i = 0; i < 16; i++)
+		gen4[i] = gen4[2*i];
+
+	dt_add_property_u64s(stack, "ibm,lane-eq", eq[0], eq[1],
+			     eq[2], eq[3], eq[4], eq[5]);
+	return stack;
+}
+
+static struct dt_node *io_add_phb4(const struct cechub_io_hub *hub,
+				   const struct HDIF_common_hdr *sp_iohubs,
+				   struct dt_node *xcom,
+				   unsigned int pec_index,
+				   int stacks,
+				   int phb_base)
+{
+	struct dt_node *pbcq;
+	uint32_t reg[4];
+	uint8_t active_phb_mask = hub->fab_br0_pdt;
+	uint32_t pe_xscom  = 0x4010c00 + (pec_index * 0x0000400);
+	uint32_t pci_xscom = 0xd010800 + (pec_index * 0x1000000);
+	int i;
+
+	/* Create PBCQ node under xscom */
+	pbcq = dt_new_addr(xcom, "pbcq", pe_xscom);
+	if (!pbcq)
+		return NULL;
+
+	/* "reg" property contains (in order) the PE and PCI XSCOM addresses */
+	reg[0] = pe_xscom;
+	reg[1] = 0x100;
+	reg[2] = pci_xscom;
+	reg[3] = 0x200;
+	dt_add_property(pbcq, "reg", reg, sizeof(reg));
+
+	/* The hubs themselves go under the stacks */
+	dt_add_property_strings(pbcq, "compatible", "ibm,power9-pbcq");
+	dt_add_property_cells(pbcq, "ibm,pec-index", pec_index);
+	dt_add_property_cells(pbcq, "#address-cells", 1);
+	dt_add_property_cells(pbcq, "#size-cells", 0);
+
+	for (i = 0; i < stacks; i++)
+		add_pec_stack(hub, pbcq, i, phb_base + i, active_phb_mask);
+
+	dt_add_property_cells(pbcq, "ibm,hub-id", be16_to_cpu(hub->hub_num));
+
+	/* The loc code of the PHB itself is different from the base
+	 * loc code of the slots (It's actually the DCM's loc code).
+	 */
+	io_get_loc_code(sp_iohubs, pbcq, "ibm,loc-code");
+
+	prlog(PR_INFO, "CEC: Added PHB4 PBCQ %d with %d stacks\n",
+		pec_index, stacks);
+
+	/* the actual PHB nodes created later on by skiboot */
 	return pbcq;
 }
 
@@ -283,6 +382,35 @@ static struct dt_node *io_add_p8(const struct cechub_io_hub *hub,
 	/* HACK: We return the XSCOM device for the VPD info */
 	return xscom;
 }
+
+static struct dt_node *io_add_p9(const struct cechub_io_hub *hub,
+				 const struct HDIF_common_hdr *sp_iohubs)
+{
+	struct dt_node *xscom;
+	unsigned int chip_id;
+
+	chip_id = pcid_to_chip_id(be32_to_cpu(hub->proc_chip_id));
+
+	prlog(PR_INFO, "CEC:     HW CHIP=0x%x, HW TOPO=0x%04x\n", chip_id,
+	      be16_to_cpu(hub->hw_topology));
+
+	xscom = find_xscom_for_chip(chip_id);
+	if (!xscom) {
+		prerror("P9: Can't find XSCOM for chip %d\n", chip_id);
+		return NULL;
+	}
+
+	prlog(PR_DEBUG, "IOHUB: PHB4 active bridge mask %x\n",
+		(u32) hub->fab_br0_pdt);
+
+	/* Create PBCQs */
+	io_add_phb4(hub, sp_iohubs, xscom, 0, 1, 0);
+	io_add_phb4(hub, sp_iohubs, xscom, 1, 2, 1);
+	io_add_phb4(hub, sp_iohubs, xscom, 2, 3, 3);
+
+	return xscom;
+}
+
 
 static void io_add_p8_cec_vpd(const struct HDIF_common_hdr *sp_iohubs)
 {
@@ -326,6 +454,381 @@ static void io_add_p8_cec_vpd(const struct HDIF_common_hdr *sp_iohubs)
 	io_get_lx_info(kwvpd, kwvpd_sz, 0, dt_root);
 }
 
+/*
+ * Assumptions:
+ *
+ * a) the IOSLOT index is the hub ID -CHECK
+ *
+ */
+
+static struct dt_node *dt_slots;
+
+static void add_i2c_link(struct dt_node *node, const char *link_name,
+			u32 i2c_link)
+{
+	/* FIXME: Do something not shit */
+	dt_add_property_cells(node, link_name, i2c_link);
+}
+
+/*
+ * the root of the slots node has #address-cells = 2, <hub-index, phb-index>
+ * can we ditch hub-index?
+ */
+
+
+static const struct slot_map_details *find_slot_details(
+		const struct HDIF_common_hdr *ioslot, int entry)
+{
+	const struct slot_map_details *details = NULL;
+	const struct HDIF_array_hdr *arr;
+	unsigned int i;
+
+	arr = HDIF_get_iarray(ioslot, IOSLOT_IDATA_DETAILS, NULL);
+	HDIF_iarray_for_each(arr, i, details)
+		if (be16_to_cpu(details->entry) == entry)
+			break;
+
+	return details;
+}
+
+static void parse_slot_details(struct dt_node *slot,
+		const struct slot_map_details *details)
+{
+	u32 slot_caps;
+
+	/*
+	 * generic slot options
+	 */
+
+	dt_add_property_cells(slot, "max-power",
+		be16_to_cpu(details->max_power));
+
+	if (details->perst_ctl_type == SLOT_PERST_PHB_OR_SW)
+		dt_add_property(slot, "pci-perst", NULL, 0);
+	else if (details->perst_ctl_type == SLOT_PERST_SW_GPIO)
+		dt_add_property_cells(slot, "gpio-perst", details->perst_gpio);
+
+	if (details->presence_det_type == SLOT_PRESENCE_PCI)
+		dt_add_property(slot, "pci-presence-detect", NULL, 0);
+
+	/*
+	 * specific slot capabilities
+	 */
+	slot_caps = be32_to_cpu(details->slot_caps);
+
+	if (slot_caps & SLOT_CAP_LSI)
+		dt_add_property(slot, "lsi", NULL, 0);
+
+	if (slot_caps & SLOT_CAP_CAPI) {
+		/* XXX: should we be more specific here?
+		 *
+		 * Also we should double check that this slot
+		 * is a root connected slot.
+		 */
+		dt_add_property(slot, "capi", NULL, 0);
+	}
+
+	if (slot_caps & SLOT_CAP_CCARD) {
+		dt_add_property(slot, "cable-card", NULL, 0);
+
+		if (details->presence_det_type == SLOT_PRESENCE_I2C)
+			add_i2c_link(slot, "i2c-presence-detect",
+				be32_to_cpu(details->i2c_cable_card));
+	}
+
+	if (slot_caps & SLOT_CAP_HOTPLUG) {
+		dt_add_property(slot, "hotplug", NULL, 0);
+
+		/*
+		 * Power control should only exist when the slot is hotplug
+		 * capable
+		 */
+		if (details->power_ctrl_type == SLOT_PWR_I2C)
+			add_i2c_link(slot, "i2c-power-ctrl",
+				be32_to_cpu(details->i2c_power_ctl));
+	}
+
+	/*
+	 * NB: Additional NVLink specific info is added to this node
+	 *     when the SMP Link structures are parsed later on.
+	 */
+	if (slot_caps & SLOT_CAP_NVLINK)
+		dt_add_property(slot, "nvlink", NULL, 0);
+}
+
+struct dt_node *find_slot_entry_node(struct dt_node *root, u32 entry_id)
+{
+	struct dt_node *node;
+
+	for (node = dt_first(root); node; node = dt_next(root, node)) {
+		if (!dt_has_node_property(node, DT_PRIVATE "entry_id", NULL))
+			continue;
+
+		if (dt_prop_get_u32(node, DT_PRIVATE "entry_id") == entry_id)
+			return node;
+	}
+
+	return NULL;
+}
+
+/*
+ * The internal HDAT representation of the various types of slot is kinda
+ * dumb, translate it into something more sensible
+ */
+enum slot_types {
+	st_root,
+	st_slot,
+	st_rc_slot,
+	st_sw_upstream,
+	st_sw_downstream,
+	st_builtin
+};
+
+static const char *st_name(enum slot_types type)
+{
+	switch(type) {
+	case st_root:		return "root-complex";
+	case st_slot:		return "pluggable";
+	case st_rc_slot:	return "pluggable"; /* differentiate? */
+	case st_sw_upstream:	return "switch-up";
+	case st_sw_downstream:	return "switch-down";
+	case st_builtin:	return "builtin";
+	}
+
+	return "(none)";
+}
+
+static enum slot_types xlate_type(uint8_t type, u32 features)
+{
+	bool is_slot = features & SLOT_FEAT_SLOT;
+
+	switch (type) {
+	case SLOT_TYPE_ROOT_COMPLEX:
+		return is_slot ? st_rc_slot : st_root;
+	case SLOT_TYPE_BUILTIN:
+		return st_builtin;
+	case SLOT_TYPE_SWITCH_UP:
+		return st_sw_upstream;
+	case SLOT_TYPE_SWITCH_DOWN:
+		return is_slot ? st_slot : st_sw_downstream;
+	}
+
+	return -1; /* shouldn't happen */
+}
+
+static bool is_port(struct dt_node *n)
+{
+	//return dt_node_is_compatible(n, "compatible", "ibm,pcie-port");
+	return dt_node_is_compatible(n, "ibm,pcie-port");
+}
+
+/* this only works inside parse_one_ioslot() */
+#define SM_LOG(level, fmt, ...) \
+	prlog(level, "SLOTMAP: %x:%d:%d " \
+		fmt, /* user input */ \
+		chip_id, entry->phb_index, eid, \
+		##__VA_ARGS__ /* user args */)
+
+#define SM_ERR(fmt, ...) SM_LOG(PR_ERR, fmt, ##__VA_ARGS__)
+#define SM_DBG(fmt, ...) SM_LOG(PR_DEBUG, fmt, ##__VA_ARGS__)
+
+static void parse_one_slot(const struct slot_map_entry *entry,
+		const struct slot_map_details *details, int chip_id)
+{
+	struct dt_node *node, *parent = NULL;
+	u16 eid, pid, vid, did;
+	u32 flags;
+	int type;
+
+	flags = be32_to_cpu(entry->features);
+	type = xlate_type(entry->type, flags);
+
+	eid = be16_to_cpu(entry->entry_id);
+	pid = be16_to_cpu(entry->parent_id);
+
+	SM_DBG("%s - eid = %d, pid = %d, name = %8s\n",
+		st_name(type), eid, pid,
+		strnlen(entry->name, 8) ? entry->name : "");
+
+	/* empty slot, ignore it */
+	if (eid == 0x0 && pid == 0x0)
+		return;
+
+	if (type != st_root && type != st_rc_slot) {
+		parent = find_slot_entry_node(dt_slots, pid);
+		if (!parent) {
+			SM_ERR("Unable to find node for parent slot (id = %d)\n",
+				pid);
+			return;
+		}
+	}
+
+	switch (type) {
+	case st_root:
+	case st_rc_slot:
+		node = dt_new_2addr(dt_slots, "root-complex",
+						chip_id, entry->phb_index);
+		dt_add_property_cells(node, "reg", chip_id, entry->phb_index);
+		dt_add_property_cells(node, "#address-cells", 2);
+		dt_add_property_cells(node, "#size-cells", 0);
+		dt_add_property_strings(node, "compatible",
+				"ibm,pcie-port", "ibm,pcie-root-port");
+		dt_add_property_cells(node, "ibm,chip-id", chip_id);
+		parent = node;
+
+		/*
+		 * The representation of slots attached directly to the
+		 * root complex is a bit wierd. If this is just a root
+		 * complex then stop here, otherwise fall through to create
+		 * the slot node.
+		 */
+		if (type == st_root)
+			break;
+
+		/* fallthrough*/
+	case st_sw_upstream:
+	case st_builtin:
+	case st_slot:
+		if (!is_port(parent)) {
+			SM_ERR("%s connected to %s (%d), should be %s or %s!\n",
+				st_name(type), parent->name, pid,
+				st_name(st_root), st_name(st_sw_downstream));
+			return;
+		}
+
+		vid = (be32_to_cpu(entry->vendor_id) & 0xffff);
+		did = (be32_to_cpu(entry->device_id) & 0xffff);
+
+		prlog(PR_DEBUG, "Found %s slot with %x:%x\n",
+			st_name(type), vid, did);
+
+		/* The VID:DID is only meaningful for builtins and switches */
+		if (vid && did) {
+			node = dt_new_2addr(parent, st_name(type), vid, did);
+			dt_add_property_cells(node, "reg", vid, did);
+		} else {
+			/*
+			 * If we get no vdid then create a "wildcard" slot
+			 * that matches any device
+			 */
+			node = dt_new(parent, st_name(type));
+		}
+
+		if (type == st_sw_upstream) {
+			dt_add_property_cells(node, "#address-cells", 1);
+			dt_add_property_cells(node, "#size-cells", 0);
+			dt_add_property_cells(node, "upstream-port",
+					entry->up_port);
+		}
+		break;
+
+	case st_sw_downstream: /* slot connected to switch output */
+		node = dt_new_addr(parent, "down-port", entry->down_port);
+		dt_add_property_strings(node, "compatible",
+				"ibm,pcie-port");
+		dt_add_property_cells(node, "reg", entry->down_port);
+
+		break;
+
+	default:
+		SM_ERR("Unknown slot map type %x\n", entry->type);
+		return;
+	}
+
+	/*
+	 * Now add any generic slot map properties.
+	 */
+
+	/* private since we don't want hdat stuff leaking */
+	dt_add_property_cells(node, DT_PRIVATE "entry_id", eid);
+
+	if (entry->mrw_slot_id)
+		dt_add_property_cells(node, "mrw-slot-id",
+				be16_to_cpu(entry->mrw_slot_id));
+
+	if (entry->lane_mask)
+		dt_add_property_cells(node, "lane-mask",
+				be16_to_cpu(entry->lane_mask));
+
+	/* what is the difference between this and the lane reverse? */
+	if (entry->lane_reverse)
+		dt_add_property_cells(node, "lanes-reversed",
+				be16_to_cpu(entry->lane_reverse));
+
+	if (strnlen(entry->name, sizeof(entry->name)))
+		dt_add_property_nstr(node, "ibm,slot-label",
+				entry->name, sizeof(entry->name));
+	if (entry->type == st_slot || entry->type == st_rc_slot)
+		dt_add_property(node, "ibm,pluggable", NULL, 0);
+
+	if (details)
+		parse_slot_details(node, details);
+}
+
+/*
+ * Under the IOHUB structure we have and idata array describing
+ * the PHBs under each chip. The IOHUB structure also has a child
+ * array called IOSLOT which describes slot map. The i`th element
+ * of the IOSLOT array corresponds to the slot map of the i`th
+ * element of the iohubs idata array.
+ *
+ * Probably.
+ *
+ * Furthermore, arrayarrayarrayarrayarray.
+ */
+
+static struct dt_node *get_slot_node(void)
+{
+	struct dt_node *slots = dt_find_by_name(dt_root, "ibm,pcie-slots");
+
+	if (!slots) {
+		slots = dt_new(dt_root, "ibm,pcie-slots");
+		dt_add_property_cells(slots, "#address-cells", 2);
+		dt_add_property_cells(slots, "#size-cells", 0);
+	}
+
+	return slots;
+}
+
+static void io_parse_slots(const struct HDIF_common_hdr *sp_iohubs, int hub_id)
+{
+	const struct HDIF_child_ptr *ioslot_arr;
+	const struct HDIF_array_hdr *entry_arr;
+	const struct HDIF_common_hdr *ioslot;
+	const struct slot_map_entry *entry;
+	unsigned int i, count;
+
+	if (sp_iohubs->child_count <= CECHUB_CHILD_IOSLOTS)
+		return;
+
+	ioslot_arr = HDIF_child_arr(sp_iohubs, CECHUB_CHILD_IOSLOTS);
+	if (!ioslot_arr)
+		return;
+
+	count = be32_to_cpu(ioslot_arr->count); /* should only be 1 */
+	if (!count)
+		return;
+
+	dt_slots = get_slot_node();
+
+	prlog(PR_DEBUG, "CEC: Found slot map for IOHUB %d\n", hub_id);
+	if (count > 1)
+		prerror("CEC: Multiple IOSLOTs found for IO HUB %d\n", hub_id);
+
+	ioslot = HDIF_child(sp_iohubs, ioslot_arr, 0, "IOSLOT");
+	if (!ioslot)
+		return;
+
+	entry_arr = HDIF_get_iarray(ioslot, IOSLOT_IDATA_SLOTMAP, NULL);
+	HDIF_iarray_for_each(entry_arr, i, entry) {
+		const struct slot_map_details *details;
+
+		details = find_slot_details(ioslot,
+				be16_to_cpu(entry->entry_id));
+		parse_one_slot(entry, details, hub_id);
+	}
+}
+
 static void io_parse_fru(const void *sp_iohubs)
 {
 	unsigned int i;
@@ -344,6 +847,7 @@ static void io_parse_fru(const void *sp_iohubs)
 	for (i = 0; i < count; i++) {
 		const struct cechub_io_hub *hub;
 		unsigned int size, hub_id;
+		uint32_t chip_id;
 
 		hub = HDIF_get_iarray_item(sp_iohubs, CECHUB_FRU_IO_HUBS,
 					   i, &size);
@@ -365,7 +869,7 @@ static void io_parse_fru(const void *sp_iohubs)
 			      " Not installed\n", i);
 			continue;
 		case CECHUB_HUB_FLAG_STATE_UNUSABLE:
-			prlog(PR_DEBUG, "CEC:   IO Hub Chip #%d Unusable", i);
+			prlog(PR_DEBUG, "CEC:   IO Hub Chip #%d Unusable\n", i);
 			continue;
 		}
 
@@ -392,11 +896,26 @@ static void io_parse_fru(const void *sp_iohubs)
 			prlog(PR_INFO, "CEC:     Venice !\n");
 			hn = io_add_p8(hub, sp_iohubs);
 			break;
+		case CECHUB_HUB_NIMBUS_SFORAZ:
+		case CECHUB_HUB_NIMBUS_MONZA:
+		case CECHUB_HUB_NIMBUS_LAGRANGE:
+			prlog(PR_INFO, "CEC:     Nimbus !\n");
+			hn = io_add_p9(hub, sp_iohubs);
+			break;
+		case CECHUB_HUB_CUMULUS_DUOMO:
+			prlog(PR_INFO, "CEC:     Cumulus !\n");
+			hn = io_add_p9(hub, sp_iohubs);
+			break;
 		default:
 			prlog(PR_ERR, "CEC:     Hub ID 0x%04x unsupported !\n",
 			      hub_id);
 			hn = NULL;
 		}
+
+		chip_id = pcid_to_chip_id(be32_to_cpu(hub->proc_chip_id));
+
+		/* parse the slot map if we have one */
+		io_parse_slots(sp_iohubs, chip_id);
 	}
 
 	/* On P8, grab the CEC VPD */

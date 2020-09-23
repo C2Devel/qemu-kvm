@@ -36,6 +36,8 @@ have_seccomp=$1
 shift
 have_spice=$1
 shift
+have_opengl=$1
+shift
 have_usbredir=$1
 shift
 have_tcmalloc=$1
@@ -49,6 +51,8 @@ shift
 have_vhost_user=$1
 shift
 is_rhv=$1
+shift
+have_malloc_trim=$1
 shift
 
 if [ "$have_rbd" == "enable" ]; then
@@ -77,12 +81,13 @@ fi
     --localstatedir=${_localstatedir} \
     --docdir=${qemudocdir} \
     --libexecdir=${_libexecdir} \
+    --firmwarepath=${_prefix}/share/qemu-firmware \
     --extra-ldflags="$extraldflags -pie -Wl,-z,relro -Wl,-z,now" \
     --extra-cflags="${optflags} -fPIE -DPIE" \
     --with-pkgversion=${nvr} \
     --with-confsuffix=/${pkgname} \
+    --with-git=git \
     --with-coroutine=ucontext \
-    --with-system-pixman \
     --tls-priority=NORMAL \
     --disable-bluez \
     --disable-brlapi \
@@ -102,7 +107,6 @@ fi
     --enable-linux-aio \
     --disable-live-block-migration \
     --enable-lzo \
-    --disable-opengl \
     --enable-pie \
     --disable-qom-cast-debug \
     --disable-sdl \
@@ -122,8 +126,8 @@ fi
     --disable-xen \
     --disable-xfsctl \
     --enable-gnutls \
-    --disable-gcrypt \
-    --enable-nettle \
+    --enable-gcrypt \
+    --disable-nettle \
     --enable-attr \
     --disable-bsd-user \
     --disable-cocoa \
@@ -155,14 +159,24 @@ fi
     --${have_seccomp}-seccomp \
     --${have_spice}-spice \
     --${have_spice}-smartcard \
+    --${have_opengl}-opengl \
     --${have_usbredir}-usb-redir \
     --${have_tcmalloc}-tcmalloc \
     --${have_vxhs}-vxhs \
     --${have_vtd}-vtd \
     --${have_live_block_ops}-live-block-ops \
     --${have_vhost_user}-vhost-user \
+    --disable-sanitizers \
+    --disable-hvf \
+    --disable-whpx \
+    --${have_malloc_trim}-malloc-trim \
+    --disable-membarrier \
+    --enable-vhost-crypto \
+    --disable-libxml2 \
+    --enable-capstone \
     --audio-drv-list= \
-    --block-drv-rw-whitelist=qcow2,raw,file,host_device,nbd,iscsi,${gluster_driver}${rbd_driver}${vxhs_driver}blkdebug,luks,null-co \
+    --enable-git-update \
+    --block-drv-rw-whitelist=qcow2,raw,file,host_device,nbd,iscsi,${gluster_driver}${rbd_driver}${vxhs_driver}blkdebug,luks,null-co,nvme,copy-on-read,throttle \
     --block-drv-ro-whitelist=vmdk,vhdx,vpc,https,ssh \
     --rhel-target=${rhel_target} \
     "$@"

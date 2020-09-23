@@ -24,7 +24,6 @@ owner=kwolf@redhat.com
 seq=`basename $0`
 echo "QA output created by $seq"
 
-here=`pwd`
 status=1	# failure is the default!
 
 # get standard environment, filters and checks
@@ -35,18 +34,18 @@ _supported_fmt qcow2
 _supported_proto file
 _supported_os Linux
 
-function do_run_qemu()
+do_run_qemu()
 {
     echo Testing: "$@"
     $QEMU -nographic -qmp stdio -serial none "$@"
     echo
 }
 
-function run_qemu()
+run_qemu()
 {
     do_run_qemu "$@" 2>&1 | _filter_testdir | _filter_qmp \
                           | _filter_qemu | _filter_imgfmt \
-                          | sed -e 's/\("actual-size":\s*\)[0-9]\+/\1SIZE/g'
+                          | _filter_actual_image_size
 }
 
 size=128M
@@ -102,7 +101,14 @@ echo
 echo === aio=native without O_DIRECT ===
 echo
 
-run_qemu <<EOF
+# Skip this test if AIO is not enabled in this build
+run_qemu_filter_aio()
+{
+    run_qemu "$@" | \
+        sed -e 's/is not supported in this build/it requires cache.direct=on, which was not specified/'
+}
+
+run_qemu_filter_aio <<EOF
 { "execute": "qmp_capabilities" }
 { "execute": "blockdev-add",
   "arguments": {

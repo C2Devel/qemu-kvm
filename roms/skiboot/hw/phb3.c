@@ -30,6 +30,7 @@
 #include <affinity.h>
 #include <phb3.h>
 #include <phb3-regs.h>
+#include <phb3-capp.h>
 #include <capp.h>
 #include <fsp.h>
 #include <chip.h>
@@ -46,6 +47,11 @@ static void phb3_init_hw(struct phb3 *p, bool first_init);
 				      (p)->phb.opal_id, ## a)
 #define PHBERR(p, fmt, a...)	prlog(PR_ERR, "PHB#%04x: " fmt, \
 				      (p)->phb.opal_id, ## a)
+
+#define PE_CAPP_EN 0x9013c03
+
+#define PE_REG_OFFSET(p) \
+	((PHB3_IS_NAPLES(p) && (p)->index) ? 0x40 : 0x0)
 
 /* Helper to select an IODA table entry */
 static inline void phb3_ioda_sel(struct phb3 *p, uint32_t table,
@@ -72,10 +78,10 @@ static bool phb3_fenced(struct phb3 *p)
 	return false;
 }
 
-static void phb3_pcicfg_filter_rc_pref_window(struct pci_device *pd __unused,
-					      struct pci_cfg_reg_filter *pcrf,
-					      uint32_t offset, uint32_t len,
-					      uint32_t *data,  bool write)
+static int64_t phb3_pcicfg_rc_pref_window(void *dev __unused,
+					  struct pci_cfg_reg_filter *pcrf,
+					  uint32_t offset, uint32_t len,
+					  uint32_t *data,  bool write)
 {
 	uint8_t *pdata;
 	uint32_t i;
@@ -85,7 +91,7 @@ static void phb3_pcicfg_filter_rc_pref_window(struct pci_device *pd __unused,
 		pdata = &pcrf->data[offset - pcrf->start];
 		for (i = 0; i < len; i++, pdata++)
 			*pdata = (uint8_t)(*data >> (8 * i));
-		return;
+		return OPAL_SUCCESS;
 	}
 
 	/* Return whatever we cached */
@@ -100,6 +106,8 @@ static void phb3_pcicfg_filter_rc_pref_window(struct pci_device *pd __unused,
 
 		*data |= *pdata;
 	}
+
+	return OPAL_SUCCESS;
 }
 
 /*
@@ -135,31 +143,100 @@ static int64_t phb3_pcicfg_check(struct phb3 *p, uint32_t bdfn,
 	return OPAL_SUCCESS;
 }
 
-static void phb3_pcicfg_filter(struct phb *phb, uint32_t bdfn,
-			       uint32_t offset, uint32_t len,
-			       uint32_t *data, bool write)
+static void phb3_link_update(struct phb *phb, uint16_t data)
 {
-	struct pci_device *pd;
-	struct pci_cfg_reg_filter *pcrf;
-	uint32_t flags;
+	struct phb3 *p = phb_to_phb3(phb);
+	uint32_t new_spd, new_wid;
+	uint32_t old_spd, old_wid;
+	uint16_t old_data;
+	uint64_t lreg;
+	int i;
 
-	/* FIXME: It harms the performance to search the PCI
-	 * device which doesn't have any filters at all. So
-	 * it's worthy to maintain a table in PHB to indicate
-	 * the PCI devices who have filters. However, bitmap
-	 * seems not supported by skiboot yet. To implement
-	 * it after bitmap is supported.
+	/* Read the old speed and width */
+	pci_cfg_read16(phb, 0, 0x5a, &old_data);
+
+	/* Decode the register values */
+	new_spd = data & PCICAP_EXP_LSTAT_SPEED;
+	new_wid = (data & PCICAP_EXP_LSTAT_WIDTH) >> 4;
+	old_spd = old_data & PCICAP_EXP_LSTAT_SPEED;
+	old_wid = (old_data & PCICAP_EXP_LSTAT_WIDTH) >> 4;
+
+	/* Apply maximums */
+	if (new_wid > 16)
+		new_wid = 16;
+	if (new_wid < 1)
+		new_wid = 1;
+	if (new_spd > 3)
+		new_spd = 3;
+	if (new_spd < 1)
+		new_spd = 1;
+
+	PHBINF(p, "Link change request: speed %d->%d, width %d->%d\n",
+	       old_spd, new_spd, old_wid, new_wid);
+
+	/* Check if width needs to be changed */
+	if (old_wid != new_wid) {
+		PHBINF(p, "Changing width...\n");
+		lreg = in_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT);
+		lreg = SETFIELD(PHB_PCIE_LM_TGT_LINK_WIDTH, lreg, new_wid);
+		lreg |= PHB_PCIE_LM_CHG_LINK_WIDTH;
+		out_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT, lreg);
+		for (i=0; i<10;i++) {
+			lreg = in_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT);
+			if (lreg & PHB_PCIE_LM_DL_WCHG_PENDING)
+				break;
+			time_wait_ms_nopoll(1);
+		}
+		if (!(lreg & PHB_PCIE_LM_DL_WCHG_PENDING))
+			PHBINF(p, "Timeout waiting for speed change start\n");
+		for (i=0; i<100;i++) {
+			lreg = in_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT);
+			if (!(lreg & PHB_PCIE_LM_DL_WCHG_PENDING))
+				break;
+			time_wait_ms_nopoll(1);
+		}
+		if (lreg & PHB_PCIE_LM_DL_WCHG_PENDING)
+			PHBINF(p, "Timeout waiting for speed change end\n");
+	}
+	/* Check if speed needs to be changed */
+	if (old_spd != new_spd) {
+		PHBINF(p, "Changing speed...\n");
+		lreg = in_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT);
+		if (lreg & PPC_BIT(19)) {
+			uint16_t lctl2;
+			PHBINF(p, " Bit19 set ! working around...\n");
+			pci_cfg_read16(phb, 0, 0x78, &lctl2);
+			PHBINF(p, " LCTL2=%04x\n", lctl2);
+			lctl2 &= ~PCICAP_EXP_LCTL2_HWAUTSPDIS;
+			pci_cfg_write16(phb, 0, 0x78, lctl2);
+		}
+		lreg = in_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT);
+		lreg = SETFIELD(PHB_PCIE_LM_TGT_SPEED, lreg, new_spd);
+		lreg |= PHB_PCIE_LM_CHG_SPEED;
+		out_be64(p->regs + PHB_PCIE_LINK_MANAGEMENT, lreg);
+	}
+}
+
+static int64_t phb3_pcicfg_rc_link_speed(void *dev,
+					 struct pci_cfg_reg_filter *pcrf __unused,
+					 uint32_t offset, uint32_t len,
+					 uint32_t *data,  bool write)
+{
+	struct pci_device *pd = dev;
+
+	/* Hack for link speed changes. We intercept attempts at writing
+	 * the link control/status register
 	 */
-	pd = pci_find_dev(phb, bdfn);
-	pcrf = pd ? pci_find_cfg_reg_filter(pd, offset, len) : NULL;
-	if (!pcrf || !pcrf->func)
-		return;
+	if (write && len == 4 && offset == 0x58) {
+		phb3_link_update(pd->phb, (*data) >> 16);
+		return OPAL_SUCCESS;
+	}
+	if (write && len == 2 && offset == 0x5a) {
+		phb3_link_update(pd->phb, *(uint16_t *)data);
+		return OPAL_SUCCESS;
+	}
 
-	flags = write ? PCI_REG_FLAG_WRITE : PCI_REG_FLAG_READ;
-	if ((pcrf->flags & flags) != flags)
-		return;
-
-	pcrf->func(pd, pcrf, offset, len, data, write);
+	return OPAL_PARTIAL;
 }
 
 #define PHB3_PCI_CFG_READ(size, type)	\
@@ -187,6 +264,11 @@ static int64_t phb3_pcicfg_read##size(struct phb *phb, uint32_t bdfn,	\
 		return OPAL_HARDWARE;					\
 	}								\
 									\
+	rc = pci_handle_cfg_filters(phb, bdfn, offset, sizeof(type),	\
+				    (uint32_t *)data, false);		\
+	if (rc != OPAL_PARTIAL)						\
+		return rc;						\
+									\
 	addr = PHB_CA_ENABLE;						\
 	addr = SETFIELD(PHB_CA_BDFN, addr, bdfn);			\
 	addr = SETFIELD(PHB_CA_REG, addr, offset);			\
@@ -201,9 +283,6 @@ static int64_t phb3_pcicfg_read##size(struct phb *phb, uint32_t bdfn,	\
 		*data = in_le##size(p->regs + PHB_CONFIG_DATA +		\
 				    (offset & (4 - sizeof(type))));	\
 	}								\
-									\
-	phb3_pcicfg_filter(phb, bdfn, offset, sizeof(type),		\
-			   (uint32_t *)data, false);			\
 									\
 	return OPAL_SUCCESS;						\
 }
@@ -230,8 +309,10 @@ static int64_t phb3_pcicfg_write##size(struct phb *phb, uint32_t bdfn,	\
 		return OPAL_HARDWARE;					\
 	}								\
 									\
-	phb3_pcicfg_filter(phb, bdfn, offset, sizeof(type),             \
-			   (uint32_t *)&data, true);			\
+	rc = pci_handle_cfg_filters(phb, bdfn, offset, sizeof(type),	\
+				    (uint32_t *)&data, true);		\
+	if (rc != OPAL_PARTIAL)						\
+		return rc;						\
 									\
 	addr = PHB_CA_ENABLE;						\
 	addr = SETFIELD(PHB_CA_BDFN, addr, bdfn);			\
@@ -274,12 +355,48 @@ static int64_t phb3_get_reserved_pe_number(struct phb *phb __unused)
 	return PHB3_RESERVED_PE_NUM;
 }
 
+static inline void phb3_enable_ecrc(struct phb *phb, bool enable)
+{
+	struct phb3 *p = phb_to_phb3(phb);
+	uint32_t ctl;
+
+	if (p->aercap <= 0)
+		return;
+
+	pci_cfg_read32(phb, 0, p->aercap + PCIECAP_AER_CAPCTL, &ctl);
+	if (enable) {
+		ctl |= (PCIECAP_AER_CAPCTL_ECRCG_EN |
+			PCIECAP_AER_CAPCTL_ECRCC_EN);
+	} else {
+		ctl &= ~(PCIECAP_AER_CAPCTL_ECRCG_EN |
+			 PCIECAP_AER_CAPCTL_ECRCC_EN);
+	}
+
+	pci_cfg_write32(phb, 0, p->aercap + PCIECAP_AER_CAPCTL, ctl);
+}
+
 static void phb3_root_port_init(struct phb *phb, struct pci_device *dev,
 				int ecap, int aercap)
 {
+	struct phb3 *p = phb_to_phb3(phb);
 	uint16_t bdfn = dev->bdfn;
 	uint16_t val16;
 	uint32_t val32;
+
+	/* Use PHB's callback so that the UTL events will be masked
+	 * or unmasked when the link is down or up.
+	 */
+	if (dev->slot && dev->slot->ops.prepare_link_change &&
+	    phb->slot && phb->slot->ops.prepare_link_change)
+		dev->slot->ops.prepare_link_change =
+			phb->slot->ops.prepare_link_change;
+
+	/* Mask UTL link down event if root slot supports surprise
+	 * hotplug as the event should be handled by hotplug driver
+	 * instead of EEH subsystem.
+	 */
+	if (dev->slot && dev->slot->surprise_pluggable)
+		out_be64(p->regs + UTL_PCIE_PORT_IRQ_EN, 0xad42800000000000);
 
 	/* Enable SERR and parity checking */
 	pci_cfg_read16(phb, bdfn, PCI_CFG_CMD, &val16);
@@ -297,12 +414,18 @@ static void phb3_root_port_init(struct phb *phb, struct pci_device *dev,
 
 	if (!aercap) return;
 
-	/* Mask various unrecoverable errors */
+	/* Mask various unrecoverable errors. The link surprise down
+	 * event should be masked when its PCI slot support surprise
+	 * hotplug. The link surprise down event should be handled by
+	 * PCI hotplug driver instead of EEH subsystem.
+	 */
 	pci_cfg_read32(phb, bdfn, aercap + PCIECAP_AER_UE_MASK, &val32);
 	val32 |= (PCIECAP_AER_UE_MASK_POISON_TLP |
 		  PCIECAP_AER_UE_MASK_COMPL_TIMEOUT |
 		  PCIECAP_AER_UE_MASK_COMPL_ABORT |
 		  PCIECAP_AER_UE_MASK_ECRC);
+	if (dev->slot && dev->slot->surprise_pluggable)
+		val32 |= PCIECAP_AER_UE_MASK_SURPRISE_DOWN;
 	pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_UE_MASK, val32);
 
 	/* Report various unrecoverable errors as fatal errors */
@@ -321,10 +444,7 @@ static void phb3_root_port_init(struct phb *phb, struct pci_device *dev,
 	pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_CE_MASK, val32);
 
 	/* Enable ECRC check */
-	pci_cfg_read32(phb, bdfn, aercap + PCIECAP_AER_CAPCTL, &val32);
-	val32 |= (PCIECAP_AER_CAPCTL_ECRCG_EN |
-		  PCIECAP_AER_CAPCTL_ECRCC_EN);
-	pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_CAPCTL, val32);
+	phb3_enable_ecrc(phb, true);
 
 	/* Enable all error reporting */
 	pci_cfg_read32(phb, bdfn, aercap + PCIECAP_AER_RERR_CMD, &val32);
@@ -366,9 +486,18 @@ static void phb3_switch_port_init(struct phb *phb,
 	val16 &= ~PCICAP_EXP_DEVCTL_CE_REPORT;
 	pci_cfg_write16(phb, bdfn, ecap + PCICAP_EXP_DEVCTL, val16);
 
-	/* Unmask all unrecoverable errors */
+	/* Unmask all unrecoverable errors for upstream port. For
+	 * downstream port, the surprise link down is masked because
+	 * it should be handled by hotplug driver instead of EEH
+	 * subsystem.
+	 */
 	if (!aercap) return;
-	pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_UE_MASK, 0x0);
+	if (dev->dev_type == PCIE_TYPE_SWITCH_DNPORT &&
+	    dev->slot && dev->slot->surprise_pluggable)
+		pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_UE_MASK,
+				PCIECAP_AER_UE_MASK_SURPRISE_DOWN);
+	else
+		pci_cfg_write32(phb, bdfn, aercap + PCIECAP_AER_UE_MASK, 0x0);
 
 	/* Severity of unrecoverable errors */
 	if (dev->dev_type == PCIE_TYPE_SWITCH_UPPORT)
@@ -448,39 +577,40 @@ static void phb3_endpoint_init(struct phb *phb,
 static void phb3_check_device_quirks(struct phb *phb, struct pci_device *dev)
 {
 	struct phb3 *p = phb_to_phb3(phb);
-	u32 vdid;
-	u16 vendor, device;
 
 	if (dev->primary_bus != 0 &&
 	    dev->primary_bus != 1)
 		return;
 
-	pci_cfg_read32(phb, dev->bdfn, 0, &vdid);
-	vendor = vdid & 0xffff;
-	device = vdid >> 16;
-
 	if (dev->primary_bus == 1) {
 		u64 modectl;
 
-		/* For these adapters, if they are directly under the PHB, we
-		 * adjust some settings for performances
+		/*
+		 * For these adapters, if they are directly under the PHB, we
+		 * adjust the disable_wr_scope_group bit for performances
+		 *
+		 * 15b3:1003   Mellanox Travis3-EN (CX3)
+		 * 15b3:1011   Mellanox HydePark (ConnectIB)
+		 * 15b3:1013   Mellanox GlacierPark (CX4)
 		 */
 		xscom_read(p->chip_id, p->pe_xscom + 0x0b, &modectl);
-		if (vendor == 0x15b3 &&		/* Mellanox */
-		    (device == 0x1003 ||	/* Travis3-EN (CX3) */
-		     device == 0x1011 ||	/* HydePark (ConnectIB) */
-		     device == 0x1013))	{	/* GlacierPark (CX4) */
-			/* Set disable_wr_scope_group bit */
+		if (PCI_VENDOR_ID(dev->vdid) == 0x15b3 &&
+		    (PCI_DEVICE_ID(dev->vdid) == 0x1003	||
+		     PCI_DEVICE_ID(dev->vdid) == 0x1011 ||
+		     PCI_DEVICE_ID(dev->vdid) == 0x1013))
 			modectl |= PPC_BIT(14);
-		} else {
-			/* Clear disable_wr_scope_group bit */
+		else
 			modectl &= ~PPC_BIT(14);
-		}
-
 		xscom_write(p->chip_id, p->pe_xscom + 0x0b, modectl);
 	} else if (dev->primary_bus == 0) {
-		if (vendor == 0x1014 &&		/* IBM */
-		    device == 0x03dc) {		/* P8/P8E/P8NVL Root port */
+		/*
+		 * Emulate the prefetchable window of the root port
+		 * when the corresponding HW registers are readonly.
+		 *
+		 * 1014:03dc   Root port on P8/P8E/P8NVL
+		 */
+		if (PCI_VENDOR_ID(dev->vdid) == 0x1014 &&
+		    PCI_DEVICE_ID(dev->vdid) == 0x03dc) {
 			uint32_t pref_hi, tmp;
 
 			pci_cfg_read32(phb, dev->bdfn,
@@ -495,38 +625,44 @@ static void phb3_check_device_quirks(struct phb *phb, struct pci_device *dev)
 				pci_add_cfg_reg_filter(dev,
 					PCI_CFG_PREF_MEM_BASE_U32, 12,
 					PCI_REG_FLAG_READ | PCI_REG_FLAG_WRITE,
-					phb3_pcicfg_filter_rc_pref_window);
+					phb3_pcicfg_rc_pref_window);
+			/* Add filter to control link speed */
+			pci_add_cfg_reg_filter(dev,
+					       0x58, 4,
+					       PCI_REG_FLAG_WRITE,
+					       phb3_pcicfg_rc_link_speed);
 		}
 	}
 }
 
+static inline int phb3_should_disable_ecrc(struct pci_device *pd)
+{
+	/*
+	 * When we have PMC PCIe switch, we need disable ECRC on root port.
+	 * Otherwise, the adapters behind the switch downstream ports might
+	 * not probed successfully.
+	 */
+	if (pd->vdid == 0x854611f8)
+		return true;
+
+	return false;
+}
+
 static int phb3_device_init(struct phb *phb,
 			    struct pci_device *dev,
-			    void *data __unused)
+			    void *data)
 {
-	int ecap = 0;
-	int aercap = 0;
+	struct phb3 *p = phb_to_phb3(phb);
+	int ecap, aercap;
 
 	/* Some special adapter tweaks for devices directly under the PHB */
 	phb3_check_device_quirks(phb, dev);
 
-	/* Figure out PCIe & AER capability */
-	if (pci_has_cap(dev, PCI_CFG_CAP_ID_EXP, false)) {
-		ecap = pci_cap(dev, PCI_CFG_CAP_ID_EXP, false);
-
-		if (!pci_has_cap(dev, PCIECAP_ID_AER, true)) {
-			aercap = pci_find_ecap(phb, dev->bdfn,
-					       PCIECAP_ID_AER, NULL);
-			if (aercap > 0)
-				pci_set_cap(dev, PCIECAP_ID_AER, aercap, true);
-		} else {
-			aercap = pci_cap(dev, PCIECAP_ID_AER, true);
-		}
-	}
-
 	/* Common initialization for the device */
 	pci_device_init(phb, dev);
 
+	ecap = pci_cap(dev, PCI_CFG_CAP_ID_EXP, false);
+	aercap = pci_cap(dev, PCIECAP_ID_AER, true);
 	if (dev->dev_type == PCIE_TYPE_ROOT_PORT)
 		phb3_root_port_init(phb, dev, ecap, aercap);
 	else if (dev->dev_type == PCIE_TYPE_SWITCH_UPPORT ||
@@ -535,7 +671,28 @@ static int phb3_device_init(struct phb *phb,
 	else
 		phb3_endpoint_init(phb, dev, ecap, aercap);
 
+	/*
+	 * Check if we need disable ECRC functionality on root port. It
+	 * only happens when PCI topology changes, meaning it's skipped
+	 * when reinitializing PCI device after EEH reset.
+	 */
+	if (!data && phb3_should_disable_ecrc(dev)) {
+		if (p->no_ecrc_devs++ == 0)
+			phb3_enable_ecrc(phb, false);
+	}
+
 	return 0;
+}
+
+static void phb3_device_remove(struct phb *phb, struct pci_device *pd)
+{
+	struct phb3 *p = phb_to_phb3(phb);
+
+	if (!phb3_should_disable_ecrc(pd) || p->no_ecrc_devs == 0)
+		return;
+
+	if (--p->no_ecrc_devs == 0)
+		phb3_enable_ecrc(phb, true);
 }
 
 static int64_t phb3_pci_reinit(struct phb *phb, uint64_t scope, uint64_t data)
@@ -551,7 +708,7 @@ static int64_t phb3_pci_reinit(struct phb *phb, uint64_t scope, uint64_t data)
 	if (!pd)
 		return OPAL_PARAMETER;
 
-	ret = phb3_device_init(phb, pd, NULL);
+	ret = phb3_device_init(phb, pd, pd);
 	if (ret)
 		return OPAL_HARDWARE;
 
@@ -628,7 +785,7 @@ static int64_t phb3_ioda_reset(struct phb *phb, bool purge)
 	uint32_t i;
 
 	if (purge) {
-		prlog(PR_DEBUG, "PHB%d: Purging all IODA tables...\n",
+		prlog(PR_DEBUG, "PHB%x: Purging all IODA tables...\n",
 		      p->phb.opal_id);
 		phb3_init_ioda_cache(p);
 	}
@@ -702,7 +859,7 @@ static int64_t phb3_ioda_reset(struct phb *phb, bool purge)
 
 		if ((pesta & IODA2_PESTA_MMIO_FROZEN) ||
 		    (pestb & IODA2_PESTB_DMA_STOPPED))
-			PHBDBG(p, "Frozen PE#%d (%s - %s)\n",
+			PHBDBG(p, "Frozen PE#%x (%s - %s)\n",
 			       i, (pesta & IODA2_PESTA_MMIO_FROZEN) ? "DMA" : "",
 			       (pestb & IODA2_PESTB_DMA_STOPPED) ? "MMIO" : "");
 	}
@@ -871,7 +1028,7 @@ static int64_t phb3_phb_mmio_enable(struct phb *phb,
 }
 
 static int64_t phb3_map_pe_mmio_window(struct phb *phb,
-				       uint16_t pe_num,
+				       uint64_t pe_number,
 				       uint16_t window_type,
 				       uint16_t window_num,
 				       uint16_t segment_num)
@@ -879,7 +1036,7 @@ static int64_t phb3_map_pe_mmio_window(struct phb *phb,
 	struct phb3 *p = phb_to_phb3(phb);
 	uint64_t data64, *cache;
 
-	if (pe_num >= PHB3_MAX_PE_NUM)
+	if (pe_number >= PHB3_MAX_PE_NUM)
 		return OPAL_PARAMETER;
 
 	/*
@@ -898,8 +1055,8 @@ static int64_t phb3_map_pe_mmio_window(struct phb *phb,
 		cache = &p->m32d_cache[segment_num];
 		phb3_ioda_sel(p, IODA2_TBL_M32DT, segment_num, false);
 		out_be64(p->regs + PHB_IODA_DATA0,
-			 SETFIELD(IODA2_M32DT_PE, 0ull, pe_num));
-		*cache = SETFIELD(IODA2_M32DT_PE, 0ull, pe_num);
+			 SETFIELD(IODA2_M32DT_PE, 0ull, pe_number));
+		*cache = SETFIELD(IODA2_M32DT_PE, 0ull, pe_number);
 
 		break;
 	case OPAL_M64_WINDOW_TYPE:
@@ -913,8 +1070,8 @@ static int64_t phb3_map_pe_mmio_window(struct phb *phb,
 			return OPAL_PARTIAL;
 
 		data64 |= IODA2_M64BT_SINGLE_PE;
-		data64 = SETFIELD(IODA2_M64BT_PE_HI, data64, pe_num >> 5);
-		data64 = SETFIELD(IODA2_M64BT_PE_LOW, data64, pe_num);
+		data64 = SETFIELD(IODA2_M64BT_PE_HI, data64, pe_number >> 5);
+		data64 = SETFIELD(IODA2_M64BT_PE_LOW, data64, pe_number);
 		*cache = data64;
 
 		break;
@@ -926,7 +1083,7 @@ static int64_t phb3_map_pe_mmio_window(struct phb *phb,
 }
 
 static int64_t phb3_map_pe_dma_window(struct phb *phb,
-				      uint16_t pe_num,
+				      uint64_t pe_number,
 				      uint16_t window_id,
 				      uint16_t tce_levels,
 				      uint64_t tce_table_addr,
@@ -941,8 +1098,8 @@ static int64_t phb3_map_pe_dma_window(struct phb *phb,
 	 * Sanity check. We currently only support "2 window per PE" mode
 	 * ie, only bit 59 of the PCI address is used to select the window
 	 */
-	if (pe_num >= PHB3_MAX_PE_NUM ||
-	    (window_id >> 1) != pe_num)
+	if (pe_number >= PHB3_MAX_PE_NUM ||
+	    (window_id >> 1) != pe_number)
 		return OPAL_PARAMETER;
 
 	/*
@@ -998,7 +1155,7 @@ static int64_t phb3_map_pe_dma_window(struct phb *phb,
 }
 
 static int64_t phb3_map_pe_dma_window_real(struct phb *phb,
-					   uint16_t pe_num,
+					   uint64_t pe_number,
 					   uint16_t window_id,
 					   uint64_t pci_start_addr,
 					   uint64_t pci_mem_size)
@@ -1007,8 +1164,8 @@ static int64_t phb3_map_pe_dma_window_real(struct phb *phb,
 	uint64_t end;
 	uint64_t tve;
 
-	if (pe_num >= PHB3_MAX_PE_NUM ||
-	    (window_id >> 1) != pe_num)
+	if (pe_number >= PHB3_MAX_PE_NUM ||
+	    (window_id >> 1) != pe_number)
 		return OPAL_PARAMETER;
 
 	if (pci_mem_size) {
@@ -1182,7 +1339,7 @@ static int64_t phb3_pci_msi_eoi(struct phb *phb,
 }
 
 static int64_t phb3_set_ive_pe(struct phb *phb,
-			       uint32_t pe_num,
+			       uint64_t pe_number,
 			       uint32_t ive_num)
 {
 	struct phb3 *p = phb_to_phb3(phb);
@@ -1194,18 +1351,18 @@ static int64_t phb3_set_ive_pe(struct phb *phb,
 		return OPAL_HARDWARE;
 
 	/* Each IVE reserves 128 bytes */
-	if (pe_num >= PHB3_MAX_PE_NUM ||
+	if (pe_number >= PHB3_MAX_PE_NUM ||
 	    ive_num >= IVT_TABLE_ENTRIES)
 		return OPAL_PARAMETER;
 
 	/* Update IVE cache */
 	cache = &p->ive_cache[ive_num];
-	*cache = SETFIELD(IODA2_IVT_PE, *cache, pe_num);
+	*cache = SETFIELD(IODA2_IVT_PE, *cache, pe_number);
 
 	/* Update in-memory IVE without clobbering P and Q */
 	ivep = p->tbl_ivt + (ive_num * IVT_TABLE_STRIDE * 8);
 	pe_word = (uint16_t *)(ivep + 6);
-	*pe_word = pe_num;
+	*pe_word = pe_number;
 
 	/* Invalidate IVC */
 	data64 = SETFIELD(PHB_IVC_INVALIDATE_SID, 0ul, ive_num);
@@ -1215,7 +1372,7 @@ static int64_t phb3_set_ive_pe(struct phb *phb,
 }
 
 static int64_t phb3_get_msi_32(struct phb *phb __unused,
-			       uint32_t pe_num,
+			       uint64_t pe_number,
 			       uint32_t ive_num,
 			       uint8_t msi_range,
 			       uint32_t *msi_address,
@@ -1227,7 +1384,7 @@ static int64_t phb3_get_msi_32(struct phb *phb __unused,
 	 * by its DMA address and data, but the check isn't
 	 * harmful.
 	 */
-	if (pe_num >= PHB3_MAX_PE_NUM ||
+	if (pe_number >= PHB3_MAX_PE_NUM ||
 	    ive_num >= IVT_TABLE_ENTRIES ||
 	    msi_range != 1 || !msi_address|| !message_data)
 		return OPAL_PARAMETER;
@@ -1243,14 +1400,14 @@ static int64_t phb3_get_msi_32(struct phb *phb __unused,
 }
 
 static int64_t phb3_get_msi_64(struct phb *phb __unused,
-			       uint32_t pe_num,
+			       uint64_t pe_number,
 			       uint32_t ive_num,
 			       uint8_t msi_range,
 			       uint64_t *msi_address,
 			       uint32_t *message_data)
 {
 	/* Sanity check */
-	if (pe_num >= PHB3_MAX_PE_NUM ||
+	if (pe_number >= PHB3_MAX_PE_NUM ||
 	    ive_num >= IVT_TABLE_ENTRIES ||
 	    msi_range != 1 || !msi_address || !message_data)
 		return OPAL_PARAMETER;
@@ -1648,6 +1805,8 @@ static int64_t phb3_msi_set_xive(struct irq_source *is, uint32_t isn,
 	    ive_num > PHB3_MSI_IRQ_MAX)
 		return OPAL_PARAMETER;
 
+	phb_lock(&p->phb);
+
 	/*
 	 * We need strip the link from server. As Milton told
 	 * me, the server is assigned as follows and the left
@@ -1709,6 +1868,8 @@ static int64_t phb3_msi_set_xive(struct irq_source *is, uint32_t isn,
 		out_be64(p->regs + PHB_IVC_UPDATE, ivc);
 	}
 
+	phb_unlock(&p->phb);
+
 	return OPAL_SUCCESS;
 }
 
@@ -1759,6 +1920,8 @@ static int64_t phb3_lsi_set_xive(struct irq_source *is, uint32_t isn,
 	lxive = SETFIELD(IODA2_LXIVT_SERVER, 0ul, server);
 	lxive = SETFIELD(IODA2_LXIVT_PRIORITY, lxive, prio);
 
+	phb_lock(&p->phb);
+
 	/*
 	 * We cache the arguments because we have to mangle
 	 * it in order to hijack 3 bits of priority to extend
@@ -1773,6 +1936,8 @@ static int64_t phb3_lsi_set_xive(struct irq_source *is, uint32_t isn,
 	lxive = SETFIELD(IODA2_LXIVT_SERVER, lxive, server);
 	lxive = SETFIELD(IODA2_LXIVT_PRIORITY, lxive, prio);
 	out_be64(p->regs + PHB_IODA_DATA0, lxive);
+
+	phb_unlock(&p->phb);
 
 	return OPAL_SUCCESS;
 }
@@ -1798,6 +1963,18 @@ static void phb3_err_interrupt(struct irq_source *is, uint32_t isn)
 	phb3_set_err_pending(p, true);
 }
 
+static uint64_t phb3_lsi_attributes(struct irq_source *is, uint32_t isn)
+{
+#ifndef DISABLE_ERR_INTS
+	struct phb3 *p = is->data;
+	uint32_t idx = isn - p->base_lsi;
+
+	if (idx == PHB3_LSI_PCIE_INF || idx == PHB3_LSI_PCIE_ER)
+		return IRQ_ATTR_TARGET_OPAL | IRQ_ATTR_TARGET_RARE;
+#endif
+	return IRQ_ATTR_TARGET_LINUX;
+}
+
 /* MSIs (OS owned) */
 static const struct irq_source_ops phb3_msi_irq_ops = {
 	.get_xive = phb3_msi_get_xive,
@@ -1808,18 +1985,13 @@ static const struct irq_source_ops phb3_msi_irq_ops = {
 static const struct irq_source_ops phb3_lsi_irq_ops = {
 	.get_xive = phb3_lsi_get_xive,
 	.set_xive = phb3_lsi_set_xive,
-};
-
-/* Error LSIs (skiboot owned) */
-static const struct irq_source_ops phb3_err_lsi_irq_ops = {
-	.get_xive = phb3_lsi_get_xive,
-	.set_xive = phb3_lsi_set_xive,
+	.attributes = phb3_lsi_attributes,
 	.interrupt = phb3_err_interrupt,
 };
 
 static int64_t phb3_set_pe(struct phb *phb,
-			   uint64_t pe_num,
-                           uint64_t bdfn,
+			   uint64_t pe_number,
+			   uint64_t bdfn,
 			   uint8_t bcompare,
 			   uint8_t dcompare,
 			   uint8_t fcompare,
@@ -1835,7 +2007,7 @@ static int64_t phb3_set_pe(struct phb *phb,
 		return OPAL_HARDWARE;
 	if (action != OPAL_MAP_PE && action != OPAL_UNMAP_PE)
 		return OPAL_PARAMETER;
-	if (pe_num >= PHB3_MAX_PE_NUM || bdfn > 0xffff ||
+	if (pe_number >= PHB3_MAX_PE_NUM || bdfn > 0xffff ||
 	    bcompare > OpalPciBusAll ||
 	    dcompare > OPAL_COMPARE_RID_DEVICE_NUMBER ||
 	    fcompare > OPAL_COMPARE_RID_FUNCTION_NUMBER)
@@ -1870,7 +2042,7 @@ static int64_t phb3_set_pe(struct phb *phb,
 	if (all == 0x7) {
 		if (action == OPAL_MAP_PE) {
 			for (idx = 0; idx < RTT_TABLE_ENTRIES; idx++)
-				p->rte_cache[idx] = pe_num;
+				p->rte_cache[idx] = pe_number;
 		} else {
 			for ( idx = 0; idx < ARRAY_SIZE(p->rte_cache); idx++)
 				p->rte_cache[idx] = PHB3_RESERVED_PE_NUM;
@@ -1882,7 +2054,7 @@ static int64_t phb3_set_pe(struct phb *phb,
 			if ((idx & mask) != val)
 				continue;
 			if (action == OPAL_MAP_PE)
-				p->rte_cache[idx] = pe_num;
+				p->rte_cache[idx] = pe_number;
 			else
 				p->rte_cache[idx] = PHB3_RESERVED_PE_NUM;
 			*rte = p->rte_cache[idx];
@@ -1932,13 +2104,22 @@ static void phb3_prepare_link_change(struct pci_slot *slot,
 				     bool is_up)
 {
 	struct phb3 *p = phb_to_phb3(slot->phb);
+	struct pci_device *pd = slot->pd;
 	uint32_t reg32;
 
 	p->has_link = is_up;
 	if (!is_up) {
-		/* Mask PCIE port interrupts */
-		out_be64(p->regs + UTL_PCIE_PORT_IRQ_EN,
-			 0xad42800000000000);
+		if (!pd || !pd->slot || !pd->slot->surprise_pluggable) {
+			/* Mask PCIE port interrupts */
+			out_be64(p->regs + UTL_PCIE_PORT_IRQ_EN,
+				 0xad42800000000000);
+
+			pci_cfg_read32(&p->phb, 0,
+				       p->aercap + PCIECAP_AER_UE_MASK, &reg32);
+			reg32 |= PCIECAP_AER_UE_MASK_SURPRISE_DOWN;
+			pci_cfg_write32(&p->phb, 0,
+					p->aercap + PCIECAP_AER_UE_MASK, reg32);
+                }
 
 		/* Mask AER receiver error */
 		phb3_pcicfg_read32(&p->phb, 0,
@@ -1965,8 +2146,17 @@ static void phb3_prepare_link_change(struct pci_slot *slot,
 		/* Clear spurrious errors and enable PCIE port interrupts */
 		out_be64(p->regs + UTL_PCIE_PORT_STATUS,
 			 0xffdfffffffffffff);
-		out_be64(p->regs + UTL_PCIE_PORT_IRQ_EN,
-			 0xad52800000000000);
+
+		if (!pd || !pd->slot || !pd->slot->surprise_pluggable) {
+			out_be64(p->regs + UTL_PCIE_PORT_IRQ_EN,
+				 0xad52800000000000);
+
+			pci_cfg_read32(&p->phb, 0,
+				       p->aercap + PCIECAP_AER_UE_MASK, &reg32);
+			reg32 &= ~PCIECAP_AER_UE_MASK_SURPRISE_DOWN;
+			pci_cfg_write32(&p->phb, 0,
+					p->aercap + PCIECAP_AER_UE_MASK, reg32);
+		}
 
 		/* Don't block PCI-CFG */
 		p->flags &= ~PHB3_CFG_BLOCKED;
@@ -2048,7 +2238,7 @@ static int64_t phb3_retry_state(struct pci_slot *slot)
 	slot->delay_tgt_tb = 0;
 	pci_slot_set_state(slot, slot->retry_state);
 	slot->retry_state = PCI_SLOT_STATE_NORMAL;
-	return slot->ops.poll(slot);
+	return slot->ops.run_sm(slot);
 }
 
 static int64_t phb3_poll_link(struct pci_slot *slot)
@@ -2181,7 +2371,7 @@ static int64_t phb3_hreset(struct pci_slot *slot)
 	return OPAL_HARDWARE;
 }
 
-static int64_t phb3_pfreset(struct pci_slot *slot)
+static int64_t phb3_freset(struct pci_slot *slot)
 {
 	struct phb3 *p = phb_to_phb3(slot->phb);
 	uint8_t presence = 1;
@@ -2189,48 +2379,48 @@ static int64_t phb3_pfreset(struct pci_slot *slot)
 
 	switch(slot->state) {
 	case PHB3_SLOT_NORMAL:
-		PHBDBG(p, "PFRESET: Starts\n");
+		PHBDBG(p, "FRESET: Starts\n");
 
 		/* Nothing to do without adapter connected */
 		if (slot->ops.get_presence_state)
 			slot->ops.get_presence_state(slot, &presence);
 		if (!presence) {
-			PHBDBG(p, "PFRESET: No device\n");
+			PHBDBG(p, "FRESET: No device\n");
 			return OPAL_SUCCESS;
 		}
 
-		PHBDBG(p, "PFRESET: Prepare for link down\n");
-		slot->retry_state = PHB3_SLOT_PFRESET_START;
+		PHBDBG(p, "FRESET: Prepare for link down\n");
+		slot->retry_state = PHB3_SLOT_FRESET_START;
 		if (slot->ops.prepare_link_change)
 			slot->ops.prepare_link_change(slot, false);
 		/* fall through */
-	case PHB3_SLOT_PFRESET_START:
+	case PHB3_SLOT_FRESET_START:
 		if (!p->skip_perst) {
-			PHBDBG(p, "PFRESET: Assert\n");
+			PHBDBG(p, "FRESET: Assert\n");
 			reg = in_be64(p->regs + PHB_RESET);
 			reg &= ~0x2000000000000000ul;
 			out_be64(p->regs + PHB_RESET, reg);
 			pci_slot_set_state(slot,
-				PHB3_SLOT_PFRESET_ASSERT_DELAY);
+				PHB3_SLOT_FRESET_ASSERT_DELAY);
 			return pci_slot_set_sm_timeout(slot, secs_to_tb(1));
 		}
 
 		/* To skip the assert during boot time */
-		PHBDBG(p, "PFRESET: Assert skipped\n");
-		pci_slot_set_state(slot, PHB3_SLOT_PFRESET_ASSERT_DELAY);
+		PHBDBG(p, "FRESET: Assert skipped\n");
+		pci_slot_set_state(slot, PHB3_SLOT_FRESET_ASSERT_DELAY);
 		p->skip_perst = false;
 		/* fall through */
-	case PHB3_SLOT_PFRESET_ASSERT_DELAY:
-		PHBDBG(p, "PFRESET: Deassert\n");
+	case PHB3_SLOT_FRESET_ASSERT_DELAY:
+		PHBDBG(p, "FRESET: Deassert\n");
 		reg = in_be64(p->regs + PHB_RESET);
 		reg |= 0x2000000000000000ul;
 		out_be64(p->regs + PHB_RESET, reg);
 		pci_slot_set_state(slot,
-			PHB3_SLOT_PFRESET_DEASSERT_DELAY);
+			PHB3_SLOT_FRESET_DEASSERT_DELAY);
 
 		/* CAPP FPGA requires 1s to flash before polling link */
 		return pci_slot_set_sm_timeout(slot, secs_to_tb(1));
-	case PHB3_SLOT_PFRESET_DEASSERT_DELAY:
+	case PHB3_SLOT_FRESET_DEASSERT_DELAY:
 		pci_slot_set_state(slot, PHB3_SLOT_LINK_START);
 		return slot->ops.poll_link(slot);
 	default:
@@ -2241,139 +2431,21 @@ static int64_t phb3_pfreset(struct pci_slot *slot)
 	return OPAL_HARDWARE;
 }
 
-struct lock capi_lock = LOCK_UNLOCKED;
-static struct {
-	uint32_t			ec_level;
-	struct capp_lid_hdr		*lid;
-	size_t size;
-	int load_result;
-} capp_ucode_info = { 0, NULL, 0, false };
-
-#define CAPP_UCODE_MAX_SIZE 0x20000
-
-#define CAPP_UCODE_LOADED(chip, p) \
-	 ((chip)->capp_ucode_loaded & (1 << (p)->index))
-
-static int64_t capp_lid_download(void)
+static int64_t load_capp_ucode(struct phb3 *p)
 {
-	int64_t ret;
+	int64_t rc;
 
-	if (capp_ucode_info.load_result != OPAL_EMPTY)
-		return capp_ucode_info.load_result;
-
-	capp_ucode_info.load_result = wait_for_resource_loaded(
-		RESOURCE_ID_CAPP,
-		capp_ucode_info.ec_level);
-
-	if (capp_ucode_info.load_result != OPAL_SUCCESS) {
-		prerror("CAPP: Error loading ucode lid. index=%x\n",
-			capp_ucode_info.ec_level);
-		ret = OPAL_RESOURCE;
-		free(capp_ucode_info.lid);
-		capp_ucode_info.lid = NULL;
-		goto end;
-	}
-
-	ret = OPAL_SUCCESS;
-end:
-	return ret;
-}
-
-static int64_t capp_load_ucode(struct phb3 *p)
-{
-	struct proc_chip *chip = get_chip(p->chip_id);
-	struct capp_ucode_lid *ucode;
-	struct capp_ucode_data *data;
-	struct capp_lid_hdr *lid;
-	uint64_t rc, val, addr;
-	uint32_t chunk_count, offset, reg_offset;
-	int i;
-
-	if (CAPP_UCODE_LOADED(chip, p))
-		return OPAL_SUCCESS;
-
-	/* Return if PHB not attached to a CAPP unit */
 	if (p->index > PHB3_CAPP_MAX_PHB_INDEX(p))
 		return OPAL_HARDWARE;
 
-	rc = capp_lid_download();
-	if (rc)
-		return rc;
-
-	prlog(PR_INFO, "CHIP%i: CAPP ucode lid loaded at %p\n",
-	      p->chip_id, capp_ucode_info.lid);
-	lid = capp_ucode_info.lid;
-	/*
-	 * If lid header is present (on FSP machines), it'll tell us where to
-	 * find the ucode.  Otherwise this is the ucode.
-	 */
-	ucode = (struct capp_ucode_lid *)lid;
-	if (be64_to_cpu(lid->eyecatcher) == 0x434150504c494448) {
-		if (be64_to_cpu(lid->version) != 0x1) {
-			PHBERR(p, "capi ucode lid header invalid\n");
-			return OPAL_HARDWARE;
-		}
-		ucode = (struct capp_ucode_lid *)
-			((char *)ucode + be64_to_cpu(lid->ucode_offset));
-	}
-
-	if ((be64_to_cpu(ucode->eyecatcher) != 0x43415050554C4944) ||
-	    (ucode->version != 1)) {
-		PHBERR(p, "CAPP: ucode header invalid\n");
-		return OPAL_HARDWARE;
-	}
-
-	reg_offset = PHB3_CAPP_REG_OFFSET(p);
-	offset = 0;
-	while (offset < be64_to_cpu(ucode->data_size)) {
-		data = (struct capp_ucode_data *)
-			((char *)&ucode->data + offset);
-		chunk_count = be32_to_cpu(data->hdr.chunk_count);
-		offset += sizeof(struct capp_ucode_data_hdr) + chunk_count * 8;
-
-		if (be64_to_cpu(data->hdr.eyecatcher) != 0x4341505055434F44) {
-			PHBERR(p, "CAPP: ucode data header invalid:%i\n",
-			       offset);
-			return OPAL_HARDWARE;
-		}
-
-		switch (data->hdr.reg) {
-		case apc_master_cresp:
-			xscom_write(p->chip_id,
-				    CAPP_APC_MASTER_ARRAY_ADDR_REG + reg_offset,
-				    0);
-			addr = CAPP_APC_MASTER_ARRAY_WRITE_REG;
-			break;
-		case apc_master_uop_table:
-			xscom_write(p->chip_id,
-				    CAPP_APC_MASTER_ARRAY_ADDR_REG + reg_offset,
-				    0x180ULL << 52);
-			addr = CAPP_APC_MASTER_ARRAY_WRITE_REG;
-			break;
-		case snp_ttype:
-			xscom_write(p->chip_id,
-				    CAPP_SNP_ARRAY_ADDR_REG + reg_offset,
-				    0x5000ULL << 48);
-			addr = CAPP_SNP_ARRAY_WRITE_REG;
-			break;
-		case snp_uop_table:
-			xscom_write(p->chip_id,
-				    CAPP_SNP_ARRAY_ADDR_REG + reg_offset,
-				    0x4000ULL << 48);
-			addr = CAPP_SNP_ARRAY_WRITE_REG;
-			break;
-		default:
-			continue;
-		}
-
-		for (i = 0; i < chunk_count; i++) {
-			val = be64_to_cpu(data->data[i]);
-			xscom_write(p->chip_id, addr + reg_offset, val);
-		}
-	}
-
-	chip->capp_ucode_loaded |= (1 << p->index);
-	return OPAL_SUCCESS;
+	/* 0x434150504c494448 = 'CAPPLIDH' in ASCII */
+	rc = capp_load_ucode(p->chip_id, p->phb.opal_id, p->index,
+			0x434150504c494448, PHB3_CAPP_REG_OFFSET(p),
+			CAPP_APC_MASTER_ARRAY_ADDR_REG,
+			CAPP_APC_MASTER_ARRAY_WRITE_REG,
+			CAPP_SNP_ARRAY_ADDR_REG,
+			CAPP_SNP_ARRAY_WRITE_REG);
+	return rc;
 }
 
 static void do_capp_recovery_scoms(struct phb3 *p)
@@ -2386,7 +2458,7 @@ static void do_capp_recovery_scoms(struct phb3 *p)
 	offset = PHB3_CAPP_REG_OFFSET(p);
 	/* disable snoops */
 	xscom_write(p->chip_id, SNOOP_CAPI_CONFIG + offset, 0);
-	capp_load_ucode(p);
+	load_capp_ucode(p);
 	/* clear err rpt reg*/
 	xscom_write(p->chip_id, CAPP_ERR_RPT_CLR + offset, 0);
 	/* clear capp fir */
@@ -2395,6 +2467,122 @@ static void do_capp_recovery_scoms(struct phb3 *p)
 	xscom_read(p->chip_id, CAPP_ERR_STATUS_CTRL + offset, &reg);
 	reg &= ~(PPC_BIT(0) | PPC_BIT(1));
 	xscom_write(p->chip_id, CAPP_ERR_STATUS_CTRL + offset, reg);
+}
+
+/*
+ * Disable CAPI mode on a PHB.
+ *
+ * Must be done while PHB is fenced and in recovery. Leaves CAPP in recovery -
+ * we can't come out of recovery until the PHB has been reinitialised.
+ *
+ * We don't reset generic error registers here - we rely on phb3_init_hw() to
+ * do that.
+ *
+ * Sets PHB3_CAPP_DISABLING flag when complete.
+ */
+static void disable_capi_mode(struct phb3 *p)
+{
+	struct proc_chip *chip = get_chip(p->chip_id);
+	uint64_t reg;
+	uint32_t offset = PHB3_CAPP_REG_OFFSET(p);
+
+	lock(&capi_lock);
+
+	xscom_read(p->chip_id, PE_CAPP_EN + PE_REG_OFFSET(p), &reg);
+	if (!(reg & PPC_BIT(0))) {
+	        /* Not in CAPI mode, no action required */
+	        goto out;
+	}
+
+	PHBDBG(p, "CAPP: Disabling CAPI mode\n");
+	if (!(chip->capp_phb3_attached_mask & (1 << p->index)))
+		PHBERR(p, "CAPP: CAPP attached mask not set!\n");
+
+	xscom_read(p->chip_id, CAPP_ERR_STATUS_CTRL + offset, &reg);
+	if (!(reg & PPC_BIT(0))) {
+		PHBERR(p, "CAPP: not in recovery, can't disable CAPI mode!\n");
+		goto out;
+	}
+
+	/* Snoop CAPI Configuration Register - disable snooping */
+	xscom_write(p->chip_id, SNOOP_CAPI_CONFIG + offset, 0ull);
+
+	/* APC Master PB Control Register - disable examining cResps */
+	xscom_read(p->chip_id, APC_MASTER_PB_CTRL + offset, &reg);
+	reg &= ~PPC_BIT(3);
+	xscom_write(p->chip_id, APC_MASTER_PB_CTRL + offset, reg);
+
+	/* APC Master Config Register - de-select PHBs */
+	xscom_read(p->chip_id, APC_MASTER_CAPI_CTRL + offset, &reg);
+	reg &= ~PPC_BITMASK(1, 3);
+	xscom_write(p->chip_id, APC_MASTER_CAPI_CTRL + offset, reg);
+
+	/* PE Bus AIB Mode Bits */
+	xscom_read(p->chip_id, p->pci_xscom + 0xf, &reg);
+	reg |= PPC_BITMASK(7, 8);	/* Ch2 command credit */
+	reg &= ~PPC_BITMASK(40, 42);	/* Disable HOL blocking */
+	xscom_write(p->chip_id, p->pci_xscom + 0xf, reg);
+
+	/* PCI Hardware Configuration 0 Register - all store queues free */
+	xscom_read(p->chip_id, p->pe_xscom + 0x18, &reg);
+	reg &= ~PPC_BIT(14);
+	reg |= PPC_BIT(15);
+	xscom_write(p->chip_id, p->pe_xscom + 0x18, reg);
+
+	/*
+	 * PCI Hardware Configuration 1 Register - enable read response
+	 * arrival/address request ordering
+	 */
+	xscom_read(p->chip_id, p->pe_xscom + 0x19, &reg);
+	reg |= PPC_BITMASK(17,18);
+	xscom_write(p->chip_id, p->pe_xscom + 0x19, reg);
+
+	/*
+	 * AIB TX Command Credit Register - set AIB credit values back to
+	 * normal
+	 */
+	xscom_read(p->chip_id, p->pci_xscom + 0xd, &reg);
+	reg |= PPC_BIT(42);
+	reg &= ~PPC_BITMASK(43, 47);
+	xscom_write(p->chip_id, p->pci_xscom + 0xd, reg);
+
+	/* AIB TX Credit Init Timer - reset timer */
+	xscom_write(p->chip_id, p->pci_xscom + 0xc, 0xff00000000000000);
+
+	/*
+	 * PBCQ Mode Control Register - set dcache handling to normal, not CAPP
+	 * mode
+	 */
+	xscom_read(p->chip_id, p->pe_xscom + 0xb, &reg);
+	reg &= ~PPC_BIT(25);
+	xscom_write(p->chip_id, p->pe_xscom + 0xb, reg);
+
+	/* Registers touched by phb3_init_capp_regs() */
+
+	/* CAPP Transport Control Register */
+	xscom_write(p->chip_id, TRANSPORT_CONTROL + offset, 0x0001000000000000);
+
+	/* Canned pResp Map Register 0/1/2 */
+	xscom_write(p->chip_id, CANNED_PRESP_MAP0 + offset, 0);
+	xscom_write(p->chip_id, CANNED_PRESP_MAP1 + offset, 0);
+	xscom_write(p->chip_id, CANNED_PRESP_MAP2 + offset, 0);
+
+	/* Flush SUE State Map Register */
+	xscom_write(p->chip_id, FLUSH_SUE_STATE_MAP + offset, 0);
+
+	/* CAPP Epoch and Recovery Timers Control Register */
+	xscom_write(p->chip_id, CAPP_EPOCH_TIMER_CTRL + offset, 0);
+
+	/* PE Secure CAPP Enable Register - we're all done! Disable CAPP mode! */
+	xscom_write(p->chip_id, PE_CAPP_EN + PE_REG_OFFSET(p), 0ull);
+
+	/* Trigger CAPP recovery scoms after reinit */
+	p->flags |= PHB3_CAPP_DISABLING;
+
+	chip->capp_phb3_attached_mask &= ~(1 << p->index);
+
+out:
+	unlock(&capi_lock);
 }
 
 static int64_t phb3_creset(struct pci_slot *slot)
@@ -2427,6 +2615,10 @@ static int64_t phb3_creset(struct pci_slot *slot)
 		 */
 		if (!phb3_fenced(p))
 			xscom_write(p->chip_id, p->pe_xscom + 0x2, 0x000000f000000000ull);
+
+		/* Now that we're guaranteed to be fenced, disable CAPI mode */
+		if (!(p->flags & PHB3_CAPP_RECOVERY))
+			disable_capi_mode(p);
 
 		/* Clear errors in NFIR and raise ETU reset */
 		xscom_read(p->chip_id, p->pe_xscom + 0x0, &p->nfir_cache);
@@ -2467,6 +2659,11 @@ static int64_t phb3_creset(struct pci_slot *slot)
 		p->flags &= ~PHB3_CAPP_RECOVERY;
 		phb3_init_hw(p, false);
 
+		if (p->flags & PHB3_CAPP_DISABLING) {
+			do_capp_recovery_scoms(p);
+			p->flags &= ~PHB3_CAPP_DISABLING;
+		}
+
 		pci_slot_set_state(slot, PHB3_SLOT_CRESET_FRESET);
 		return pci_slot_set_sm_timeout(slot, msecs_to_tb(100));
 	case PHB3_SLOT_CRESET_FRESET:
@@ -2477,9 +2674,8 @@ static int64_t phb3_creset(struct pci_slot *slot)
 		       slot->state);
 	}
 
-	/* Mark the PHB as dead and expect it to be removed */
 error:
-	p->state = PHB3_STATE_BROKEN;
+	p->state = PHB3_STATE_FENCED;
 	return OPAL_HARDWARE;
 }
 
@@ -2515,8 +2711,7 @@ static struct pci_slot *phb3_slot_create(struct phb *phb)
 	slot->ops.prepare_link_change	= phb3_prepare_link_change;
 	slot->ops.poll_link		= phb3_poll_link;
 	slot->ops.hreset		= phb3_hreset;
-	slot->ops.freset		= phb3_pfreset;
-	slot->ops.pfreset		= phb3_pfreset;
+	slot->ops.freset		= phb3_freset;
 	slot->ops.creset		= phb3_creset;
 
 	return slot;
@@ -2814,7 +3009,7 @@ static int64_t phb3_err_inject_finalize(struct phb3 *p, uint64_t addr,
 	return OPAL_SUCCESS;
 }
 
-static int64_t phb3_err_inject_mem32(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_mem32(struct phb3 *p, uint64_t pe_number,
 				     uint64_t addr, uint64_t mask,
 				     bool is_write)
 {
@@ -2827,7 +3022,7 @@ static int64_t phb3_err_inject_mem32(struct phb3 *p, uint32_t pe_no,
 	a = base = len = 0x0ull;
 
 	for (index = 0; index < PHB3_MAX_PE_NUM; index++) {
-		if (GETFIELD(IODA2_M32DT_PE, p->m32d_cache[index]) != pe_no)
+		if (GETFIELD(IODA2_M32DT_PE, p->m32d_cache[index]) != pe_number)
 			continue;
 
 		/* Obviously, we can't support discontiguous segments.
@@ -2868,7 +3063,7 @@ static int64_t phb3_err_inject_mem32(struct phb3 *p, uint32_t pe_no,
 	return phb3_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t phb3_err_inject_mem64(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_mem64(struct phb3 *p, uint64_t pe_number,
 				     uint64_t addr, uint64_t mask,
 				     bool is_write)
 {
@@ -2881,14 +3076,14 @@ static int64_t phb3_err_inject_mem64(struct phb3 *p, uint32_t pe_no,
 	s_index = 0;
 	e_index = ARRAY_SIZE(p->m64b_cache) - 2;
 	for (index = 0; index < RTT_TABLE_ENTRIES; index++) {
-		if (p->rte_cache[index] != pe_no)
+		if (p->rte_cache[index] != pe_number)
 			continue;
 
 		if (index + 8 >= RTT_TABLE_ENTRIES)
 			break;
 
 		/* PCI bus dependent PE */
-		if (p->rte_cache[index + 8] == pe_no) {
+		if (p->rte_cache[index + 8] == pe_number) {
 			s_index = e_index = ARRAY_SIZE(p->m64b_cache) - 1;
 			break;
 		}
@@ -2901,8 +3096,8 @@ static int64_t phb3_err_inject_mem64(struct phb3 *p, uint32_t pe_no,
 			continue;
 
 		if (cache & IODA2_M64BT_SINGLE_PE) {
-			if (GETFIELD(IODA2_M64BT_PE_HI, cache) != (pe_no >> 5) ||
-			    GETFIELD(IODA2_M64BT_PE_LOW, cache) != (pe_no & 0x1f))
+			if (GETFIELD(IODA2_M64BT_PE_HI, cache) != (pe_number >> 5) ||
+			    GETFIELD(IODA2_M64BT_PE_LOW, cache) != (pe_number & 0x1f))
 				continue;
 
 			segstart = GETFIELD(IODA2_M64BT_SINGLE_BASE, cache);
@@ -2916,7 +3111,7 @@ static int64_t phb3_err_inject_mem64(struct phb3 *p, uint32_t pe_no,
 			segsize = (0x40000000ull - segsize) << 20;
 
 			segsize /= PHB3_MAX_PE_NUM;
-			segstart = segstart + segsize * pe_no;
+			segstart = segstart + segsize * pe_number;
 		}
 
 		/* First window always wins based on the ascending
@@ -2953,7 +3148,7 @@ static int64_t phb3_err_inject_mem64(struct phb3 *p, uint32_t pe_no,
 	return phb3_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t phb3_err_inject_cfg(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_cfg(struct phb3 *p, uint64_t pe_number,
 				   uint64_t addr, uint64_t mask,
 				   bool is_write)
 {
@@ -2966,13 +3161,13 @@ static int64_t phb3_err_inject_cfg(struct phb3 *p, uint32_t pe_no,
 	prefer = 0xffffull;
 	m = PHB_PAPR_ERR_INJ_MASK_CFG_ALL;
 	for (bdfn = 0; bdfn < RTT_TABLE_ENTRIES; bdfn++) {
-		if (p->rte_cache[bdfn] != pe_no)
+		if (p->rte_cache[bdfn] != pe_number)
 			continue;
 
 		/* The PE can be associated with PCI bus or device */
 		is_bus_pe = false;
 		if ((bdfn + 8) < RTT_TABLE_ENTRIES &&
-		    p->rte_cache[bdfn + 8] == pe_no)
+		    p->rte_cache[bdfn + 8] == pe_number)
 			is_bus_pe = true;
 
 		/* Figure out the PCI config address */
@@ -3013,7 +3208,7 @@ static int64_t phb3_err_inject_cfg(struct phb3 *p, uint32_t pe_no,
 	return phb3_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t phb3_err_inject_dma(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_dma(struct phb3 *p, uint64_t pe_number,
 				   uint64_t addr, uint64_t mask,
 				   bool is_write, bool is_64bits)
 {
@@ -3024,10 +3219,10 @@ static int64_t phb3_err_inject_dma(struct phb3 *p, uint32_t pe_no,
 
 	/* TVE index and base address */
 	if (!is_64bits) {
-		index = (pe_no << 1);
+		index = (pe_number << 1);
 		base = 0x0ull;
 	} else {
-		index = ((pe_no << 1) + 1);
+		index = ((pe_number << 1) + 1);
 		base = (0x1ull << 59);
 	}
 
@@ -3077,26 +3272,26 @@ static int64_t phb3_err_inject_dma(struct phb3 *p, uint32_t pe_no,
 	return phb3_err_inject_finalize(p, a, m, ctrl, is_write);
 }
 
-static int64_t phb3_err_inject_dma32(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_dma32(struct phb3 *p, uint64_t pe_number,
 				     uint64_t addr, uint64_t mask,
 				     bool is_write)
 {
-	return phb3_err_inject_dma(p, pe_no, addr, mask, is_write, false);
+	return phb3_err_inject_dma(p, pe_number, addr, mask, is_write, false);
 }
 
-static int64_t phb3_err_inject_dma64(struct phb3 *p, uint32_t pe_no,
+static int64_t phb3_err_inject_dma64(struct phb3 *p, uint64_t pe_number,
 				     uint64_t addr, uint64_t mask,
 				     bool is_write)
 {
-	return phb3_err_inject_dma(p, pe_no, addr, mask, is_write, true);	
+	return phb3_err_inject_dma(p, pe_number, addr, mask, is_write, true);
 }
 
-static int64_t phb3_err_inject(struct phb *phb, uint32_t pe_no,
+static int64_t phb3_err_inject(struct phb *phb, uint64_t pe_number,
 			       uint32_t type, uint32_t func,
 			       uint64_t addr, uint64_t mask)
 {
 	struct phb3 *p = phb_to_phb3(phb);
-	int64_t (*handler)(struct phb3 *p, uint32_t pe_no,
+	int64_t (*handler)(struct phb3 *p, uint64_t pe_number,
 			   uint64_t addr, uint64_t mask, bool is_write);
 	bool is_write;
 
@@ -3105,7 +3300,7 @@ static int64_t phb3_err_inject(struct phb *phb, uint32_t pe_no,
 		return OPAL_HARDWARE;
 
 	/* We can't inject error to the reserved PE */
-	if (pe_no == PHB3_RESERVED_PE_NUM || pe_no >= PHB3_MAX_PE_NUM)
+	if (pe_number == PHB3_RESERVED_PE_NUM || pe_number >= PHB3_MAX_PE_NUM)
 		return OPAL_PARAMETER;
 
 	/* Clear leftover from last time */
@@ -3162,7 +3357,7 @@ static int64_t phb3_err_inject(struct phb *phb, uint32_t pe_no,
 		return OPAL_PARAMETER;
 	}
 
-	return handler(p, pe_no, addr, mask, is_write);
+	return handler(p, pe_number, addr, mask, is_write);
 }
 
 static int64_t phb3_get_diag_data(struct phb *phb,
@@ -3195,6 +3390,38 @@ static int64_t phb3_get_diag_data(struct phb *phb,
 		phb3_err_ER_clear(p);
 		phb3_set_err_pending(p, false);
 	}
+
+	return OPAL_SUCCESS;
+}
+
+static int64_t phb3_get_capp_info(int chip_id, struct phb *phb,
+				  struct capp_info *info)
+{
+	struct phb3 *p = phb_to_phb3(phb);
+	struct proc_chip *chip = get_chip(p->chip_id);
+	uint32_t offset;
+
+	if (chip_id != p->chip_id)
+		return OPAL_PARAMETER;
+
+	if (!((1 << p->index) & chip->capp_phb3_attached_mask))
+		return OPAL_PARAMETER;
+
+	offset = PHB3_CAPP_REG_OFFSET(p);
+
+	if (PHB3_IS_NAPLES(p)) {
+		if (p->index == 0)
+			info->capp_index = 0;
+		else
+			info->capp_index = 1;
+	} else
+		info->capp_index = 0;
+	info->phb_index = p->index;
+	info->capp_fir_reg = CAPP_FIR + offset;
+	info->capp_fir_mask_reg = CAPP_FIR_MASK + offset;
+	info->capp_fir_action0_reg = CAPP_FIR_ACTION0 + offset;
+	info->capp_fir_action1_reg = CAPP_FIR_ACTION1 + offset;
+	info->capp_err_status_ctrl_reg = CAPP_ERR_STATUS_CTRL + offset;
 
 	return OPAL_SUCCESS;
 }
@@ -3287,11 +3514,11 @@ static void phb3_init_capp_errors(struct phb3 *p)
 	out_be64(p->regs + PHB_LEM_ERROR_MASK,		   0x40018e2400022482);
 }
 
-#define PE_CAPP_EN 0x9013c03
-
-#define PE_REG_OFFSET(p) \
-	((PHB3_IS_NAPLES(p) && (p)->index) ? 0x40 : 0x0)
-
+/*
+ * Enable CAPI mode on a PHB
+ *
+ * Changes to this init sequence may require updating disable_capi_mode().
+ */
 static int64_t enable_capi_mode(struct phb3 *p, uint64_t pe_number, bool dma_mode)
 {
 	uint64_t reg;
@@ -3405,10 +3632,14 @@ static int64_t enable_capi_mode(struct phb3 *p, uint64_t pe_number, bool dma_mod
 
 	phb3_init_capp_regs(p, dma_mode);
 
-	if (!chiptod_capp_timebase_sync(p)) {
+	if (!chiptod_capp_timebase_sync(p->chip_id, CAPP_TFMR, CAPP_TB,
+					PHB3_CAPP_REG_OFFSET(p))) {
 		PHBERR(p, "CAPP: Failed to sync timebase\n");
 		return OPAL_HARDWARE;
 	}
+
+	/* set callbacks to handle HMI events */
+	capi_ops.get_capp_info = &phb3_get_capp_info;
 
 	return OPAL_SUCCESS;
 }
@@ -3423,7 +3654,7 @@ static int64_t phb3_set_capi_mode(struct phb *phb, uint64_t mode,
 	uint32_t offset;
 	u8 mask;
 
-	if (!CAPP_UCODE_LOADED(chip, p)) {
+	if (!capp_ucode_loaded(chip, p->index)) {
 		PHBERR(p, "CAPP: ucode not loaded\n");
 		return OPAL_RESOURCE;
 	}
@@ -3462,6 +3693,7 @@ static int64_t phb3_set_capi_mode(struct phb *phb, uint64_t mode,
 
 	switch (mode) {
 	case OPAL_PHB_CAPI_MODE_PCIE:
+		/* Switching back to PCIe mode requires a creset */
 		return OPAL_UNSUPPORTED;
 
 	case OPAL_PHB_CAPI_MODE_CAPI:
@@ -3520,6 +3752,7 @@ static const struct phb_ops phb3_ops = {
 	.choose_bus		= phb3_choose_bus,
 	.get_reserved_pe_number	= phb3_get_reserved_pe_number,
 	.device_init		= phb3_device_init,
+	.device_remove		= phb3_device_remove,
 	.ioda_reset		= phb3_ioda_reset,
 	.papr_errinjct_reset	= phb3_papr_errinjct_reset,
 	.pci_reinit		= phb3_pci_reinit,
@@ -3766,13 +3999,16 @@ static bool phb3_init_rc_cfg(struct phb3 *p)
 	 *
 	 * AER inits
 	 */
-	aercap = pci_find_ecap(&p->phb, 0, PCIECAP_ID_AER, NULL);
-	if (aercap < 0) {
-		/* Shouldn't happen */
-		PHBERR(p, "Failed to locate AER Ecapability in bridge\n");
-		return false;
+	if (p->aercap <= 0) {
+		aercap = pci_find_ecap(&p->phb, 0, PCIECAP_ID_AER, NULL);
+		if (aercap < 0) {
+			PHBERR(p, "Can't locate AER capability\n");
+			return false;
+		}
+		p->aercap = aercap;
+	} else {
+		aercap = p->aercap;
 	}
-	p->aercap = aercap;
 
 	/* Clear all UE status */
 	phb3_pcicfg_write32(&p->phb, 0, aercap + PCIECAP_AER_UE_STATUS,
@@ -3799,10 +4035,10 @@ static bool phb3_init_rc_cfg(struct phb3 *p)
 	phb3_pcicfg_write32(&p->phb, 0, aercap + PCIECAP_AER_CE_MASK,
 			    PCIECAP_AER_CE_ADV_NONFATAL |
 			    (p->has_link ? 0 : PCIECAP_AER_CE_RECVR_ERR));
-	/* Enable ECRC generation & checking */
-	phb3_pcicfg_write32(&p->phb, 0, aercap + PCIECAP_AER_CAPCTL,
-			     PCIECAP_AER_CAPCTL_ECRCG_EN	|
-			     PCIECAP_AER_CAPCTL_ECRCC_EN);
+
+	/* Enable or disable ECRC generation & checking */
+	phb3_enable_ecrc(&p->phb, !p->no_ecrc_devs);
+
 	/* Enable reporting in root error control */
 	phb3_pcicfg_write32(&p->phb, 0, aercap + PCIECAP_AER_RERR_CMD,
 			     PCIECAP_AER_RERR_CMD_FE		|
@@ -4222,10 +4458,7 @@ static void phb3_add_properties(struct phb3 *p)
 			      hi32(m32b), lo32(m32b), 0, M32_PCI_SIZE - 0x10000);
 
 	/* XXX FIXME: add opal-memwin32, dmawins, etc... */
-	dt_add_property_cells(np, "ibm,opal-m64-window",
-			      hi32(m64b), lo32(m64b),
-			      hi32(m64b), lo32(m64b),
-			      hi32(m64s), lo32(m64s));
+	dt_add_property_u64s(np, "ibm,opal-m64-window", m64b, m64b, m64s);
 	dt_add_property(np, "ibm,opal-single-pe", NULL, 0);
 	//dt_add_property_cells(np, "ibm,opal-msi-ports", 2048);
 	dt_add_property_cells(np, "ibm,opal-num-pes", 256);
@@ -4277,6 +4510,9 @@ static void phb3_add_properties(struct phb3 *p)
 		IVT_TABLE_STRIDE);
 	dt_add_property_cells(np, "ibm,opal-rba-table",
 		hi32(p->tbl_rba), lo32(p->tbl_rba), RBA_TABLE_SIZE);
+
+	dt_add_property_cells(np, "ibm,phb-diag-data-size",
+			      sizeof(struct OpalIoPhb3ErrorData));
 }
 
 static bool phb3_calculate_windows(struct phb3 *p)
@@ -4323,6 +4559,44 @@ static bool phb3_calculate_windows(struct phb3 *p)
 	return true;
 }
 
+/*
+ * Trigger a creset to disable CAPI mode on kernel shutdown.
+ *
+ * This helper is called repeatedly by the host sync notifier mechanism, which
+ * relies on the kernel to regularly poll the OPAL_SYNC_HOST_REBOOT call as it
+ * shuts down.
+ *
+ * This is a somewhat hacky abuse of the host sync notifier mechanism, but the
+ * alternatives require a new API call which won't work for older kernels.
+ */
+static bool phb3_host_sync_reset(void *data)
+{
+	struct phb3 *p = (struct phb3 *)data;
+	struct pci_slot *slot = p->phb.slot;
+	struct proc_chip *chip = get_chip(p->chip_id);
+	int64_t rc;
+
+	switch (slot->state) {
+	case PHB3_SLOT_NORMAL:
+		lock(&capi_lock);
+		rc = (chip->capp_phb3_attached_mask & (1 << p->index)) ?
+			OPAL_PHB_CAPI_MODE_CAPI :
+			OPAL_PHB_CAPI_MODE_PCIE;
+		unlock(&capi_lock);
+
+		if (rc == OPAL_PHB_CAPI_MODE_PCIE)
+			return true;
+
+		PHBINF(p, "PHB in CAPI mode, resetting\n");
+		p->flags &= ~PHB3_CAPP_RECOVERY;
+		phb3_creset(slot);
+		return false;
+	default:
+		rc = slot->ops.run_sm(slot);
+		return rc <= OPAL_SUCCESS;
+	}
+}
+
 static void phb3_create(struct dt_node *np)
 {
 	const struct dt_property *prop;
@@ -4346,7 +4620,6 @@ static void phb3_create(struct dt_node *np)
 	p->phb.ops = &phb3_ops;
 	p->phb.phb_type = phb_type_pcie_v3;
 	p->phb.scan_map = 0x1; /* Only device 0 to scan */
-	p->max_link_speed = dt_prop_get_u32_def(np, "ibm,max-link-speed", 3);
 	p->state = PHB3_STATE_UNINITIALIZED;
 
 	if (!phb3_calculate_windows(p))
@@ -4410,7 +4683,17 @@ static void phb3_create(struct dt_node *np)
 	p->phb.base_loc_code = dt_prop_get_def(dt_root,
 					       "ibm,io-base-loc-code", NULL);
 	if (!p->phb.base_loc_code)
-		PHBERR(p, "Base location code not found !\n");
+		PHBDBG(p, "Base location code not found !\n");
+
+	/* Priority order: NVRAM -> dt -> GEN3 */
+	p->max_link_speed = 3;
+	if (dt_has_node_property(np, "ibm,max-link-speed", NULL))
+		p->max_link_speed = dt_prop_get_u32(np, "ibm,max-link-speed");
+	if (pcie_max_link_speed)
+		p->max_link_speed = pcie_max_link_speed;
+	if (p->max_link_speed > 3) /* clamp to 3 */
+		p->max_link_speed = 3;
+	PHBINF(p, "Max link speed: GEN%i\n", p->max_link_speed);
 
 	/* Check for lane equalization values from HB or HDAT */
 	p->lane_eq = dt_prop_get_def_size(np, "ibm,lane-eq", NULL, &lane_eq_len);
@@ -4448,17 +4731,15 @@ static void phb3_create(struct dt_node *np)
 	/* Register interrupt sources */
 	register_irq_source(&phb3_msi_irq_ops, p, p->base_msi,
 			    PHB3_MSI_IRQ_COUNT);
-	register_irq_source(&phb3_lsi_irq_ops, p, p->base_lsi, 4);
+	register_irq_source(&phb3_lsi_irq_ops, p, p->base_lsi, 8);
 
-#ifndef DISABLE_ERR_INTS
-	register_irq_source(&phb3_err_lsi_irq_ops, p,
-			    p->base_lsi + PHB3_LSI_PCIE_INF, 2);
-#endif
 	/* Get the HW up and running */
 	phb3_init_hw(p, true);
 
 	/* Load capp microcode into capp unit */
-	capp_load_ucode(p);
+	load_capp_ucode(p);
+
+	opal_add_host_sync_notifier(phb3_host_sync_reset, p);
 
 	/* Platform additional setup */
 	if (platform.pci_setup_phb)
@@ -4488,18 +4769,18 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	pe_xscom = dt_get_address(pbcq, 0, NULL);
 	pci_xscom = dt_get_address(pbcq, 1, NULL);
 	spci_xscom = dt_get_address(pbcq, 2, NULL);
-	prlog(PR_DEBUG, "PHB3[%d:%d]: X[PE]=0x%08x X[PCI]=0x%08x"
+	prlog(PR_DEBUG, "PHB3[%x:%x]: X[PE]=0x%08x X[PCI]=0x%08x"
 	      " X[SPCI]=0x%08x\n",
 	      gcid, pno, pe_xscom, pci_xscom, spci_xscom);
 
 	/* Check if CAPP mode */
 	if (xscom_read(gcid, spci_xscom + 0x03, &val)) {
-		prerror("PHB3[%d:%d]: Cannot read AIB CAPP ENABLE\n",
+		prerror("PHB3[%x:%x]: Cannot read AIB CAPP ENABLE\n",
 			gcid, pno);
 		return;
 	}
 	if (val >> 63) {
-		prerror("PHB3[%d:%d]: Ignoring bridge in CAPP mode\n",
+		prerror("PHB3[%x:%x]: Ignoring bridge in CAPP mode\n",
 			gcid, pno);
 		return;
 	}
@@ -4507,10 +4788,10 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	/* Get PE BARs, assume only 0 and 2 are used for now */
 	xscom_read(gcid, pe_xscom + 0x42, &phb_bar);
 	phb_bar >>= 14;
-	prlog(PR_DEBUG, "PHB3[%d:%d] REGS     = 0x%016llx [4k]\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] REGS     = 0x%016llx [4k]\n",
 		gcid, pno, phb_bar);
 	if (phb_bar == 0) {
-		prerror("PHB3[%d:%d]: No PHB BAR set !\n", gcid, pno);
+		prerror("PHB3[%x:%x]: No PHB BAR set !\n", gcid, pno);
 		return;
 	}
 
@@ -4518,9 +4799,9 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	xscom_read(gcid, spci_xscom + 1, &val);/* HW275117 */
 	xscom_read(gcid, pci_xscom + 0x0b, &val);
 	val >>= 14;
-	prlog(PR_DEBUG, "PHB3[%d:%d] PCIBAR   = 0x%016llx\n", gcid, pno, val);
+	prlog(PR_DEBUG, "PHB3[%x:%x] PCIBAR   = 0x%016llx\n", gcid, pno, val);
 	if (phb_bar != val) {
-		prerror("PHB3[%d:%d] PCIBAR invalid, fixing up...\n",
+		prerror("PHB3[%x:%x] PCIBAR invalid, fixing up...\n",
 			gcid, pno);
 		xscom_read(gcid, spci_xscom + 1, &val);/* HW275117 */
 		xscom_write(gcid, pci_xscom + 0x0b, phb_bar << 14);
@@ -4532,14 +4813,14 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	mmio0_bmask &= 0xffffffffc0000000ull;
 	mmio0_sz = ((~mmio0_bmask) >> 14) + 1;
 	mmio0_bar >>= 14;
-	prlog(PR_DEBUG, "PHB3[%d:%d] MMIO0    = 0x%016llx [0x%016llx]\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] MMIO0    = 0x%016llx [0x%016llx]\n",
 		gcid, pno, mmio0_bar, mmio0_sz);
 	xscom_read(gcid, pe_xscom + 0x41, &mmio1_bar);
 	xscom_read(gcid, pe_xscom + 0x44, &mmio1_bmask);
 	mmio1_bmask &= 0xffffffffc0000000ull;
 	mmio1_sz = ((~mmio1_bmask) >> 14) + 1;
 	mmio1_bar >>= 14;
-	prlog(PR_DEBUG, "PHB3[%d:%d] MMIO1    = 0x%016llx [0x%016llx]\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] MMIO1    = 0x%016llx [0x%016llx]\n",
 		gcid, pno, mmio1_bar, mmio1_sz);
 
 	/* Check BAR enable
@@ -4548,7 +4829,7 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	 * that BARs are valid if they value is non-0
 	 */
 	xscom_read(gcid, pe_xscom + 0x45, &bar_en);
-	prlog(PR_DEBUG, "PHB3[%d:%d] BAREN    = 0x%016llx\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] BAREN    = 0x%016llx\n",
 		gcid, pno, bar_en);
 
 	/* Always enable PHB BAR */
@@ -4569,7 +4850,7 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 
 	/* No MMIO windows ? Barf ! */
 	if (mmio_win_sz == 0) {
-		prerror("PHB3[%d:%d]: No MMIO windows enabled !\n",
+		prerror("PHB3[%x:%x]: No MMIO windows enabled !\n",
 			gcid, pno);
 		return;
 	}
@@ -4589,16 +4870,16 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 	bar_en |= 0x1800000000000000ul;
 	xscom_write(gcid, pe_xscom + 0x45, bar_en);
 
-	prlog(PR_DEBUG, "PHB3[%d:%d] NEWBAREN = 0x%016llx\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] NEWBAREN = 0x%016llx\n",
 	      gcid, pno, bar_en);
 
 	xscom_read(gcid, pe_xscom + 0x1a, &val);
-	prlog(PR_DEBUG, "PHB3[%d:%d] IRSNC    = 0x%016llx\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] IRSNC    = 0x%016llx\n",
 	      gcid, pno, val);
 	xscom_read(gcid, pe_xscom + 0x1b, &val);
-	prlog(PR_DEBUG, "PHB3[%d:%d] IRSNM    = 0x%016llx\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] IRSNM    = 0x%016llx\n",
 	      gcid, pno, val);
-	prlog(PR_DEBUG, "PHB3[%d:%d] LSI      = 0x%016llx\n",
+	prlog(PR_DEBUG, "PHB3[%x:%x] LSI      = 0x%016llx\n",
 	      gcid, pno, val);
 
 	/* Create PHB node */
@@ -4643,85 +4924,16 @@ static void phb3_probe_pbcq(struct dt_node *pbcq)
 		capp_ucode_base = dt_prop_get_u32(pbcq, "ibm,capp-ucode");
 		dt_add_property_cells(np, "ibm,capp-ucode", capp_ucode_base);
 	}
-	max_link_speed = dt_prop_get_u32_def(pbcq, "ibm,max-link-speed", 3);
-	dt_add_property_cells(np, "ibm,max-link-speed", max_link_speed);
+	if (dt_has_node_property(pbcq, "ibm,max-link-speed", NULL)) {
+		max_link_speed = dt_prop_get_u32(pbcq, "ibm,max-link-speed");
+		dt_add_property_cells(np, "ibm,max-link-speed", max_link_speed);
+	}
 	dt_add_property_cells(np, "ibm,capi-flags",
 			      OPAL_PHB_CAPI_FLAG_SNOOP_CONTROL);
 
 	add_chip_dev_associativity(np);
 }
 
-int phb3_preload_capp_ucode(void)
-{
-	struct dt_node *p;
-	struct proc_chip *chip;
-	uint32_t index;
-	uint64_t rc;
-	int ret;
-
-	p = dt_find_compatible_node(dt_root, NULL, "ibm,power8-pbcq");
-
-	if (!p) {
-		printf("CAPI: WARNING: no compat thing found\n");
-		return OPAL_SUCCESS;
-	}
-
-	chip = get_chip(dt_get_chip_id(p));
-
-	rc = xscom_read_cfam_chipid(chip->id, &index);
-	if (rc) {
-		prerror("CAPP: Error reading cfam chip-id\n");
-		ret = OPAL_HARDWARE;
-		return ret;
-	}
-	/* Keep ChipID and Major/Minor EC.  Mask out the Location Code. */
-	index = index & 0xf0fff;
-
-	/* Assert that we're preloading */
-	assert(capp_ucode_info.lid == NULL);
-	capp_ucode_info.load_result = OPAL_EMPTY;
-
-	capp_ucode_info.ec_level = index;
-
-	/* Is the ucode preloaded like for BML? */
-	if (dt_has_node_property(p, "ibm,capp-ucode", NULL)) {
-		capp_ucode_info.lid = (struct capp_lid_hdr *)(u64)
-			dt_prop_get_u32(p, "ibm,capp-ucode");
-		ret = OPAL_SUCCESS;
-		goto end;
-	}
-	/* If we successfully download the ucode, we leave it around forever */
-	capp_ucode_info.size = CAPP_UCODE_MAX_SIZE;
-	capp_ucode_info.lid = malloc(CAPP_UCODE_MAX_SIZE);
-	if (!capp_ucode_info.lid) {
-		prerror("CAPP: Can't allocate space for ucode lid\n");
-		ret = OPAL_NO_MEM;
-		goto end;
-	}
-
-	printf("CAPI: Preloading ucode %x\n", capp_ucode_info.ec_level);
-
-	ret = start_preload_resource(RESOURCE_ID_CAPP, index,
-				     capp_ucode_info.lid,
-				     &capp_ucode_info.size);
-
-	if (ret != OPAL_SUCCESS)
-		prerror("CAPI: Failed to preload resource %d\n", ret);
-
-end:
-	return ret;
-}
-
-void phb3_preload_vpd(void)
-{
-	const struct dt_property *prop;
-
-	prop = dt_find_property(dt_root, "ibm,io-vpd");
-	if (!prop) {
-		/* LX VPD Lid not already loaded */
-		vpd_preload(dt_root);
-	}
-}
 
 void probe_phb3(void)
 {
@@ -4735,4 +4947,5 @@ void probe_phb3(void)
 	dt_for_each_compatible(dt_root, np, "ibm,power8-pciex")
 		phb3_create(np);
 }
+
 

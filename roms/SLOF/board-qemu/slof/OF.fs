@@ -119,6 +119,8 @@ check-boot-menu
 
 380 cp
 
+#include "fdt-fl.fs"
+
 \ Grab rtas from qemu
 #include "rtas.fs"
 
@@ -256,6 +258,20 @@ romfs-base 400000 0 ' claim CATCH IF ." claim failed!" cr 2drop THEN drop
                 THEN
             THEN
         THEN
+    THEN
+
+    s" input-device" evaluate dup IF
+        ." User selected input-device console: " 2dup type cr
+        input
+    ELSE
+        2drop
+    THEN
+
+    s" output-device" evaluate dup IF
+        ." User selected output-device console: " 2dup type cr
+        output
+    ELSE
+        2drop
     THEN
 ;
 set-default-console

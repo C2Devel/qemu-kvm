@@ -1,5 +1,5 @@
-#include <qemu/osdep.h>
-#include <hw/ide.h>
+#include "qemu/osdep.h"
+#include "hw/ide.h"
 #include <stdlib.h>
 
 ISADevice *isa_ide_init(ISABus *bus, int iobase, int iobase2, int isairq,
